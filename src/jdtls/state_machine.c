@@ -70,8 +70,10 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
                 /* EOF without close_notify */
                 return DTLS_RESULT_EOF;
             }
-        /* Fall through to error */
-        /* fallthrough */
+            /* Fall through to error */
+#if defined(__GNUC__) || defined(__clang__)
+            __attribute__((fallthrough));
+#endif
 
         case SSL_ERROR_SSL:
         default:

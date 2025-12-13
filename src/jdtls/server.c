@@ -21,6 +21,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+/* MSG_DONTWAIT is not available on all platforms (e.g., FreeBSD).
+ * Since our sockets are already non-blocking, we can use 0 as fallback. */
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+
 /*
  * =============================================================================
  * Helper Functions
