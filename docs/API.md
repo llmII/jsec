@@ -1,118 +1,118 @@
 
 # Table of Contents
 
-1.  [Overview](#orgafeed63)
-    1.  [Janet Stream API Compatibility](#org31d04ba)
-2.  [Modules](#org20ec85b)
-3.  [Module: jsec/tls](#org5e060f3)
-    1.  [(tls/new-context opts)](#org0b1e393)
-    2.  [(tls/connect host port &opt opts)](#org7b4e413)
-    3.  [(tls/listen host port &opt opts)](#org01d89c3)
-    4.  [(tls/accept listener opts)](#org164e6d3)
-    5.  [(tls/accept-loop listener context handler)](#org7b339c6)
-    6.  [(tls/upgrade stream hostname &opt opts)](#org22e7f3e)
-    7.  [(tls/wrap stream &opt hostname-or-opts opts)](#org4a75e60)
-    8.  [Stream Methods (Janet Stream API Compatible)](#org4237f98)
-        1.  [(ev/read stream n &opt buf timeout)](#orga87e4b4)
-        2.  [(ev/write stream data &opt timeout)](#org3a33485)
-        3.  [(ev/chunk stream n &opt buf timeout)](#org44bf4fc)
-        4.  [(ev/close stream)](#org829b94f)
-    9.  [TLS Stream Methods (via jsec/tls-stream)](#orgfa2c649)
-        1.  [Connection Information](#orgde6609c)
-        2.  [Session Management](#org47aeb1a)
-        3.  [TLS Operations](#org71a29be)
-        4.  [Certificate Trust](#orgd0c8dec)
-4.  [Module: jsec/dtls](#org4d3ce87)
-    1.  [Stream Method Access](#org80d75e5)
-    2.  [Server API (UDP-style, multiple peers)](#org4bcfe41)
-        1.  [(dtls/listen host port &opt opts)](#orgaeebef8)
-        2.  [(dtls/recv-from server nbytes buf &opt timeout-or-opts)](#org8ef9db2)
-        3.  [(dtls/send-to server addr data &opt timeout)](#org7d786aa)
-        4.  [(dtls/close-server server &opt force)](#org9ef679c)
-        5.  [(dtls/localname server)](#org618baf9)
-    3.  [Client API (1:1 connection)](#org1354b32)
-        1.  [(dtls/connect host port &opt opts)](#orge76f606)
-        2.  [(dtls/read client n &opt buf timeout)](#org86ab01e)
-        3.  [(dtls/write client data &opt timeout)](#org9be6b04)
-        4.  [(dtls/close client &opt force)](#org3d2c015)
-    4.  [Address Utilities](#orge477181)
-    5.  [DTLS Stream Methods (via jsec/dtls-stream)](#org5bfd99f)
-        1.  [Connection Information (Client)](#org0b5cb45)
-        2.  [Session Management (Client)](#org0caedbb)
-        3.  [DTLS Operations](#orgdf0db51)
-        4.  [Certificate Trust](#orgb53a759)
-        5.  [Upgrade (STARTTLS equivalent)](#org49a082c)
-5.  [Module: jsec/cert](#orgc0c4d70)
-    1.  [(cert/generate-self-signed-cert opts)](#org2d8e1ce)
-    2.  [(cert/generate-self-signed-from-key key-pem opts)](#orgdea0a36)
-6.  [Module: jsec/bio](#org280d231)
-    1.  [(bio/new-mem)](#org5880515)
-    2.  [(bio/read bio nbytes)](#org4331b82)
-    3.  [(bio/write bio data)](#org96ed749)
-    4.  [(bio/to-string bio)](#org286b63e)
-    5.  [(bio/close bio)](#org3a68c3d)
-7.  [Module: jsec/crypto](#orgf88e634)
-    1.  [Hashing and Message Authentication](#orga0bbe22)
-        1.  [(crypto/digest algorithm data)](#orgee26cdb)
-        2.  [(crypto/hmac algorithm key data)](#orgfddb6e5)
-    2.  [Key Generation and Management](#org095554e)
-        1.  [(crypto/generate-key alg &opt bits)](#org5f96ac7)
-        2.  [(crypto/export-public-key private-key-pem)](#orgfa9c01d)
-    3.  [Signing and Verification](#org16f4298)
-        1.  [(crypto/sign key-pem data)](#org76ee658)
-        2.  [(crypto/verify key-pem data signature)](#org60aecb4)
-    4.  [Key Derivation](#org6c3a0af)
-        1.  [(crypto/hkdf algorithm key salt info length)](#org3416872)
-        2.  [(crypto/pbkdf2 algorithm password salt iterations length)](#org6e43646)
-    5.  [Random Data](#org3fd92a7)
-        1.  [(crypto/random-bytes n)](#org8554542)
-    6.  [Certificate Signing Requests](#org6a0206c)
-        1.  [(crypto/generate-csr private-key-pem options)](#org516bfc9)
-        2.  [(crypto/parse-csr csr-pem)](#orgef13a29)
-    7.  [Challenge-Response](#org3294df6)
-        1.  [(crypto/generate-challenge &opt length)](#org462bd7e)
-    8.  [CMS/PKCS#7 Operations](#orgb1d097f)
-        1.  [(crypto/cms-sign data cert key &opt opts)](#orgdebfc85)
-        2.  [(crypto/cms-verify cms-data &opt opts)](#org8afacac)
-        3.  [(crypto/cms-encrypt data certs &opt opts)](#orga568a2b)
-        4.  [(crypto/cms-decrypt cms-data cert key)](#orgecb894d)
-        5.  [(crypto/cms-certs-only certs)](#org7dd7639)
-        6.  [(crypto/cms-get-certs cms-data)](#org6eeb8b1)
-    9.  [Base64 Encoding](#org3754286)
-        1.  [(crypto/base64-encode data)](#org80f8c12)
-        2.  [(crypto/base64-decode data)](#org7487aed)
-        3.  [(crypto/base64url-encode data)](#orgc02fa52)
-        4.  [(crypto/base64url-decode data)](#org65b8fab)
-    10. [Symmetric Encryption (AEAD)](#orge5d7429)
-        1.  [(crypto/encrypt algo key nonce plaintext &opt aad)](#orgfd9ec17)
-        2.  [(crypto/decrypt algo key nonce ciphertext tag &opt aad)](#org79a3d1a)
-        3.  [(crypto/generate-nonce algo)](#orgad4b918)
-        4.  [(crypto/cipher-info algo)](#org83e1c34)
-    11. [RSA Encryption](#org7713286)
-        1.  [(crypto/rsa-encrypt key-pem plaintext &opt opts)](#org015c7a1)
-        2.  [(crypto/rsa-decrypt key-pem ciphertext &opt opts)](#org20fa2fd)
-        3.  [(crypto/rsa-max-plaintext key-pem &opt opts)](#org9ba6423)
-    12. [Key/Certificate Format Conversion](#org5613c79)
-        1.  [(crypto/convert-key key-data target-format &opt opts)](#orgfb69be3)
-        2.  [(crypto/convert-cert cert-data target-format)](#org6c6ca78)
-        3.  [(crypto/detect-format data)](#org9be8328)
-        4.  [(crypto/load-key key-pem &opt password)](#org2c1c701)
-        5.  [(crypto/export-key key-pem &opt opts)](#org35d223b)
-        6.  [(crypto/key-info key-pem)](#org7d4bb84)
-    13. [PKCS#12 Operations](#org76c4fd7)
-        1.  [(crypto/create-pkcs12 cert-pem key-pem opts)](#orgd02c7fc)
-        2.  [(crypto/parse-pkcs12 pfx-data password)](#org105db28)
-    14. [Elliptic Curve Point Operations](#org71c7870)
-        1.  [(crypto/ec-generate-scalar curve)](#org9c04a83)
-        2.  [(crypto/ec-point-mul curve scalar &opt point)](#org8880b34)
-        3.  [(crypto/ec-point-add curve point1 point2)](#orgc75b806)
-        4.  [(crypto/ec-point-to-bytes curve point &opt opts)](#org4e04217)
-        5.  [(crypto/ec-point-from-bytes curve bytes)](#org22f9df4)
-8.  [Security Options](#orgbe87684)
+1.  [Overview](#org3e445e4)
+    1.  [Janet Stream API Compatibility](#org40b005d)
+2.  [Modules](#orgb2fbb40)
+3.  [Module: jsec/tls](#orgcae6f5e)
+    1.  [(tls/new-context opts)](#orgb554ce1)
+    2.  [(tls/connect host port &opt opts)](#org41702a6)
+    3.  [(tls/listen host port &opt opts)](#org6e768c4)
+    4.  [(tls/accept listener opts)](#org4164221)
+    5.  [(tls/accept-loop listener context handler)](#org5be27f1)
+    6.  [(tls/upgrade stream hostname &opt opts)](#orgc37f357)
+    7.  [(tls/wrap stream &opt hostname-or-opts opts)](#org3df55d0)
+    8.  [Stream Methods (Janet Stream API Compatible)](#org9977d00)
+        1.  [(ev/read stream n &opt buf timeout)](#org04c3062)
+        2.  [(ev/write stream data &opt timeout)](#org8b88302)
+        3.  [(ev/chunk stream n &opt buf timeout)](#orga912daa)
+        4.  [(ev/close stream)](#org278e1d5)
+    9.  [TLS Stream Methods (via jsec/tls-stream)](#orgd407e6c)
+        1.  [Connection Information](#orgd6ba318)
+        2.  [Session Management](#org09e9961)
+        3.  [TLS Operations](#org2e0e146)
+        4.  [Certificate Trust](#orge5bb5e3)
+4.  [Module: jsec/dtls](#orgdcf42f3)
+    1.  [Stream Method Access](#orga552814)
+    2.  [Server API (UDP-style, multiple peers)](#org0301067)
+        1.  [(dtls/listen host port &opt opts)](#org8256220)
+        2.  [(dtls/recv-from server nbytes buf &opt timeout-or-opts)](#org262c640)
+        3.  [(dtls/send-to server addr data &opt timeout)](#org783eabd)
+        4.  [(dtls/close-server server &opt force)](#orga3bf7c4)
+        5.  [(dtls/localname server)](#org9e1ea3d)
+    3.  [Client API (1:1 connection)](#org198b997)
+        1.  [(dtls/connect host port &opt opts)](#org38b5921)
+        2.  [(dtls/read client n &opt buf timeout)](#org05ebe06)
+        3.  [(dtls/write client data &opt timeout)](#org19ef075)
+        4.  [(dtls/close client &opt force)](#org39d308e)
+    4.  [Address Utilities](#orgd338e9b)
+    5.  [DTLS Stream Methods (via jsec/dtls-stream)](#orgeda5f12)
+        1.  [Connection Information (Client)](#orge5d0a78)
+        2.  [Session Management (Client)](#org22a2cf5)
+        3.  [DTLS Operations](#org9176207)
+        4.  [Certificate Trust](#org2e82ba2)
+        5.  [Upgrade (STARTTLS equivalent)](#orgde636cc)
+5.  [Module: jsec/cert](#orgc9c08d5)
+    1.  [(cert/generate-self-signed-cert opts)](#org82053d8)
+    2.  [(cert/generate-self-signed-from-key key-pem opts)](#orgaa8839a)
+6.  [Module: jsec/bio](#org5326136)
+    1.  [(bio/new-mem)](#orga097f41)
+    2.  [(bio/read bio nbytes)](#orgf27d8f4)
+    3.  [(bio/write bio data)](#org80a22f3)
+    4.  [(bio/to-string bio)](#orga90aa0a)
+    5.  [(bio/close bio)](#orga3c7a2e)
+7.  [Module: jsec/crypto](#org4fd6d0f)
+    1.  [Hashing and Message Authentication](#org913d3b4)
+        1.  [(crypto/digest algorithm data)](#orgd0ccb29)
+        2.  [(crypto/hmac algorithm key data)](#orga18007a)
+    2.  [Key Generation and Management](#orgcc327c8)
+        1.  [(crypto/generate-key alg &opt bits)](#org3142f59)
+        2.  [(crypto/export-public-key private-key-pem)](#orgf6b7155)
+    3.  [Signing and Verification](#orgcb58f45)
+        1.  [(crypto/sign key-pem data)](#orgc9b77a9)
+        2.  [(crypto/verify key-pem data signature)](#orgdd3f90f)
+    4.  [Key Derivation](#org10b1456)
+        1.  [(crypto/hkdf algorithm key salt info length)](#org97f6965)
+        2.  [(crypto/pbkdf2 algorithm password salt iterations length)](#orgccd5061)
+    5.  [Random Data](#org74a8ef0)
+        1.  [(crypto/random-bytes n)](#org22b883c)
+    6.  [Certificate Signing Requests](#org74465a8)
+        1.  [(crypto/generate-csr private-key-pem options)](#orgf774377)
+        2.  [(crypto/parse-csr csr-pem)](#org0946e12)
+    7.  [Challenge-Response](#org21c4464)
+        1.  [(crypto/generate-challenge &opt length)](#orga46b681)
+    8.  [CMS/PKCS#7 Operations](#orga3cf026)
+        1.  [(crypto/cms-sign data cert key &opt opts)](#org652260d)
+        2.  [(crypto/cms-verify cms-data &opt opts)](#org304b500)
+        3.  [(crypto/cms-encrypt data certs &opt opts)](#orgae7e5de)
+        4.  [(crypto/cms-decrypt cms-data cert key)](#org93b905f)
+        5.  [(crypto/cms-certs-only certs)](#org64acdcd)
+        6.  [(crypto/cms-get-certs cms-data)](#orgddc1f15)
+    9.  [Base64 Encoding](#org5c52695)
+        1.  [(crypto/base64-encode data)](#org4847dee)
+        2.  [(crypto/base64-decode data)](#orgd44da83)
+        3.  [(crypto/base64url-encode data)](#org1962399)
+        4.  [(crypto/base64url-decode data)](#orgef7ebbb)
+    10. [Symmetric Encryption (AEAD)](#org031b0c5)
+        1.  [(crypto/encrypt algo key nonce plaintext &opt aad)](#orgf68e0c0)
+        2.  [(crypto/decrypt algo key nonce ciphertext tag &opt aad)](#org3022f70)
+        3.  [(crypto/generate-nonce algo)](#orgcc48f37)
+        4.  [(crypto/cipher-info algo)](#org43ba49d)
+    11. [RSA Encryption](#orgf3499ea)
+        1.  [(crypto/rsa-encrypt key-pem plaintext &opt opts)](#orgc76334e)
+        2.  [(crypto/rsa-decrypt key-pem ciphertext &opt opts)](#orga945c37)
+        3.  [(crypto/rsa-max-plaintext key-pem &opt opts)](#org7a963d8)
+    12. [Key/Certificate Format Conversion](#org6b312de)
+        1.  [(crypto/convert-key key-data target-format &opt opts)](#org4d2ab85)
+        2.  [(crypto/convert-cert cert-data target-format)](#orga7c61a5)
+        3.  [(crypto/detect-format data)](#orgc2636be)
+        4.  [(crypto/load-key key-pem &opt password)](#org9a19cc5)
+        5.  [(crypto/export-key key-pem &opt opts)](#orgba71132)
+        6.  [(crypto/key-info key-pem)](#org41ca5f7)
+    13. [PKCS#12 Operations](#orge6b008f)
+        1.  [(crypto/create-pkcs12 cert-pem key-pem opts)](#orgc24a163)
+        2.  [(crypto/parse-pkcs12 pfx-data password)](#orgcae51f5)
+    14. [Elliptic Curve Point Operations](#org6f44e7d)
+        1.  [(crypto/ec-generate-scalar curve)](#org35dbfdf)
+        2.  [(crypto/ec-point-mul curve scalar &opt point)](#orgb1d85c8)
+        3.  [(crypto/ec-point-add curve point1 point2)](#org5b787c2)
+        4.  [(crypto/ec-point-to-bytes curve point &opt opts)](#org080bb9d)
+        5.  [(crypto/ec-point-from-bytes curve bytes)](#orga45e677)
+8.  [Security Options](#org23b8c4a)
 
 
 
-<a id="orgafeed63"></a>
+<a id="org3e445e4"></a>
 
 # Overview
 
@@ -129,7 +129,7 @@ designed to closely follow Janet's standard conventions:
 This design allows TLS/DTLS to be a drop-in replacement in existing code.
 
 
-<a id="org31d04ba"></a>
+<a id="org40b005d"></a>
 
 ## Janet Stream API Compatibility
 
@@ -169,7 +169,7 @@ means:
     (echo-handler (tls/connect "localhost" "8443" {:verify false}))
 
 
-<a id="org20ec85b"></a>
+<a id="orgb2fbb40"></a>
 
 # Modules
 
@@ -182,12 +182,12 @@ means:
 For working examples of all functionality, see the [examples directory](../examples/).
 
 
-<a id="org5e060f3"></a>
+<a id="orgcae6f5e"></a>
 
 # Module: jsec/tls
 
 
-<a id="org0b1e393"></a>
+<a id="orgb554ce1"></a>
 
 ## (tls/new-context opts)
 
@@ -209,7 +209,7 @@ Create a reusable TLS context.
 **Example**: See [echo<sub>server.janet</sub>](../examples/echo_server.janet) for context creation and reuse.
 
 
-<a id="org7b4e413"></a>
+<a id="org41702a6"></a>
 
 ## (tls/connect host port &opt opts)
 
@@ -230,7 +230,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP<sub>NODELAY</sub> (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#orgbe87684)).
+        -   `:security`: Table. Security options (see [Security Options](#org23b8c4a)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -244,7 +244,7 @@ Connect to a TLS server.
 -   [mtls<sub>client</sub><sub>server.janet</sub>](../examples/mtls_client_server.janet) - Mutual TLS authentication
 
 
-<a id="org01d89c3"></a>
+<a id="org6e768c4"></a>
 
 ## (tls/listen host port &opt opts)
 
@@ -258,7 +258,7 @@ Create a TCP listener. This is a wrapper around `net/listen`.
 **Returns**: A listener object.
 
 
-<a id="org164e6d3"></a>
+<a id="org4164221"></a>
 
 ## (tls/accept listener opts)
 
@@ -284,7 +284,7 @@ Accept a connection from a listener and perform the TLS handshake.
 **Returns**: A TLS stream object.
 
 
-<a id="org7b339c6"></a>
+<a id="org5be27f1"></a>
 
 ## (tls/accept-loop listener context handler)
 
@@ -298,7 +298,7 @@ Continuously accept TLS connections on a listener.
 **Returns**: The listener stream (when closed).
 
 
-<a id="org22e7f3e"></a>
+<a id="orgc37f357"></a>
 
 ## (tls/upgrade stream hostname &opt opts)
 
@@ -313,7 +313,7 @@ Upgrade an existing plaintext stream to TLS (STARTTLS).
 **Example**: See [starttls<sub>smtp.janet</sub>](../examples/starttls_smtp.janet) for SMTP STARTTLS upgrade.
 
 
-<a id="org4a75e60"></a>
+<a id="org3df55d0"></a>
 
 ## (tls/wrap stream &opt hostname-or-opts opts)
 
@@ -364,7 +364,7 @@ Wrap an existing stream with TLS. Used for both client and server modes.
                 :verify true :trusted-cert client-cert}))
 
 
-<a id="org4237f98"></a>
+<a id="org9977d00"></a>
 
 ## Stream Methods (Janet Stream API Compatible)
 
@@ -376,7 +376,7 @@ TLS streams implement Janet's standard stream interface. They work with:
 -   `ev/close` / `:close` - Close with proper TLS shutdown
 
 
-<a id="orga87e4b4"></a>
+<a id="org04c3062"></a>
 
 ### (ev/read stream n &opt buf timeout)
 
@@ -390,7 +390,7 @@ Read up to `n` bytes from the TLS stream.
 **Returns**: Buffer with data, or `nil` on EOF.
 
 
-<a id="org3a33485"></a>
+<a id="org8b88302"></a>
 
 ### (ev/write stream data &opt timeout)
 
@@ -403,7 +403,7 @@ Write data to the TLS stream.
 **Returns**: `nil`
 
 
-<a id="org44bf4fc"></a>
+<a id="orga912daa"></a>
 
 ### (ev/chunk stream n &opt buf timeout)
 
@@ -417,7 +417,7 @@ Read exactly `n` bytes, or until EOF.
 **Returns**: Buffer with data.
 
 
-<a id="org829b94f"></a>
+<a id="org278e1d5"></a>
 
 ### (ev/close stream)
 
@@ -432,7 +432,7 @@ underlying transport. Safe to use with Janet's `with` macro.
 close without TLS shutdown.
 
 
-<a id="orgfa2c649"></a>
+<a id="orgd407e6c"></a>
 
 ## TLS Stream Methods (via jsec/tls-stream)
 
@@ -440,7 +440,7 @@ These methods are available on TLS stream objects. Access via method syntax
 `(:method stream args...)` or import `jsec/tls-stream` for function versions.
 
 
-<a id="orgde6609c"></a>
+<a id="orgd6ba318"></a>
 
 ### Connection Information
 
@@ -462,7 +462,7 @@ These methods are available on TLS stream objects. Access via method syntax
     Returns cipher bit strength as integer
 
 
-<a id="org47aeb1a"></a>
+<a id="org09e9961"></a>
 
 ### Session Management
 
@@ -476,7 +476,7 @@ These methods are available on TLS stream objects. Access via method syntax
     Sets session data (usually passed in `connect` options instead)
 
 
-<a id="org71a29be"></a>
+<a id="org2e0e146"></a>
 
 ### TLS Operations
 
@@ -493,7 +493,7 @@ These methods are available on TLS stream objects. Access via method syntax
     Perform TLS shutdown. If `force` is true, skip close<sub>notify</sub>.
 
 
-<a id="orgd0c8dec"></a>
+<a id="orge5bb5e3"></a>
 
 ### Certificate Trust
 
@@ -505,7 +505,7 @@ These methods are available on TLS stream objects. Access via method syntax
 **Example**: See [connection<sub>info.janet</sub>](../examples/connection_info.janet) for connection info retrieval.
 
 
-<a id="org4d3ce87"></a>
+<a id="orgdcf42f3"></a>
 
 # Module: jsec/dtls
 
@@ -519,7 +519,7 @@ Both DTLSServer and DTLSClient embed JanetStream and expose methods via the
 standard `(:method obj args...)` syntax, matching Janet's stream patterns.
 
 
-<a id="org80d75e5"></a>
+<a id="orga552814"></a>
 
 ## Stream Method Access
 
@@ -537,12 +537,12 @@ Both DTLSServer and DTLSClient support method dispatch:
     (:close client)
 
 
-<a id="org4bcfe41"></a>
+<a id="org0301067"></a>
 
 ## Server API (UDP-style, multiple peers)
 
 
-<a id="orgaeebef8"></a>
+<a id="org8256220"></a>
 
 ### (dtls/listen host port &opt opts)
 
@@ -560,7 +560,7 @@ Create a DTLS server bound to an address.
 **Returns**: A DTLS server object.
 
 
-<a id="org8ef9db2"></a>
+<a id="org262c640"></a>
 
 ### (dtls/recv-from server nbytes buf &opt timeout-or-opts)
 
@@ -576,7 +576,7 @@ Receive a datagram from any peer. Handles DTLS handshakes transparently.
 Matches Janet's `net/recv-from` convention.
 
 
-<a id="org7d786aa"></a>
+<a id="org783eabd"></a>
 
 ### (dtls/send-to server addr data &opt timeout)
 
@@ -590,7 +590,7 @@ Send a datagram to a specific peer.
 **Returns**: Number of bytes sent.
 
 
-<a id="org9ef679c"></a>
+<a id="orga3bf7c4"></a>
 
 ### (dtls/close-server server &opt force)
 
@@ -600,7 +600,7 @@ Close the server and all sessions.
 -   **force**: If true, skip close<sub>notify</sub> alerts (default false)
 
 
-<a id="org618baf9"></a>
+<a id="org9e1ea3d"></a>
 
 ### (dtls/localname server)
 
@@ -609,12 +609,12 @@ Get the local address the server is bound to.
 **Returns**: `[host port]` tuple.
 
 
-<a id="org1354b32"></a>
+<a id="org198b997"></a>
 
 ## Client API (1:1 connection)
 
 
-<a id="orge76f606"></a>
+<a id="org38b5921"></a>
 
 ### (dtls/connect host port &opt opts)
 
@@ -634,7 +634,7 @@ Create a DTLS client connection. Performs handshake.
 **Returns**: A DTLS client object.
 
 
-<a id="org86ab01e"></a>
+<a id="org05ebe06"></a>
 
 ### (dtls/read client n &opt buf timeout)
 
@@ -648,7 +648,7 @@ Read a datagram from the connection.
 **Returns**: Buffer with data, or `nil` on EOF.
 
 
-<a id="org9be6b04"></a>
+<a id="org19ef075"></a>
 
 ### (dtls/write client data &opt timeout)
 
@@ -661,7 +661,7 @@ Write a datagram to the connection.
 **Returns**: Number of bytes written.
 
 
-<a id="org3d2c015"></a>
+<a id="org39d308e"></a>
 
 ### (dtls/close client &opt force)
 
@@ -671,7 +671,7 @@ Close the client connection.
 -   **force**: If true, skip close<sub>notify</sub> (default false)
 
 
-<a id="orge477181"></a>
+<a id="orgd338e9b"></a>
 
 ## Address Utilities
 
@@ -681,7 +681,7 @@ Close the client connection.
 -   `(dtls-stream/address? x)`: Check if x is a DTLS address object.
 
 
-<a id="org5bfd99f"></a>
+<a id="orgeda5f12"></a>
 
 ## DTLS Stream Methods (via jsec/dtls-stream)
 
@@ -689,7 +689,7 @@ These methods are available on DTLS server and client objects. Access via method
 syntax `(:method obj args...)` or import `jsec/dtls-stream` for function versions.
 
 
-<a id="org0b5cb45"></a>
+<a id="orge5d0a78"></a>
 
 ### Connection Information (Client)
 
@@ -712,7 +712,7 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
     Returns peer address as `[host port]` tuple
 
 
-<a id="org0caedbb"></a>
+<a id="org22a2cf5"></a>
 
 ### Session Management (Client)
 
@@ -726,7 +726,7 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
     Sets session data
 
 
-<a id="orgdf0db51"></a>
+<a id="org9176207"></a>
 
 ### DTLS Operations
 
@@ -737,7 +737,7 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
     Read exactly n bytes (for client connections)
 
 
-<a id="orgb53a759"></a>
+<a id="org2e82ba2"></a>
 
 ### Certificate Trust
 
@@ -745,7 +745,7 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
     Add a trusted certificate to a context.
 
 
-<a id="org49a082c"></a>
+<a id="orgde636cc"></a>
 
 ### Upgrade (STARTTLS equivalent)
 
@@ -757,12 +757,12 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
 **Example**: See [dtls<sub>connection</sub><sub>info.janet</sub>](../examples/dtls_connection_info.janet) for connection info.
 
 
-<a id="orgc0c4d70"></a>
+<a id="orgc9c08d5"></a>
 
 # Module: jsec/cert
 
 
-<a id="org2d8e1ce"></a>
+<a id="org82053d8"></a>
 
 ## (cert/generate-self-signed-cert opts)
 
@@ -782,7 +782,7 @@ Generate a self-signed X.509 certificate and private key.
 **Returns**: Struct `{:cert "PEM..." :key "PEM..."}`.
 
 
-<a id="orgdea0a36"></a>
+<a id="orgaa8839a"></a>
 
 ## (cert/generate-self-signed-from-key key-pem opts)
 
@@ -802,14 +802,14 @@ Generate a self-signed certificate using an existing private key.
 **Example**: See [cert<sub>gen.janet</sub>](../examples/cert_gen.janet) for certificate generation usage.
 
 
-<a id="org280d231"></a>
+<a id="org5326136"></a>
 
 # Module: jsec/bio
 
 BIO (Basic I/O) provides OpenSSL's I/O abstraction layer for in-memory operations.
 
 
-<a id="org5880515"></a>
+<a id="orga097f41"></a>
 
 ## (bio/new-mem)
 
@@ -818,7 +818,7 @@ Create a memory BIO for in-memory I/O operations.
 **Returns**: A BIO object.
 
 
-<a id="org4331b82"></a>
+<a id="orgf27d8f4"></a>
 
 ## (bio/read bio nbytes)
 
@@ -830,7 +830,7 @@ Read from a BIO.
 **Returns**: Buffer with data, or nil if no data available.
 
 
-<a id="org96ed749"></a>
+<a id="org80a22f3"></a>
 
 ## (bio/write bio data)
 
@@ -842,7 +842,7 @@ Write to a BIO.
 **Returns**: Number of bytes written.
 
 
-<a id="org286b63e"></a>
+<a id="orga90aa0a"></a>
 
 ## (bio/to-string bio)
 
@@ -853,7 +853,7 @@ Read all pending data from a BIO as a string.
 **Returns**: String with all pending data.
 
 
-<a id="org3a68c3d"></a>
+<a id="orga3c7a2e"></a>
 
 ## (bio/close bio)
 
@@ -864,17 +864,17 @@ Free a BIO object and release its resources.
 **Example**: See [bio<sub>memory.janet</sub>](../examples/bio_memory.janet) and [custom<sub>bio</sub><sub>transport.janet</sub>](../examples/custom_bio_transport.janet).
 
 
-<a id="orgf88e634"></a>
+<a id="org4fd6d0f"></a>
 
 # Module: jsec/crypto
 
 
-<a id="orga0bbe22"></a>
+<a id="org913d3b4"></a>
 
 ## Hashing and Message Authentication
 
 
-<a id="orgee26cdb"></a>
+<a id="orgd0ccb29"></a>
 
 ### (crypto/digest algorithm data)
 
@@ -886,7 +886,7 @@ Compute a cryptographic hash.
 **Returns**: Buffer with hash bytes.
 
 
-<a id="orgfddb6e5"></a>
+<a id="orga18007a"></a>
 
 ### (crypto/hmac algorithm key data)
 
@@ -899,12 +899,12 @@ Compute HMAC (Hash-based Message Authentication Code).
 **Returns**: Buffer with HMAC bytes.
 
 
-<a id="org095554e"></a>
+<a id="orgcc327c8"></a>
 
 ## Key Generation and Management
 
 
-<a id="org5f96ac7"></a>
+<a id="org3142f59"></a>
 
 ### (crypto/generate-key alg &opt bits)
 
@@ -922,7 +922,7 @@ Generate a private key in PEM format.
 **Returns**: PEM-encoded private key string.
 
 
-<a id="orgfa9c01d"></a>
+<a id="orgf6b7155"></a>
 
 ### (crypto/export-public-key private-key-pem)
 
@@ -933,12 +933,12 @@ Extract public key from a private key.
 **Returns**: PEM-encoded public key string.
 
 
-<a id="org16f4298"></a>
+<a id="orgcb58f45"></a>
 
 ## Signing and Verification
 
 
-<a id="org76ee658"></a>
+<a id="orgc9b77a9"></a>
 
 ### (crypto/sign key-pem data)
 
@@ -950,7 +950,7 @@ Sign data with a private key.
 **Returns**: Signature buffer.
 
 
-<a id="org60aecb4"></a>
+<a id="orgdd3f90f"></a>
 
 ### (crypto/verify key-pem data signature)
 
@@ -963,12 +963,12 @@ Verify a signature.
 **Returns**: Boolean (`true` if valid).
 
 
-<a id="org6c3a0af"></a>
+<a id="org10b1456"></a>
 
 ## Key Derivation
 
 
-<a id="org3416872"></a>
+<a id="org97f6965"></a>
 
 ### (crypto/hkdf algorithm key salt info length)
 
@@ -983,7 +983,7 @@ HKDF (HMAC-based Key Derivation Function).
 **Returns**: Derived key buffer.
 
 
-<a id="org6e43646"></a>
+<a id="orgccd5061"></a>
 
 ### (crypto/pbkdf2 algorithm password salt iterations length)
 
@@ -998,12 +998,12 @@ PBKDF2 (Password-Based Key Derivation Function 2).
 **Returns**: Derived key buffer.
 
 
-<a id="org3fd92a7"></a>
+<a id="org74a8ef0"></a>
 
 ## Random Data
 
 
-<a id="org8554542"></a>
+<a id="org22b883c"></a>
 
 ### (crypto/random-bytes n)
 
@@ -1014,12 +1014,12 @@ Generate cryptographically secure random bytes.
 **Returns**: Buffer with random bytes.
 
 
-<a id="org6a0206c"></a>
+<a id="org74465a8"></a>
 
 ## Certificate Signing Requests
 
 
-<a id="org516bfc9"></a>
+<a id="orgf774377"></a>
 
 ### (crypto/generate-csr private-key-pem options)
 
@@ -1040,7 +1040,7 @@ Generate a Certificate Signing Request (CSR).
 **Returns**: PEM-encoded CSR string.
 
 
-<a id="orgef13a29"></a>
+<a id="org0946e12"></a>
 
 ### (crypto/parse-csr csr-pem)
 
@@ -1051,12 +1051,12 @@ Parse a PEM-encoded CSR.
 **Returns**: Table with CSR information.
 
 
-<a id="org3294df6"></a>
+<a id="org21c4464"></a>
 
 ## Challenge-Response
 
 
-<a id="org462bd7e"></a>
+<a id="orga46b681"></a>
 
 ### (crypto/generate-challenge &opt length)
 
@@ -1067,14 +1067,14 @@ Generate a random challenge for authentication protocols.
 **Returns**: Buffer with random challenge.
 
 
-<a id="orgb1d097f"></a>
+<a id="orga3cf026"></a>
 
 ## CMS/PKCS#7 Operations
 
 For SCEP/ACME foundations and secure message exchange.
 
 
-<a id="orgdebfc85"></a>
+<a id="org652260d"></a>
 
 ### (crypto/cms-sign data cert key &opt opts)
 
@@ -1089,7 +1089,7 @@ Sign data using CMS (Cryptographic Message Syntax).
 **Returns**: CMS signed data (DER or PEM based on input).
 
 
-<a id="org8afacac"></a>
+<a id="org304b500"></a>
 
 ### (crypto/cms-verify cms-data &opt opts)
 
@@ -1103,7 +1103,7 @@ Verify a CMS signature.
 **Returns**: Table `{:valid true/false :content data :certs [...]}`
 
 
-<a id="orga568a2b"></a>
+<a id="orgae7e5de"></a>
 
 ### (crypto/cms-encrypt data certs &opt opts)
 
@@ -1117,7 +1117,7 @@ Encrypt data for recipients using CMS.
 **Returns**: CMS encrypted data.
 
 
-<a id="orgecb894d"></a>
+<a id="org93b905f"></a>
 
 ### (crypto/cms-decrypt cms-data cert key)
 
@@ -1130,7 +1130,7 @@ Decrypt CMS encrypted data.
 **Returns**: Decrypted data buffer.
 
 
-<a id="org7dd7639"></a>
+<a id="org64acdcd"></a>
 
 ### (crypto/cms-certs-only certs)
 
@@ -1141,7 +1141,7 @@ Create a CMS certs-only message (certificate chain).
 **Returns**: CMS data containing certificates.
 
 
-<a id="org6eeb8b1"></a>
+<a id="orgddc1f15"></a>
 
 ### (crypto/cms-get-certs cms-data)
 
@@ -1152,12 +1152,12 @@ Extract certificates from CMS data.
 **Returns**: Array of PEM-encoded certificates.
 
 
-<a id="org3754286"></a>
+<a id="org5c52695"></a>
 
 ## Base64 Encoding
 
 
-<a id="org80f8c12"></a>
+<a id="org4847dee"></a>
 
 ### (crypto/base64-encode data)
 
@@ -1166,7 +1166,7 @@ Base64 encode data.
 **Returns**: Base64 string.
 
 
-<a id="org7487aed"></a>
+<a id="orgd44da83"></a>
 
 ### (crypto/base64-decode data)
 
@@ -1175,7 +1175,7 @@ Base64 decode data.
 **Returns**: Decoded buffer.
 
 
-<a id="orgc02fa52"></a>
+<a id="org1962399"></a>
 
 ### (crypto/base64url-encode data)
 
@@ -1184,7 +1184,7 @@ URL-safe Base64 encode (for JWT, etc.).
 **Returns**: Base64url string.
 
 
-<a id="org65b8fab"></a>
+<a id="orgef7ebbb"></a>
 
 ### (crypto/base64url-decode data)
 
@@ -1196,12 +1196,12 @@ URL-safe Base64 decode.
 **Example**: See [crypto<sub>operations.janet</sub>](../examples/crypto_operations.janet) for comprehensive crypto usage.
 
 
-<a id="orge5d7429"></a>
+<a id="org031b0c5"></a>
 
 ## Symmetric Encryption (AEAD)
 
 
-<a id="orgfd9ec17"></a>
+<a id="orgf68e0c0"></a>
 
 ### (crypto/encrypt algo key nonce plaintext &opt aad)
 
@@ -1223,7 +1223,7 @@ Encrypt data using authenticated encryption (AEAD).
 **IMPORTANT**: Never reuse a nonce with the same key!
 
 
-<a id="org79a3d1a"></a>
+<a id="org3022f70"></a>
 
 ### (crypto/decrypt algo key nonce ciphertext tag &opt aad)
 
@@ -1241,7 +1241,7 @@ Decrypt data using authenticated encryption.
 **Errors**: If authentication fails (tag mismatch).
 
 
-<a id="orgad4b918"></a>
+<a id="orgcc48f37"></a>
 
 ### (crypto/generate-nonce algo)
 
@@ -1252,7 +1252,7 @@ Generate a random nonce suitable for the specified cipher.
 **Returns**: Buffer of appropriate length.
 
 
-<a id="org83e1c34"></a>
+<a id="org43ba49d"></a>
 
 ### (crypto/cipher-info algo)
 
@@ -1271,12 +1271,12 @@ Get information about a cipher algorithm.
 **Example**: See [symmetric<sub>encryption.janet</sub>](../examples/symmetric_encryption.janet) for AEAD encryption.
 
 
-<a id="org7713286"></a>
+<a id="orgf3499ea"></a>
 
 ## RSA Encryption
 
 
-<a id="org015c7a1"></a>
+<a id="orgc76334e"></a>
 
 ### (crypto/rsa-encrypt key-pem plaintext &opt opts)
 
@@ -1298,7 +1298,7 @@ Encrypt data with RSA public key.
 Use `rsa-max-plaintext` to check limits. For larger data, use hybrid encryption.
 
 
-<a id="org20fa2fd"></a>
+<a id="orga945c37"></a>
 
 ### (crypto/rsa-decrypt key-pem ciphertext &opt opts)
 
@@ -1311,7 +1311,7 @@ Decrypt data with RSA private key.
 **Returns**: Decrypted plaintext buffer.
 
 
-<a id="org9ba6423"></a>
+<a id="org7a963d8"></a>
 
 ### (crypto/rsa-max-plaintext key-pem &opt opts)
 
@@ -1325,12 +1325,12 @@ Get maximum plaintext size for RSA encryption.
 **Example**: See [rsa<sub>encryption.janet</sub>](../examples/rsa_encryption.janet) for RSA encryption and hybrid encryption.
 
 
-<a id="org5613c79"></a>
+<a id="org6b312de"></a>
 
 ## Key/Certificate Format Conversion
 
 
-<a id="orgfb69be3"></a>
+<a id="org4d2ab85"></a>
 
 ### (crypto/convert-key key-data target-format &opt opts)
 
@@ -1348,7 +1348,7 @@ Convert a key between formats.
 **Returns**: Key in target format.
 
 
-<a id="org6c6ca78"></a>
+<a id="orga7c61a5"></a>
 
 ### (crypto/convert-cert cert-data target-format)
 
@@ -1360,7 +1360,7 @@ Convert a certificate between PEM and DER formats.
 **Returns**: Certificate in target format.
 
 
-<a id="org9be8328"></a>
+<a id="orgc2636be"></a>
 
 ### (crypto/detect-format data)
 
@@ -1369,7 +1369,7 @@ Detect if data is PEM or DER format.
 **Returns**: `:pem` or `:der`
 
 
-<a id="org2c1c701"></a>
+<a id="org9a19cc5"></a>
 
 ### (crypto/load-key key-pem &opt password)
 
@@ -1381,7 +1381,7 @@ Load a private key, optionally decrypting it.
 **Returns**: Decrypted key in PEM format.
 
 
-<a id="org35d223b"></a>
+<a id="orgba71132"></a>
 
 ### (crypto/export-key key-pem &opt opts)
 
@@ -1395,7 +1395,7 @@ Export a private key, optionally encrypting it.
 **Returns**: Key in PEM format.
 
 
-<a id="org7d4bb84"></a>
+<a id="org41ca5f7"></a>
 
 ### (crypto/key-info key-pem)
 
@@ -1411,12 +1411,12 @@ Get metadata about a key without needing the password.
 **Example**: See [format<sub>conversion.janet</sub>](../examples/format_conversion.janet) for format conversion.
 
 
-<a id="org76c4fd7"></a>
+<a id="orge6b008f"></a>
 
 ## PKCS#12 Operations
 
 
-<a id="orgd02c7fc"></a>
+<a id="orgc24a163"></a>
 
 ### (crypto/create-pkcs12 cert-pem key-pem opts)
 
@@ -1432,7 +1432,7 @@ Create a PKCS#12 (PFX) bundle.
 **Returns**: PKCS#12 bundle bytes (DER format).
 
 
-<a id="org105db28"></a>
+<a id="orgcae51f5"></a>
 
 ### (crypto/parse-pkcs12 pfx-data password)
 
@@ -1451,7 +1451,7 @@ Parse a PKCS#12 bundle.
 **Example**: See [pkcs12<sub>operations.janet</sub>](../examples/pkcs12_operations.janet) for PKCS#12 usage.
 
 
-<a id="org71c7870"></a>
+<a id="org6f44e7d"></a>
 
 ## Elliptic Curve Point Operations
 
@@ -1459,7 +1459,7 @@ Low-level EC point arithmetic for custom protocols, threshold cryptography,
 zero-knowledge proofs, and Bitcoin/Ethereum cryptography.
 
 
-<a id="org9c04a83"></a>
+<a id="org35dbfdf"></a>
 
 ### (crypto/ec-generate-scalar curve)
 
@@ -1474,7 +1474,7 @@ Generate a random scalar in [1, order-1] for the curve.
 **Returns**: Big-endian byte buffer.
 
 
-<a id="org8880b34"></a>
+<a id="orgb1d85c8"></a>
 
 ### (crypto/ec-point-mul curve scalar &opt point)
 
@@ -1487,7 +1487,7 @@ Scalar multiplication on elliptic curve.
 **Returns**: `{:x <buffer> :y <buffer>}`
 
 
-<a id="orgc75b806"></a>
+<a id="org5b787c2"></a>
 
 ### (crypto/ec-point-add curve point1 point2)
 
@@ -1496,7 +1496,7 @@ Point addition on elliptic curve.
 **Returns**: `{:x <buffer> :y <buffer>}`
 
 
-<a id="org4e04217"></a>
+<a id="org080bb9d"></a>
 
 ### (crypto/ec-point-to-bytes curve point &opt opts)
 
@@ -1508,7 +1508,7 @@ Serialize EC point to SEC1 format.
 **Returns**: Bytes buffer.
 
 
-<a id="org22f9df4"></a>
+<a id="orga45e677"></a>
 
 ### (crypto/ec-point-from-bytes curve bytes)
 
@@ -1519,7 +1519,7 @@ Deserialize EC point from SEC1 format.
 **Example**: See [ec<sub>point</sub><sub>operations.janet</sub>](../examples/ec_point_operations.janet) for EC operations.
 
 
-<a id="orgbe87684"></a>
+<a id="org23b8c4a"></a>
 
 # Security Options
 

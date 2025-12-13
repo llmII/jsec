@@ -2,7 +2,8 @@
  * jcert/verify.c - Certificate chain verification
  *
  * Standalone certificate chain validation outside of TLS connection context.
- * Use cases: Certificate validation UI, debugging, audit logging, policy checking.
+ * Use cases: Certificate validation UI, debugging, audit logging, policy
+ * checking.
  *
  * Author: llmII <dev@amlegion.org>
  * License: ISC
@@ -10,18 +11,19 @@
 
 #include "../jutils.h"
 #include "../jutils/internal.h"
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-#include <openssl/x509_vfy.h>
-#include <openssl/pem.h>
 #include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
 
 /*
  * Load a certificate from PEM data
  */
 static X509 *load_cert_from_pem(const uint8_t *data, int32_t len) {
     BIO *bio = BIO_new_mem_buf(data, len);
-    if (!bio) return NULL;
+    if (!bio)
+        return NULL;
 
     X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
     BIO_free(bio);
@@ -31,10 +33,11 @@ static X509 *load_cert_from_pem(const uint8_t *data, int32_t len) {
 /*
  * Load multiple certificates from PEM data (chain)
  */
-static STACK_OF(X509) *load_cert_chain_from_pem(const uint8_t *data,
-        int32_t len) {
+static STACK_OF(X509) *
+    load_cert_chain_from_pem(const uint8_t *data, int32_t len) {
     STACK_OF(X509) *chain = sk_X509_new_null();
-    if (!chain) return NULL;
+    if (!chain)
+        return NULL;
 
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) {
@@ -73,8 +76,16 @@ static int get_purpose_from_keyword(const char *purpose) {
         strcmp(purpose, "ssl-client") == 0) {
         return X509_PURPOSE_SSL_CLIENT;
     }
+    // openssl 3.0 doesn't define this, but might get it another way
     if (strcmp(purpose, "code-signing") == 0) {
+#ifdef X509_PURPOSE_CODE_SIGN
         return X509_PURPOSE_CODE_SIGN;
+#else
+        int idx = X509_PURPOSE_get_by_sname("codesign");
+        if (idx >= 0)
+            return idx;
+        return -1;
+#endif
     }
     if (strcmp(purpose, "email-protection") == 0 ||
         strcmp(purpose, "smime-sign") == 0) {
@@ -93,7 +104,7 @@ static int get_purpose_from_keyword(const char *purpose) {
     if (strcmp(purpose, "any") == 0) {
         return X509_PURPOSE_ANY;
     }
-    return -1;  /* Invalid */
+    return -1; /* Invalid */
 }
 
 /*
@@ -101,7 +112,8 @@ static int get_purpose_from_keyword(const char *purpose) {
  */
 static Janet cert_to_pem(X509 *cert) {
     BIO *bio = BIO_new(BIO_s_mem());
-    if (!bio) return janet_wrap_nil();
+    if (!bio)
+        return janet_wrap_nil();
 
     PEM_write_bio_X509(bio, cert);
 
@@ -160,14 +172,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :chain */
         val = opts ? janet_table_get(opts, janet_ckeywordv("chain"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
         if (!janet_checktype(val, JANET_NIL)) {
             if (!janet_checktype(val, JANET_ARRAY) &&
                 !janet_checktype(val, JANET_TUPLE)) {
                 cert_panic_param(":chain must be an array of PEM strings");
             }
-            chain_arr = janet_checktype(val,
-                                        JANET_ARRAY) ? janet_unwrap_array(val) : NULL;
+            chain_arr = janet_checktype(val, JANET_ARRAY)
+                            ? janet_unwrap_array(val)
+                            : NULL;
             /* Handle tuple as well */
             if (!chain_arr) {
                 JanetTuple tup = janet_unwrap_tuple(val);
@@ -180,14 +193,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :trusted */
         val = opts ? janet_table_get(opts, janet_ckeywordv("trusted"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("trusted"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("trusted"));
         if (!janet_checktype(val, JANET_NIL)) {
             if (!janet_checktype(val, JANET_ARRAY) &&
                 !janet_checktype(val, JANET_TUPLE)) {
                 cert_panic_param(":trusted must be an array of PEM strings");
             }
-            trusted_arr = janet_checktype(val,
-                                          JANET_ARRAY) ? janet_unwrap_array(val) : NULL;
+            trusted_arr = janet_checktype(val, JANET_ARRAY)
+                              ? janet_unwrap_array(val)
+                              : NULL;
             if (!trusted_arr) {
                 JanetTuple tup = janet_unwrap_tuple(val);
                 trusted_arr = janet_array(janet_tuple_length(tup));
@@ -199,7 +213,8 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :trusted-dir */
         val = opts ? janet_table_get(opts, janet_ckeywordv("trusted-dir"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("trusted-dir"));
+                   : janet_struct_get(opts_struct,
+                                      janet_ckeywordv("trusted-dir"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             trusted_dir = (const char *)bv.bytes;
@@ -207,14 +222,14 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :purpose */
         val = opts ? janet_table_get(opts, janet_ckeywordv("purpose"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("purpose"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("purpose"));
         if (!janet_checktype(val, JANET_NIL)) {
             purpose_str = (const char *)janet_getkeyword(&val, 0);
         }
 
         /* :hostname */
         val = opts ? janet_table_get(opts, janet_ckeywordv("hostname"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("hostname"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("hostname"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             hostname = (const char *)bv.bytes;
@@ -222,25 +237,26 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :time */
         val = opts ? janet_table_get(opts, janet_ckeywordv("time"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("time"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("time"));
         if (!janet_checktype(val, JANET_NIL)) {
             verify_time = (time_t)janet_unwrap_number(val);
             use_verify_time = 1;
         }
 
         /* :check-crl */
-        val = opts ? janet_table_get(opts, janet_ckeywordv("check-crl"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("check-crl"));
+        val = opts
+                  ? janet_table_get(opts, janet_ckeywordv("check-crl"))
+                  : janet_struct_get(opts_struct, janet_ckeywordv("check-crl"));
         if (!janet_checktype(val, JANET_NIL)) {
             check_crl = janet_truthy(val);
         }
 
         /* :crl */
         val = opts ? janet_table_get(opts, janet_ckeywordv("crl"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("crl"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("crl"));
         if (!janet_checktype(val, JANET_NIL)) {
             crl_pem = janet_getbytes(&val, 0);
-            check_crl = 1;  /* Implicitly enable CRL check */
+            check_crl = 1; /* Implicitly enable CRL check */
         }
     }
 
@@ -335,8 +351,10 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
             X509_STORE_CTX_free(ctx);
             X509_STORE_free(store);
             X509_free(cert);
-            cert_panic_param("unknown purpose: %s (supported: server-auth, client-auth, code-signing, email-protection, timestamp, any)",
-                             purpose_str);
+            cert_panic_param(
+                "unknown purpose: %s (supported: server-auth, client-auth, "
+                "code-signing, email-protection, timestamp, any)",
+                purpose_str);
         }
         X509_STORE_CTX_set_purpose(ctx, purpose);
     }
@@ -353,11 +371,14 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         /* If hostname verification requested, do it separately */
         if (hostname) {
             /* OpenSSL 1.1.0+ has X509_check_host */
-            if (X509_check_host(cert, hostname, strlen(hostname), 0, NULL) != 1) {
-                janet_table_put(ret, janet_ckeywordv("valid"), janet_wrap_boolean(0));
+            if (X509_check_host(cert, hostname, strlen(hostname), 0, NULL) !=
+                1) {
+                janet_table_put(ret, janet_ckeywordv("valid"),
+                                janet_wrap_boolean(0));
                 janet_table_put(ret, janet_ckeywordv("error"),
                                 janet_cstringv("hostname mismatch"));
-                janet_table_put(ret, janet_ckeywordv("depth"), janet_wrap_integer(0));
+                janet_table_put(ret, janet_ckeywordv("depth"),
+                                janet_wrap_integer(0));
             }
         }
 
@@ -369,7 +390,8 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                 X509 *c = sk_X509_value(verified_chain, i);
                 janet_array_push(chain_pems, cert_to_pem(c));
             }
-            janet_table_put(ret, janet_ckeywordv("chain"), janet_wrap_array(chain_pems));
+            janet_table_put(ret, janet_ckeywordv("chain"),
+                            janet_wrap_array(chain_pems));
         }
     } else {
         /* Verification failed */
@@ -380,8 +402,10 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         janet_table_put(ret, janet_ckeywordv("error"),
                         janet_cstringv(get_verify_error_string(err)));
-        janet_table_put(ret, janet_ckeywordv("depth"), janet_wrap_integer(depth));
-        janet_table_put(ret, janet_ckeywordv("error-code"), janet_wrap_integer(err));
+        janet_table_put(ret, janet_ckeywordv("depth"),
+                        janet_wrap_integer(depth));
+        janet_table_put(ret, janet_ckeywordv("error-code"),
+                        janet_wrap_integer(err));
     }
 
     /* Cleanup */
@@ -398,7 +422,8 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
  * (cert/build-chain cert-pem intermediates trusted)
  * intermediates can be array or single PEM string with multiple certs
  * trusted can be array or single PEM string
- * Returns array of PEM strings from cert to root, or nil if chain can't be built
+ * Returns array of PEM strings from cert to root, or nil if chain can't be
+ * built
  */
 Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 3);
@@ -417,12 +442,13 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
         JanetView items = janet_getindexed(&argv[1], 0);
         for (int32_t i = 0; i < items.len; i++) {
             JanetByteView pem = janet_getbytes(&items.items[i], 0);
-            STACK_OF(X509) *loaded = load_cert_chain_from_pem(pem.bytes, pem.len);
+            STACK_OF(X509) *loaded =
+                load_cert_chain_from_pem(pem.bytes, pem.len);
             if (loaded) {
                 for (int j = 0; j < sk_X509_num(loaded); j++) {
                     sk_X509_push(intermediates, sk_X509_value(loaded, j));
                 }
-                sk_X509_free(loaded);  /* Don't free the certs, just the stack */
+                sk_X509_free(loaded); /* Don't free the certs, just the stack */
             }
         }
     } else {
@@ -438,7 +464,8 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
         JanetView items = janet_getindexed(&argv[2], 0);
         for (int32_t i = 0; i < items.len; i++) {
             JanetByteView pem = janet_getbytes(&items.items[i], 0);
-            STACK_OF(X509) *loaded = load_cert_chain_from_pem(pem.bytes, pem.len);
+            STACK_OF(X509) *loaded =
+                load_cert_chain_from_pem(pem.bytes, pem.len);
             if (loaded) {
                 for (int j = 0; j < sk_X509_num(loaded); j++) {
                     sk_X509_push(trusted, sk_X509_value(loaded, j));
@@ -457,7 +484,7 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
     janet_array_push(chain, cert_to_pem(cert));
 
     X509 *current = cert;
-    int max_depth = 20;  /* Prevent infinite loops */
+    int max_depth = 20; /* Prevent infinite loops */
 
     while (max_depth-- > 0) {
         /* Check if current cert is self-signed (root) */
@@ -478,7 +505,8 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
             }
         }
 
-        if (found) continue;
+        if (found)
+            continue;
 
         /* Check intermediates */
         for (int i = 0; i < sk_X509_num(intermediates); i++) {
