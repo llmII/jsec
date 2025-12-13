@@ -314,7 +314,7 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
     if (!key_bio) goto cleanup;
 
-    pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
+    pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
     key_bio = NULL;
 

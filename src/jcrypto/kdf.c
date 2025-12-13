@@ -95,7 +95,7 @@ Janet cfun_ecdh_derive(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *bio = BIO_new_mem_buf(priv_pem.bytes, priv_pem.len);
-    EVP_PKEY *priv = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    EVP_PKEY *priv = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
     if (!priv) crypto_panic_ssl("failed to load private key");
 

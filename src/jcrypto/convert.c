@@ -48,7 +48,7 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
     if (!bio) crypto_panic_resource("failed to create BIO");
 
     /* Try PEM private key */
-    pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     if (!pkey) {
         /* Reset and try PEM public key */
         BIO_free(bio);

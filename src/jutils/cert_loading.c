@@ -11,6 +11,18 @@
 #include <string.h>
 
 /*
+ * Callback to prevent interactive password prompts in OpenSSL 3.0+
+ * Returns 0 to indicate no password available.
+ */
+int jutils_no_password_cb(char *buf, int size, int rwflag, void *u) {
+    (void)buf;
+    (void)size;
+    (void)rwflag;
+    (void)u;
+    return 0;
+}
+
+/*
  * Load certificate chain from PEM data in memory.
  * Loads the first certificate as the end-entity cert, then any
  * additional certificates as the chain.
@@ -58,7 +70,7 @@ int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) return 0;
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     if (!pkey) {
         BIO_free(bio);
         return 0;
