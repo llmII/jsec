@@ -140,7 +140,7 @@ EVP_PKEY *ca_pem_to_key(Janet pem) {
         ca_panic_resource("failed to create BIO for private key");
     }
 
-    EVP_PKEY *key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    EVP_PKEY *key = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
     if (!key) {

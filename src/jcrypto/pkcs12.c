@@ -189,7 +189,7 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         crypto_panic_resource("failed to create BIO");
     }
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
 
     if (!pkey) {
