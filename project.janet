@@ -5,7 +5,7 @@
   :license "ISC"
   :url "https://github.com/llmII/jsec"
   :repo "git+https://github.com/llmII/jsec.git"
-  :dependencies [{:url "https://github.com/llmII/spork.git"
+  :dependencies [{:url "https://github.com/janet-lang/spork.git"
                   :tag "master"}
                  {:url "https://github.com/llmII/janet-assay.git"
                   :tag "main"}]

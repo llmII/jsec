@@ -186,7 +186,7 @@ jpm install
 ** Dependencies
 
 - Janet 1.30+
-- OpenSSL 1.1.1+ or 3.x
+- OpenSSL 3.0+
 - spork (Janet package)
 
 * Testing
