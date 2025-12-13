@@ -1,0 +1,528 @@
+#+TITLE: JSEC Error Reference
+#+AUTHOR: JSEC Project
+#+OPTIONS: toc:3 num:t
+
+* Overview
+
+This document catalogs all errors that JSEC can produce, organized by module and category.
+
+** Error Format
+
+All errors follow a standardized format:
+
+#+begin_example
+[MODULE:CATEGORY] message: detail
+#+end_example
+
+Where:
+- *MODULE*: TLS, DTLS, CRYPTO, CA, CERT, UTILS
+- *CATEGORY*: CONFIG, IO, SSL, SOCKET, PARAM, RESOURCE, VERIFY, PARSE
+
+** Example Errors
+
+#+begin_example
+[TLS:CONFIG] invalid cipher suite: RC4-MD5
+[DTLS:SOCKET] bind failed: address already in use
+[CRYPTO:PARAM] output length must be 1-1024, got 2000
+[CA:SSL] failed to sign certificate: key mismatch
+#+end_example
+
+* TLS Module Errors
+
+** CONFIG - Configuration Errors
+
+*** ~[TLS:CONFIG] buffer-size must be a number~
+
+*When*: Non-numeric ~:buffer-size~ option
+*Fix*: Pass a positive integer
+
+#+begin_src janet
+# Wrong
+(tls/connect "host" "443" {:buffer-size "big"})
+
+# Correct
+(tls/connect "host" "443" {:buffer-size 16384})
+#+end_src
+
+*** ~[TLS:CONFIG] invalid cipher suite: <suite>~
+
+*When*: Unrecognized or disabled cipher suite specified
+*Fix*: Use valid OpenSSL cipher string
+
+*** ~[TLS:CONFIG] sni option must be a table or struct~
+
+*When*: Invalid ~:sni~ option format for server context
+*Fix*: Pass table mapping hostnames to cert/key configs
+
+#+begin_src janet
+{:sni {"api.example.com" {:cert api-cert :key api-key}
+       "www.example.com" {:cert www-cert :key www-key}}}
+#+end_src
+
+*** ~[TLS:CONFIG] Invalid ALPN protocols~
+
+*When*: Invalid ~:alpn~ option format
+*Fix*: Pass array of protocol strings
+
+#+begin_src janet
+{:alpn ["h2" "http/1.1"]}
+#+end_src
+
+*** ~[TLS:CONFIG] handler function must take at least 1 argument~
+
+*When*: Server handler function has wrong arity
+*Fix*: Handler must accept at least the stream argument
+
+#+begin_src janet
+# Wrong
+(tls/server "0.0.0.0" "8443" (fn [] (print "no args")) opts)
+
+# Correct
+(tls/server "0.0.0.0" "8443" (fn [stream] (:close stream)) opts)
+#+end_src
+
+** PARAM - Parameter Errors
+
+*** ~[TLS:PARAM] timeout must be non-negative, got <value>~
+
+*When*: Passing negative timeout value to I/O operations
+*Fix*: Use zero or positive timeout (seconds)
+
+#+begin_src janet
+# Wrong
+(:read stream -1)
+
+# Correct
+(:read stream 1024 5.0)  # 5 second timeout
+#+end_src
+
+*** ~[TLS:PARAM] expected keyword or nil, got <value>~
+
+*When*: Passing wrong type to ~:close~ method
+*Fix*: Pass ~:r~, ~:w~, ~:rw~, or ~nil~
+
+#+begin_src janet
+# Wrong
+(:close stream "both")
+
+# Correct
+(:close stream :rw)  # Close both directions
+(:close stream)      # Same as :rw
+#+end_src
+
+*** ~[TLS:PARAM] length must be non-negative~
+
+*When*: Negative length to read operations
+*Fix*: Pass zero or positive length
+
+** IO - I/O Errors
+
+*** ~[TLS:IO] stream is closed~
+
+*When*: I/O on a closed TLS stream
+*Fix*: Don't use stream after closing
+
+#+begin_src janet
+(def stream (tls/connect "host" "443"))
+(:close stream)
+(:read stream 1024)  # Error! Stream is closed
+#+end_src
+
+*** ~[TLS:IO] connection is shutting down~
+
+*When*: Write attempt during TLS shutdown
+*Fix*: Complete shutdown before further operations
+
+** SSL - OpenSSL Errors
+
+*** ~[TLS:SSL] failed to create SSL context: <ssl-error>~
+
+*When*: SSL_CTX_new() failed
+*Fix*: Check OpenSSL installation, memory
+
+*** ~[TLS:SSL] failed to create SSL object: <ssl-error>~
+
+*When*: SSL_new() failed
+*Fix*: Check context validity, memory
+
+*** ~[TLS:SSL] handshake failed: <ssl-error>~
+
+*When*: TLS handshake failed
+*Fix*: Check certificates, protocol compatibility
+
+*** ~[TLS:SSL] certificate verification failed: <ssl-error>~
+
+*When*: Peer certificate verification failed
+*Fix*: Check certificate chain, CA trust
+
+*** ~[TLS:SSL] failed to load private key: <ssl-error>~
+
+*When*: Private key PEM parsing failed
+*Fix*: Verify key format, check for corruption
+
+*** ~[TLS:SSL] failed to load certificate: <ssl-error>~
+
+*When*: Certificate PEM parsing failed
+*Fix*: Verify certificate format
+
+*** ~[TLS:SSL] private key does not match certificate: <ssl-error>~
+
+*When*: Certificate/key mismatch in server config
+*Fix*: Ensure cert and key are a matching pair
+
+** SOCKET - Socket Errors
+
+*** ~[TLS:SOCKET] could not connect to <host>:<port>: <errno>~
+
+*When*: TCP connection failed
+*Fix*: Check host/port, firewall, server status
+
+*** ~[TLS:SOCKET] bind failed: <errno>~
+
+*When*: Server bind failed
+*Fix*: Check port availability, permissions
+
+*** ~[TLS:SOCKET] listen failed: <errno>~
+
+*When*: Socket listen() failed
+*Fix*: Check socket state
+
+*** ~[TLS:SOCKET] getaddrinfo failed: <errno>~
+
+*When*: DNS resolution failed
+*Fix*: Check hostname, DNS configuration
+
+** VERIFY - Verification Errors
+
+*** ~[TLS:VERIFY] hostname verification failed for <hostname>~
+
+*When*: Certificate doesn't match expected hostname
+*Fix*: Check certificate SAN/CN, or disable verification if intended
+
+* DTLS Module Errors
+
+** CONFIG - Configuration Errors
+
+*** ~[DTLS:CONFIG] dtls/listen requires :cert and :key options~
+
+*When*: DTLS server missing required certificate/key
+*Fix*: Provide certificate and private key
+
+#+begin_src janet
+(dtls/listen "0.0.0.0" "5684" {:cert cert-pem :key key-pem})
+#+end_src
+
+*** ~[DTLS:CONFIG] cannot use TLS context for DTLS connection~
+
+*When*: Passing a TLS context to DTLS functions
+*Fix*: Create a DTLS-specific context or use options
+
+** PARAM - Parameter Errors
+
+*** ~[DTLS:PARAM] invalid address: <address>~
+
+*When*: Cannot parse host address
+*Fix*: Use valid IPv4/IPv6 address or hostname
+
+** IO - I/O Errors
+
+*** ~[DTLS:IO] client not connected~
+
+*When*: I/O on unconnected DTLS client
+*Fix*: Complete handshake first
+
+*** ~[DTLS:IO] client is closed~
+
+*When*: Operations on closed DTLS client
+*Fix*: Don't use client after closing
+
+*** ~[DTLS:IO] server is closed~
+
+*When*: Operations on closed DTLS server
+*Fix*: Don't use server after closing
+
+*** ~[DTLS:IO] no session for peer address~
+
+*When*: DTLS send to unknown peer
+*Fix*: Peer must complete handshake first
+
+*** ~[DTLS:IO] session not established~
+
+*When*: DTLS send before handshake complete
+*Fix*: Wait for handshake completion
+
+** SSL - OpenSSL Errors
+
+*** ~[DTLS:SSL] handshake failed: <ssl-error>~
+
+*When*: DTLS handshake failed
+*Fix*: Check certificates, network connectivity
+
+*** ~[DTLS:SSL] write failed: <ssl-error>~
+
+*When*: DTLS write operation failed
+*Fix*: Check connection state
+
+** SOCKET - Socket Errors
+
+*** ~[DTLS:SOCKET] bind failed: <errno>~
+
+*When*: DTLS bind failed
+*Fix*: Check address/port availability
+
+*** ~[DTLS:SOCKET] connect failed: <errno>~
+
+*When*: DTLS connect failed
+*Fix*: Check server reachability
+
+*** ~[DTLS:SOCKET] sendto failed: <errno>~
+
+*When*: DTLS sendto() failed
+*Fix*: Check connection state, buffer size
+
+*** ~[DTLS:SOCKET] failed to get peer address: <errno>~
+
+*When*: getpeername() failed on DTLS upgrade
+*Fix*: Socket must be connected before upgrade
+
+* CRYPTO Module Errors
+
+** CONFIG - Configuration Errors
+
+*** ~[CRYPTO:CONFIG] unknown digest algorithm: <alg>~
+
+*When*: Invalid hash algorithm name
+*Fix*: Use supported algorithm (sha256, sha384, sha512, etc.)
+
+#+begin_src janet
+(crypto/digest :sha256 data)  # Correct
+(crypto/digest :md5 data)     # May fail depending on OpenSSL config
+#+end_src
+
+*** ~[CRYPTO:CONFIG] unsupported key algorithm: <alg>~
+
+*When*: Invalid algorithm for key generation
+*Fix*: Use supported algorithm
+
+#+begin_src janet
+# Supported: :rsa, :ed25519, :x25519, :ec-p256, :ec-p384, :ec-p521
+(crypto/generate-keypair :ec-p256)  # Correct
+(crypto/generate-keypair :dsa)       # Error: unsupported
+#+end_src
+
+** PARAM - Parameter Errors
+
+*** ~[CRYPTO:PARAM] byte count must be 1-65536, got <n>~
+
+*When*: Requesting too many or too few random bytes
+*Fix*: Request between 1 and 65536 bytes
+
+#+begin_src janet
+(crypto/random-bytes 32)  # Correct: 32 bytes
+#+end_src
+
+*** ~[CRYPTO:PARAM] challenge length must be 8-64 bytes, got <n>~
+
+*When*: Invalid challenge length for ~crypto/random-challenge~
+*Fix*: Request between 8 and 64 bytes
+
+*** ~[CRYPTO:PARAM] output length must be 1-<max>~
+
+*When*: HKDF output length exceeds maximum (255 * hash-size)
+*Fix*: Request smaller output
+
+*** ~[CRYPTO:PARAM] output length must be 1-1024~
+
+*When*: PBKDF2 output length out of range
+*Fix*: Request between 1 and 1024 bytes
+
+*** ~[CRYPTO:PARAM] iterations must be positive~
+
+*When*: Non-positive iteration count for PBKDF2
+*Fix*: Use at least 1 iteration (recommend 100000+ for security)
+
+*** ~[CRYPTO:PARAM] options must be a table or struct~
+
+*When*: Passing non-table/struct to functions expecting options
+*Fix*: Pass a table ~{}~ or struct ~@{}~
+
+** SSL - OpenSSL Errors
+
+*** ~[CRYPTO:SSL] HKDF derivation failed: <ssl-error>~
+
+*When*: Key derivation operation failed
+*Fix*: Check input parameters
+
+*** ~[CRYPTO:SSL] PBKDF2 derivation failed: <ssl-error>~
+
+*When*: PBKDF2 operation failed
+*Fix*: Check input parameters
+
+*** ~[CRYPTO:SSL] HMAC computation failed: <ssl-error>~
+
+*When*: HMAC operation failed
+*Fix*: Check algorithm and key
+
+*** ~[CRYPTO:SSL] signing failed: <ssl-error>~
+
+*When*: Signature operation failed
+*Fix*: Check key type supports signing
+
+*** ~[CRYPTO:SSL] failed to generate random bytes: <ssl-error>~
+
+*When*: Entropy source failure
+*Fix*: Check system entropy (/dev/urandom)
+
+** RESOURCE - Resource Errors
+
+*** ~[CRYPTO:RESOURCE] out of memory~
+
+*When*: Memory allocation failed
+*Fix*: Check system memory, reduce allocations
+
+*** ~[CRYPTO:RESOURCE] failed to create context~
+
+*When*: EVP context allocation failed
+*Fix*: Check memory, OpenSSL state
+
+** PARSE - Parse Errors
+
+*** ~[CRYPTO:PARSE] base64 decode failed~
+
+*When*: Invalid base64 input
+*Fix*: Verify input is valid base64
+
+*** ~[CRYPTO:PARSE] failed to parse CSR~
+
+*When*: CSR parsing failed
+*Fix*: Check CSR data validity
+
+* CA Module Errors
+
+** CONFIG - Configuration Errors
+
+*** ~[CA:CONFIG] common-name is required~
+
+*When*: Certificate issuance without CN
+*Fix*: Provide :cn option
+
+*** ~[CA:CONFIG] ca-cert is required~
+
+*When*: CA operations without CA certificate
+*Fix*: Provide CA certificate PEM
+
+*** ~[CA:CONFIG] ca-key is required~
+
+*When*: CA operations without CA private key
+*Fix*: Provide CA private key PEM
+
+** PARAM - Parameter Errors
+
+*** ~[CA:PARAM] validity-days must be positive~
+
+*When*: Invalid certificate validity period
+*Fix*: Use positive number of days
+
+*** ~[CA:PARAM] serial must be positive~
+
+*When*: Invalid certificate serial number
+*Fix*: Use positive serial number
+
+** SSL - OpenSSL Errors
+
+*** ~[CA:SSL] failed to sign certificate: <ssl-error>~
+
+*When*: Certificate signing failed
+*Fix*: Check CA key compatibility
+
+*** ~[CA:SSL] failed to create certificate: <ssl-error>~
+
+*When*: X509 creation failed
+*Fix*: Check memory, parameters
+
+** VERIFY - Verification Errors
+
+*** ~[CA:VERIFY] certificate has expired~
+
+*When*: Certificate past its validity period
+*Fix*: Renew certificate
+
+*** ~[CA:VERIFY] certificate not yet valid~
+
+*When*: Certificate not yet in validity period
+*Fix*: Check system time, certificate dates
+
+* CERT Module Errors
+
+** PARAM - Parameter Errors
+
+*** ~[CERT:PARAM] certificates must be string or array of strings~
+
+*When*: Invalid certificate format in operations
+*Fix*: Pass PEM string or array of PEM strings
+
+** PARSE - Parse Errors
+
+*** ~[CERT:PARSE] failed to parse certificate: <ssl-error>~
+
+*When*: Certificate PEM parsing failed
+*Fix*: Verify certificate format
+
+*** ~[CERT:PARSE] failed to parse private key: <ssl-error>~
+
+*When*: Private key parsing failed
+*Fix*: Verify key format
+
+* Error Handling Best Practices
+
+** Using protect/try
+
+#+begin_src janet
+(def result
+  (protect
+    (tls/connect "untrusted.example.com" "443" {:verify true})))
+
+(if (nil? result)
+  (print "Connection failed - check certificate")
+  (do-something-with result))
+#+end_src
+
+** Checking Return Values
+
+Many functions return ~nil~ on failure:
+
+#+begin_src janet
+(when-let [stream (tls/connect host port opts)]
+  (defer (:close stream)
+    (process-stream stream)))
+#+end_src
+
+** Timeouts
+
+Always use timeouts for network operations:
+
+#+begin_src janet
+(def data (:read stream 1024 30.0))  # 30 second timeout
+(when (nil? data)
+  (print "Read timed out or connection closed"))
+#+end_src
+
+* Testing Error Conditions
+
+To test that your code handles errors correctly, use janet-assay's
+~:expected-fail~ feature for negative testing:
+
+#+begin_src janet
+(import assay)
+
+(assay/def-suite "error-handling"
+  (assay/def-test "rejects invalid iterations"
+    :expected-fail "[CRYPTO:PARAM]"
+    (crypto/pbkdf2 :sha256 "password" "salt" 0 32)))
+#+end_src
+
+* See Also
+
+- [[file:API.org][API Reference]] - Complete function documentation
+- [[file:GUIDE.org][User Guide]] - Getting started and examples
+- [[file:DEVELOPERS.org][Developer Guide]] - Contributing and internals

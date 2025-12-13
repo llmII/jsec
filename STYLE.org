@@ -1,0 +1,54 @@
+#+TITLE: JSEC Coding Style
+#+DATE: 2025-11-29
+
+* Overview
+
+This document defines the coding style for the jsec project.
+
+* C Code
+
+** Formatting
+- **Indentation**: 4 spaces. No tabs.
+- **Braces**: K&R style (opening brace on the same line).
+  #+BEGIN_SRC c
+  if (condition) {
+      statement;
+  } else {
+      statement;
+  }
+  #+END_SRC
+- **Line Length**: Try to keep under 80 characters, but clarity is priority.
+
+** Naming
+- **Variables/Functions**: `snake_case`.
+- **Types**: `PascalCase` (e.g., `TLSStream`).
+- **Macros**: `UPPER_CASE`.
+
+** comments
+- Use `/* */` for multi-line comments.
+- Use `//` for single-line comments.
+- Comments should explain *why*, not *what*.
+
+** OpenSSL
+- Do not use deprecated functions (e.g., avoid `RSA_new`, use `EVP_PKEY`).
+- Check return values of all OpenSSL functions.
+- Always clear the error queue or handle errors appropriately.
+
+* Janet Code
+
+** Formatting
+- **Indentation**: 2 spaces.
+- **Braces/Parens**: Standard Lisp style (trailing parens on the same line).
+
+** Naming
+- **Functions/Macros**: `kebab-case`.
+- **Globals/Dynamics**: `*kebab-case*`.
+
+** Documentation
+- Public functions must have docstrings.
+
+* Testing
+
+- Write tests for every new feature.
+- Use `jsec/test/helper.janet` for common utilities.
+- Ensure tests clean up resources (use `defer`).

@@ -1,0 +1,261 @@
+#+TITLE: JSEC Testing Guide
+#+AUTHOR: llmII
+#+DATE: 2025-12-12
+
+* Overview
+
+JSEC uses [[https://github.com/llmII/janet-assay][assay]] for testing. Tests are organized into suites by
+category, with support for matrix testing, timeouts, and parallel execution.
+
+*Note:* ~jpm test~ is deprecated. Use the runner directly.
+
+* Directory Structure
+
+#+begin_src
+jsec/
+├── suites/
+│   ├── helpers/             # Shared test utilities
+│   │   ├── certs.janet      # Certificate generation helpers
+│   │   ├── network.janet    # Port allocation, socket matrices
+│   │   └── init.janet       # Re-exports all helpers
+│   ├── unit/                # Unit tests
+│   ├── integration/         # Integration tests
+│   ├── regression/          # Regression tests
+│   ├── coverage/            # Internal API coverage tests
+│   └── performance/         # Performance tests (perf9)
+└── test/
+    └── runner.janet         # Test runner entry point
+#+end_src
+
+* Running Tests
+
+** Basic Usage
+
+#+begin_src bash
+# Run all tests (except performance)
+janet test/runner.janet -f '{unit,regression,coverage}'
+
+# Run with summary output
+janet test/runner.janet -f '{unit,regression,coverage}' --verbosity 1
+
+# Run specific category
+janet test/runner.janet -f 'unit'
+
+# Run specific suite
+janet test/runner.janet -f 'unit/TLS*'
+
+# Run with verbose output
+janet test/runner.janet -f 'unit' --verbosity 5
+#+end_src
+
+** Filter Syntax
+
+The ~-f~ / ~--filter~ flag uses a unified filter syntax:
+
+#+begin_src
+category/suite/test[matrix]<coordinated>
+#+end_src
+
+Examples:
+#+begin_src bash
+# All unit tests
+-f 'unit'
+
+# TLS and DTLS suites in unit
+-f 'unit/{TLS,DTLS}*'
+
+# Any handshake test in any suite
+-f '*/*/handshake*'
+
+# Matrix test with specific parameters
+-f 'unit/buffer[size=1024]'
+
+# Skip a suite (use --skip flag)
+--skip 'unit/slow*'
+#+end_src
+
+Use ~--filter-help~ for complete syntax documentation.
+
+** Verbosity Levels
+
+| Level | Shows                                            |
+|-------+--------------------------------------------------|
+|     0 | Summary only (pass/fail totals)                  |
+|     1 | + Suite results                                  |
+|     2 | + Categories, timing, memory stats               |
+|     4 | + Skip/expected-fail reasons                     |
+|     5 | + Individual test results                        |
+|     6 | + Stack traces, failing assertion forms          |
+
+#+begin_src bash
+janet test/runner.janet --verbosity 5
+#+end_src
+
+** Listing Tests
+
+#+begin_src bash
+# List suites
+janet test/runner.janet --list suites
+
+# List all tests
+janet test/runner.janet --list all
+
+# List categories
+janet test/runner.janet --list categories
+#+end_src
+
+** Other Options
+
+#+begin_src bash
+# Dry run (show what would run)
+janet test/runner.janet --dry-run -f 'unit'
+
+# Set timeout (seconds)
+janet test/runner.janet --timeout 60
+
+# Track memory usage
+janet test/runner.janet --memory
+
+# Run only ensured combos (quick smoke test)
+janet test/runner.janet --ensured-only
+
+# JSON output
+janet test/runner.janet --json results.json
+
+# Run with valgrind wrapper
+janet test/runner.janet --wrapper 'valgrind --leak-check=full'
+#+end_src
+
+* Writing Tests
+
+** Basic Test Suite
+
+#+begin_src janet
+(import assay)
+(use suites/helpers)
+
+(assay/def-suite :name "My Suite" :category :unit)
+
+(assay/def-test "basic addition"
+  (assert (= 4 (+ 2 2)) "2+2 should equal 4"))
+
+(assay/def-test "with timeout" :timeout 30
+  (do-slow-operation))
+
+(assay/end-suite)
+#+end_src
+
+** Using Test Helpers
+
+#+begin_src janet
+(use suites/helpers)
+
+# Generate test certificates
+(def certs (generate-temp-certs))
+# Returns {:cert "PEM..." :key "PEM..."}
+
+# With specific key type
+(def certs (generate-temp-certs {:key-type :ec-p256}))
+
+# Get random port for testing
+(def port (make-random-port))
+#+end_src
+
+** Matrix Testing
+
+Run tests with multiple parameter combinations:
+
+#+begin_src janet
+(assay/def-matrix "protocol tests"
+  :matrix {:protocol [:tcp :tls]
+           :verify [true false]}
+  (fn [config]
+    (test-with-protocol (config :protocol) (config :verify))))
+#+end_src
+
+** Expected Failures
+
+Mark tests that document known issues:
+
+#+begin_src janet
+(assay/def-test "known issue"
+  :expected-fail "Bug #123: fails on large inputs"
+  (assert false "This is expected to fail"))
+#+end_src
+
+* Performance Testing (Experimental)
+
+Performance tests use the perf9 framework and can run for extended periods.
+They are excluded from the default test run.
+
+*Warning:* Performance testing is unstable. Output formats, metrics collection,
+and implementation details are subject to change as optimizations are made.
+
+** Running Performance Tests
+
+#+begin_src bash
+# Run performance tests (can take hours for full matrix)
+janet test/runner.janet -f 'performance'
+
+# Run with limited matrix sampling
+janet test/runner.janet -f 'performance' --matrix-sample 5
+
+# Output results to JSON for analysis
+janet test/runner.janet -f 'performance' --json /tmp/perf-results.json
+#+end_src
+
+** Analyzing Results with perf9-analyze
+
+The ~bin/perf9-analyze~ tool processes JSON output from performance tests:
+
+#+begin_src bash
+# Summary with individual test results
+./bin/perf9-analyze /tmp/perf-results.json
+
+# Summary without individual results (grouped stats only)
+./bin/perf9-analyze -n /tmp/perf-results.json
+
+# Compare two test runs
+./bin/perf9-analyze --compare run1.json run2.json
+
+# Detailed output for all tests
+./bin/perf9-analyze --detail /tmp/perf-results.json
+#+end_src
+
+The analyzer provides:
+- Throughput statistics (mean, median, p95) by protocol, TLS version, client count
+- Per-client throughput ranges (slowest/fastest)
+- Handshake timing analysis
+- Comparison between test runs with percentage changes
+
+** Performance Test Matrix
+
+The perf9 suite tests combinations of:
+- Protocol: TCP, TLS, Unix sockets
+- TLS versions: 1.2, 1.3
+- Client counts: Various concurrency levels
+- Chunk sizes: Different buffer sizes
+- Worker types: Fibers, threads, subprocesses
+
+* Test Categories
+
+| Category    | Purpose                                      |
+|-------------+----------------------------------------------|
+| unit        | Fast, isolated unit tests                    |
+| integration | Cross-module integration tests               |
+| regression  | Tests for specific fixed bugs                |
+| coverage    | Internal API coverage tests                  |
+| performance | Long-running performance benchmarks          |
+
+* Naming Conventions
+
+- Suite files: ~suite-*.janet~ in category directory
+- Test names: Descriptive, kebab-case
+- Helpers: Shared utilities in ~suites/helpers/~
+
+* Environment Variables
+
+| Variable             | Description                          |
+|----------------------+--------------------------------------|
+| JSEC_DEBUG           | Enable debug output (1=on)           |
+| JSEC_VERBOSE         | Enable verbose output (1=on)         |

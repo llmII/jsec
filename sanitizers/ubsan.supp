@@ -1,0 +1,18 @@
+# UndefinedBehaviorSanitizer Suppression File for jsec
+# Suppress issues in OpenSSL and external libraries we don't control
+#
+# UBSan suppression types: alignment, bool, builtin, bounds, enum, 
+# float-cast-overflow, float-divide-by-zero, function, implicit-integer-truncation,
+# implicit-signed-integer-truncation, implicit-unsigned-integer-truncation, 
+# integer-divide-by-zero, nonnull-attribute, null, nullability-arg, 
+# nullability-assign, nullability-return, object-size, pointer-overflow, return,
+# returns-nonnull-attribute, shift, shift-base, shift-exponent, 
+# signed-integer-overflow, unreachable, unsigned-integer-overflow, vla-bound, vptr
+
+# Suppress alignment issues from OpenSSL
+alignment:libssl.so
+alignment:libcrypto.so
+
+# Suppress pointer overflow from OpenSSL
+pointer-overflow:libssl.so
+pointer-overflow:libcrypto.so

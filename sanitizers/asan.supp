@@ -1,0 +1,9 @@
+# AddressSanitizer Suppression File for jsec
+# Suppress issues in OpenSSL and external libraries we don't control
+#
+# ASan supports: interceptor_name, interceptor_via_fun, interceptor_via_lib
+# Most suppression happens via LSAN (leak sanitizer) instead
+
+# Suppress interceptor issues from OpenSSL
+interceptor_via_lib:libssl.so
+interceptor_via_lib:libcrypto.so

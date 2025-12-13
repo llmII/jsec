@@ -1,0 +1,20 @@
+# LeakSanitizer Suppression File for jsec
+# Suppress leak reports from OpenSSL and external libraries
+
+# OpenSSL is known to have intentional "leaks" (global state, caches, etc.)
+leak:libssl
+leak:libcrypto
+leak:OPENSSL_init_ssl
+leak:OPENSSL_init_crypto
+leak:SSL_CTX_new
+leak:SSL_new
+leak:EVP_
+leak:BIO_
+leak:X509_
+leak:OSSL_
+leak:ossl_
+leak:CRYPTO_
+leak:ERR_
+
+# Janet runtime allocations that persist
+leak:janet_

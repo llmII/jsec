@@ -1,0 +1,233 @@
+#+TITLE: Release Process for jsec
+#+AUTHOR: llmII
+#+EMAIL: dev@amlegion.org
+
+* Release Checklist
+
+** Pre-Release
+
+1. Ensure all tests pass:
+   #+begin_src sh
+   janet test/runner.janet -f '{unit,regression,coverage}'
+   #+end_src
+2. Run sanitizer tests (ASan/UBSan):
+   #+begin_src sh
+   jpm run test-sanitized
+   #+end_src
+3. Check for memory leaks:
+   #+begin_src sh
+   jpm run leak-check
+   #+end_src
+4. Update version in ~project.janet~
+5. Update [[file:NEWS.org][NEWS.org]] with changes since last release
+6. Review and update documentation
+7. Format all code:
+   #+begin_src sh
+   jpm run format
+   #+end_src
+8. Build clean and test:
+   #+begin_src sh
+   jpm clean && jpm build && jpm install
+   janet test/runner.janet -f '{unit,regression,coverage}'
+   #+end_src
+
+** Version Numbering
+
+jsec follows semantic versioning (SemVer):
+
+- *MAJOR*: Incompatible API changes
+- *MINOR*: Backwards-compatible functionality additions
+- *PATCH*: Backwards-compatible bug fixes
+
+Example: ~1.2.3~
+- Major: 1
+- Minor: 2
+- Patch: 3
+
+** Release Steps
+
+1. *Update Version*
+   #+begin_src janet
+   # In project.janet
+   (declare-project
+     :name "jsec"
+     :version "1.0.0"  # Update this
+     ...)
+   #+end_src
+
+2. *Update NEWS.org*
+   
+   Document all changes, fixes, and new features.
+
+3. *Prepare Release*
+   #+begin_src sh
+   jpm run release
+   #+end_src
+   This runs ~clean~ and ~format~ targets.
+
+4. *Final Testing*
+   #+begin_src sh
+   jpm clean && jpm build && jpm install
+   janet test/runner.janet -f '{unit,regression,coverage}'
+   #+end_src
+
+5. *Commit Release*
+   #+begin_src sh
+   fossil commit -m "Release version X.Y.Z"
+   #+end_src
+
+6. *Tag Release*
+   #+begin_src sh
+   fossil tag add vX.Y.Z tip
+   #+end_src
+
+7. *Push to Repository*
+   #+begin_src sh
+   fossil push
+   #+end_src
+
+8. *Mirror to GitHub* (for wider distribution)
+   #+begin_src sh
+   fossil git export ../jsec-git --force
+   cd ../jsec-git && git push origin main --tags
+   #+end_src
+
+** Post-Release
+
+1. Verify installation from repository
+2. Update dependent projects if needed
+3. Announce release
+4. Begin next development cycle
+
+** Development vs Release
+
+- *Development*: Version ends in ~-dev~ (e.g., ~1.1.0-dev~)
+- *Release*: Clean version number (e.g., ~1.1.0~)
+
+After a release, immediately bump to next dev version:
+- ~1.0.0~ → ~1.0.1-dev~ (for patch development)
+- ~1.0.0~ → ~1.1.0-dev~ (for minor development)
+- ~1.0.0~ → ~2.0.0-dev~ (for major development)
+
+** Quality Gates
+
+All of these must pass before release:
+
+- [ ] All tests pass (unit, regression, coverage categories)
+- [ ] No ASan/UBSan errors (when these tools work appropriately)
+- [ ] No memory leaks detected by valgrind (elide for now, valgrind is slow)
+- [ ] Documentation is current
+- [ ] Examples all work
+- [ ] Code is formatted (~jpm run format~)
+- [ ] NEWS.org is updated
+- [ ] Version is bumped appropriately
+
+** Emergency Releases
+
+For critical security fixes:
+
+1. Create hotfix branch from release tag
+2. Apply minimal fix
+3. Test thoroughly
+4. Release as patch version
+5. Backport fix to development branch
+
+* Available Build Targets
+
+| Target           | Description                               |
+|------------------+-------------------------------------------|
+| ~format~         | Format all code (C and Janet)             |
+| ~format-c~       | Format C code with astyle                 |
+| ~format-janet~   | Format Janet code with janet-format       |
+| ~release~        | Clean and format for release              |
+| ~leak-check~     | Run valgrind memory leak detection        |
+| ~tidy~           | Run clang-tidy static analysis            |
+| ~tidy-fix~       | Run clang-tidy with auto-fix              |
+| ~test-sanitized~ | Build and test with ASan/UBSan            |
+| ~clean~          | Remove build artifacts                    |
+
+* Distribution
+
+** Janet Package Manager (JPM)
+
+jsec is installed via ~jpm~:
+
+#+begin_src sh
+# From GitHub mirror
+jpm install https://github.com/llmII/jsec
+
+# From Fossil repository (preferred)
+jpm install https://fossil.example.org/jsec
+#+end_src
+
+** Manual Installation (Fossil)
+
+From source using Fossil:
+
+#+begin_src sh
+fossil clone https://code.amlegion.org/jsec jsec.fossil
+mkdir jsec && cd jsec
+fossil open ../jsec.fossil
+jpm build
+jpm install
+#+end_src
+
+** Manual Installation (Git Mirror)
+
+From the GitHub mirror:
+
+#+begin_src sh
+git clone https://github.com/llmII/jsec.git
+cd jsec
+jpm build
+jpm install
+#+end_src
+
+** Dependencies
+
+- Janet 1.30+
+- OpenSSL 1.1.1+ or 3.x
+- spork (Janet package)
+
+* Testing
+
+jsec uses the [[https://github.com/llmII/janet-assay][assay]] testing framework.
+
+** Running Tests
+
+#+begin_src sh
+# Run unit, regression, and coverage tests (recommended)
+janet test/runner.janet -f '{unit,regression,coverage}'
+
+# Run all tests including performance (takes hours)
+janet test/runner.janet
+
+# Dry run to see what would execute
+janet test/runner.janet -f '{unit,regression,coverage}' --dry-run
+
+# Verbose output
+janet test/runner.janet -f '{unit,regression,coverage}' --verbosity 2
+#+end_src
+
+** Performance Testing
+
+Performance tests are separate and run for extended periods:
+
+#+begin_src sh
+# Run performance tests
+janet test/runner.janet -f 'performance'
+
+# Analyze results
+./bin/perf9-analyze /tmp/perf-results.json
+#+end_src
+
+See [[file:docs/TESTING.org][docs/TESTING.org]] for comprehensive testing documentation.
+
+* Support Policy
+
+- *Current Release*: Full support
+- *Previous Minor*: Security fixes only
+- *Older Releases*: Unsupported
+
+Users should upgrade to the latest release. While version is prior to 1.0 the
+support policy does not apply.

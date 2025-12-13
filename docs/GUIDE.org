@@ -1,0 +1,171 @@
+#+TITLE: Jsec User Guide
+#+AUTHOR: llmII
+#+DATE: 2025-12-04
+
+* Async Integration
+
+Jsec is designed to work seamlessly with Janet's event loop (~ev~). All I/O
+operations yield to the event loop when they would block. TLS streams work
+with standard Janet stream functions (~ev/read~, ~ev/write~, ~ev/close~).
+
+** Best Practices
+
+1. *Use Fibers*: Handle each connection in a separate fiber using ~ev/go~.
+2. *Timeouts*: Use ~ev/with-deadline~ to enforce timeouts on operations.
+   #+BEGIN_SRC janet
+   (try
+     (ev/with-deadline 5.0 (ev/read stream 1024))
+     ([err] (print "Read timed out")))
+   #+END_SRC
+3. *Cancellation*: Jsec streams handle fiber cancellation gracefully.
+
+*Example*: See [[file:../examples/echo_server.janet][echo_server.janet]] for proper fiber-based connection handling.
+
+* Certificate Verification
+
+By default, ~tls/connect~ verifies the server's certificate against the
+system's CA store.
+
+- *Self-Signed Certs*: To trust a self-signed cert, you can:
+  1. Disable verification (NOT RECOMMENDED for production): ~{:verify false}~.
+  2. Load a custom CA file: ~{:ca-file "ca.pem"}~.
+
+*Example*: See [[file:../examples/simple_https_client.janet][simple_https_client.janet]] for certificate verification in practice.
+
+* Mutual TLS (mTLS)
+
+mTLS requires both the server and client to present certificates.
+
+** Server Side
+#+BEGIN_SRC janet
+(tls/accept listener {
+  :cert "server.crt"
+  :key "server.key"
+  :verify true  # Request and verify client cert
+})
+#+END_SRC
+
+** Client Side
+#+BEGIN_SRC janet
+(tls/connect host port {
+  :cert "client.crt"
+  :key "client.key"
+})
+#+END_SRC
+
+*Example*: See [[file:../examples/mtls_client_server.janet][mtls_client_server.janet]] for complete mTLS implementation.
+
+* DTLS (Datagram TLS)
+
+DTLS brings TLS security to UDP. It handles packet loss and reordering.
+
+- *Packet Size*: DTLS records must fit within the MTU. Avoid sending huge
+  buffers in a single write if possible, though OpenSSL handles fragmentation.
+- *Timeouts*: DTLS handshakes rely on timers. Jsec manages this automatically
+  using the event loop.
+- *Multiple Clients*: ~dtls/server~ handles multiple simultaneous clients
+  using cookie-based client verification.
+
+*Example*: See [[file:../examples/dtls_echo.janet][dtls_echo.janet]] for DTLS client and server implementation.
+
+* STARTTLS
+
+Upgrade an existing plaintext connection to TLS using ~tls/upgrade~. This is
+commonly used with protocols like SMTP, IMAP, and FTP.
+
+*Example*: See [[file:../examples/starttls_smtp.janet][starttls_smtp.janet]] for SMTP STARTTLS upgrade.
+
+* Session Resumption
+
+Session resumption speeds up subsequent TLS handshakes by reusing cryptographic
+parameters.
+
+- Use ~tls/get-session~ to extract session data after a connection.
+- Pass session data via ~{:session data}~ option in subsequent ~connect~ calls.
+- Check ~tls/session-reused?~ to verify resumption occurred.
+
+*Example*: See [[file:../examples/session_resumption.janet][session_resumption.janet]] for session caching and reuse.
+
+* Certificate Generation
+
+For testing or internal tools, generate self-signed certificates at runtime:
+
+#+BEGIN_SRC janet
+(import jsec/cert)
+
+(let [certs (cert/generate-self-signed-cert {
+               :common-name "localhost"
+               :days-valid 30
+             })]
+  (spit "cert.pem" (certs :cert))
+  (spit "key.pem" (certs :key)))
+#+END_SRC
+
+*Example*: See [[file:../examples/cert_gen.janet][cert_gen.janet]] for certificate generation.
+
+* Custom BIO Transport
+
+For advanced use cases, use OpenSSL BIO (Basic I/O) objects for custom transport layers or in-memory operations.
+
+*Examples*:
+- [[file:../examples/bio_memory.janet][bio_memory.janet]] - Memory BIO operations
+- [[file:../examples/custom_bio_transport.janet][custom_bio_transport.janet]] - Custom transport implementation
+
+* Cryptographic Operations
+
+Jsec provides access to OpenSSL cryptographic primitives:
+
+- Hashing (SHA-256, SHA-384, SHA-512)
+- Digital signatures (Ed25519, RSA)
+- Key generation
+
+*Example*: See [[file:../examples/crypto_signing.janet][crypto_signing.janet]] for signing and verification.
+
+* Security Best Practices
+
+1. *Enable Certificate Verification*: Always use ~{:verify true}~ in production (it's the default for clients).
+2. *Use Modern TLS*: Enforce TLS 1.2+ with ~{:security {:min-version "TLS1.2"}}~.
+3. *Strong Ciphers*: Configure cipher suites via ~:ciphers~ option.
+4. *Session Security*: Protect session data if persisting to disk.
+5. *Rate Limiting*: Implement rate limiting at the application level to prevent DoS attacks.
+
+*Example*: See [[file:../examples/policy_enforcement.janet][policy_enforcement.janet]] for advanced security configuration.
+
+*Note*: All examples include appropriate security warnings and best practices comments.
+
+* Performance Tuning
+
+- *Session Resumption*: Use ~get-session~ and the ~:session~ option to speed
+  up subsequent handshakes.
+- *Buffer Size*: Adjust ~:buffer-size~ in ~connect~ options. Larger buffers
+  (16KB) are better for throughput; smaller buffers (1-2KB) reduce memory
+  usage per connection.
+- *Connection Pooling*: Reuse connections when possible to avoid handshake
+  overhead.
+- *Context Reuse*: Create a context with ~tls/new-context~ and reuse it for
+  multiple connections to save memory and improve performance.
+
+* Using Standard Janet Stream API
+
+TLS streams are fully compatible with Janet's stream API:
+
+#+BEGIN_SRC janet
+(import jsec/tls)
+
+(def conn (tls/connect "example.com" "443"))
+
+# Use standard ev functions
+(ev/write conn "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+(def response (ev/read conn 4096))
+(print response)
+
+# Or with timeout
+(ev/with-deadline 5.0
+  (ev/write conn request)
+  (ev/chunk conn 1024))
+
+# Close properly
+(ev/close conn)
+#+END_SRC
+
+This means TLS streams work with any code that expects Janet streams.
