@@ -99,7 +99,7 @@ Janet cfun_export_public_key(int32_t argc, Janet *argv) {
     JanetByteView key_pem = janet_getbytes(argv, 0);
 
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
     if (!pkey) crypto_panic_ssl("failed to load private key");
@@ -135,7 +135,8 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, (void *)password);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_password_cb,
+                                             (void *)password);
     BIO_free(bio);
 
     if (!pkey) {
@@ -240,7 +241,7 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
     if (!pkey) crypto_panic_ssl("failed to load private key");
@@ -297,28 +298,29 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
     janet_table_put(info, janet_ckeywordv("encrypted"),
                     janet_wrap_boolean(encrypted));
 
-    /* Try to load as public key first (works even for encrypted private keys) */
+    /* For encrypted keys, we can't extract type info without password */
+    if (encrypted) {
+        janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("unknown"));
+        return janet_wrap_table(info);
+    }
+
+    /* Try to load as private key first */
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = NULL;
-
-    /* Try loading as private key (if not encrypted) */
-    if (!encrypted) {
-        pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-    }
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
 
     if (!pkey) {
         /* Reset BIO and try loading as public key */
         BIO_free(bio);
         bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
-        pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+        pkey = PEM_read_bio_PUBKEY(bio, NULL, jutils_no_password_cb, NULL);
     }
 
     BIO_free(bio);
 
     if (!pkey) {
-        /* Can't load - still report encrypted status */
+        /* Can't load key */
         janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("unknown"));
         return janet_wrap_table(info);
     }
