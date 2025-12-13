@@ -175,4 +175,9 @@ Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv);
  * Returns 0 to indicate no password available. */
 int jutils_no_password_cb(char *buf, int size, int rwflag, void *u);
 
+/* Callback for password-protected keys that uses userdata if provided.
+ * If userdata contains a password string, copies it to buffer.
+ * Otherwise returns 0 to prevent TTY prompting. */
+int jutils_password_cb(char *buf, int size, int rwflag, void *u);
+
 #endif
