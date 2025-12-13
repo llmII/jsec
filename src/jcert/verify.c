@@ -81,7 +81,7 @@ static int get_purpose_from_keyword(const char *purpose) {
 #ifdef X509_PURPOSE_CODE_SIGN
         return X509_PURPOSE_CODE_SIGN;
 #else
-        int idx = X509_purpose_get_by_sname("codesign");
+        int idx = X509_PURPOSE_get_by_sname("codesign");
         if (idx >= 0)
             return idx;
         return -1;

@@ -1,30 +1,30 @@
 
 # Table of Contents
 
-1.  [Overview](#orga5cdde7)
-2.  [Directory Structure](#orgb0a169f)
-3.  [Running Tests](#orgbe9e9a3)
-    1.  [Basic Usage](#org51dd1b1)
-    2.  [Filter Syntax](#org653f141)
-    3.  [Verbosity Levels](#orgc286cc1)
-    4.  [Listing Tests](#org47cfc8f)
-    5.  [Other Options](#orge122528)
-4.  [Writing Tests](#org0bd80dc)
-    1.  [Basic Test Suite](#org77a0625)
-    2.  [Using Test Helpers](#orgd148d97)
-    3.  [Matrix Testing](#org95405f4)
-    4.  [Expected Failures](#org08a687b)
-5.  [Performance Testing (Experimental)](#orgb9c368d)
-    1.  [Running Performance Tests](#org74ee950)
-    2.  [Analyzing Results with perf9-analyze](#org018cfe8)
-    3.  [Performance Test Matrix](#org7a71e0f)
-6.  [Test Categories](#org764f7d8)
-7.  [Naming Conventions](#orgdd3eb59)
-8.  [Environment Variables](#orgf0c0abb)
+1.  [Overview](#org1fae105)
+2.  [Directory Structure](#org31aa475)
+3.  [Running Tests](#org1038f7c)
+    1.  [Basic Usage](#orge60c0d6)
+    2.  [Filter Syntax](#org44c74e5)
+    3.  [Verbosity Levels](#org7f8ccc5)
+    4.  [Listing Tests](#orgd5138f4)
+    5.  [Other Options](#org104c7d5)
+4.  [Writing Tests](#org757af6e)
+    1.  [Basic Test Suite](#org435b09e)
+    2.  [Using Test Helpers](#org299ff7b)
+    3.  [Matrix Testing](#orgf981791)
+    4.  [Expected Failures](#orgeb2e43c)
+5.  [Performance Testing (Experimental)](#orge533e04)
+    1.  [Running Performance Tests](#orgecba772)
+    2.  [Analyzing Results with perf9-analyze](#org0cd8dfb)
+    3.  [Performance Test Matrix](#orge5a7dd8)
+6.  [Test Categories](#org3fee46f)
+7.  [Naming Conventions](#org9c842e4)
+8.  [Environment Variables](#org1103848)
 
 
 
-<a id="orga5cdde7"></a>
+<a id="org1fae105"></a>
 
 # Overview
 
@@ -34,7 +34,7 @@ category, with support for matrix testing, timeouts, and parallel execution.
 **Note:** `jpm test` is deprecated. Use the runner directly.
 
 
-<a id="orgb0a169f"></a>
+<a id="org31aa475"></a>
 
 # Directory Structure
 
@@ -53,12 +53,12 @@ category, with support for matrix testing, timeouts, and parallel execution.
         └── runner.janet         # Test runner entry point
 
 
-<a id="orgbe9e9a3"></a>
+<a id="org1038f7c"></a>
 
 # Running Tests
 
 
-<a id="org51dd1b1"></a>
+<a id="orge60c0d6"></a>
 
 ## Basic Usage
 
@@ -78,7 +78,7 @@ category, with support for matrix testing, timeouts, and parallel execution.
     janet test/runner.janet -f 'unit' --verbosity 5
 
 
-<a id="org653f141"></a>
+<a id="org44c74e5"></a>
 
 ## Filter Syntax
 
@@ -106,7 +106,7 @@ Examples:
 Use `--filter-help` for complete syntax documentation.
 
 
-<a id="orgc286cc1"></a>
+<a id="org7f8ccc5"></a>
 
 ## Verbosity Levels
 
@@ -160,7 +160,7 @@ Use `--filter-help` for complete syntax documentation.
     janet test/runner.janet --verbosity 5
 
 
-<a id="org47cfc8f"></a>
+<a id="orgd5138f4"></a>
 
 ## Listing Tests
 
@@ -174,7 +174,7 @@ Use `--filter-help` for complete syntax documentation.
     janet test/runner.janet --list categories
 
 
-<a id="orge122528"></a>
+<a id="org104c7d5"></a>
 
 ## Other Options
 
@@ -197,12 +197,12 @@ Use `--filter-help` for complete syntax documentation.
     janet test/runner.janet --wrapper 'valgrind --leak-check=full'
 
 
-<a id="org0bd80dc"></a>
+<a id="org757af6e"></a>
 
 # Writing Tests
 
 
-<a id="org77a0625"></a>
+<a id="org435b09e"></a>
 
 ## Basic Test Suite
 
@@ -220,7 +220,7 @@ Use `--filter-help` for complete syntax documentation.
     (assay/end-suite)
 
 
-<a id="orgd148d97"></a>
+<a id="org299ff7b"></a>
 
 ## Using Test Helpers
 
@@ -237,7 +237,7 @@ Use `--filter-help` for complete syntax documentation.
     (def port (make-random-port))
 
 
-<a id="org95405f4"></a>
+<a id="orgf981791"></a>
 
 ## Matrix Testing
 
@@ -250,7 +250,7 @@ Run tests with multiple parameter combinations:
         (test-with-protocol (config :protocol) (config :verify))))
 
 
-<a id="org08a687b"></a>
+<a id="orgeb2e43c"></a>
 
 ## Expected Failures
 
@@ -261,7 +261,7 @@ Mark tests that document known issues:
       (assert false "This is expected to fail"))
 
 
-<a id="orgb9c368d"></a>
+<a id="orge533e04"></a>
 
 # Performance Testing (Experimental)
 
@@ -272,7 +272,7 @@ They are excluded from the default test run.
 and implementation details are subject to change as optimizations are made.
 
 
-<a id="org74ee950"></a>
+<a id="orgecba772"></a>
 
 ## Running Performance Tests
 
@@ -286,7 +286,7 @@ and implementation details are subject to change as optimizations are made.
     janet test/runner.janet -f 'performance' --json /tmp/perf-results.json
 
 
-<a id="org018cfe8"></a>
+<a id="org0cd8dfb"></a>
 
 ## Analyzing Results with perf9-analyze
 
@@ -312,7 +312,7 @@ The analyzer provides:
 -   Comparison between test runs with percentage changes
 
 
-<a id="org7a71e0f"></a>
+<a id="orge5a7dd8"></a>
 
 ## Performance Test Matrix
 
@@ -325,7 +325,7 @@ The perf9 suite tests combinations of:
 -   Worker types: Fibers, threads, subprocesses
 
 
-<a id="org764f7d8"></a>
+<a id="org3fee46f"></a>
 
 # Test Categories
 
@@ -372,7 +372,7 @@ The perf9 suite tests combinations of:
 </table>
 
 
-<a id="orgdd3eb59"></a>
+<a id="org9c842e4"></a>
 
 # Naming Conventions
 
@@ -381,7 +381,7 @@ The perf9 suite tests combinations of:
 -   Helpers: Shared utilities in `suites/helpers/`
 
 
-<a id="orgf0c0abb"></a>
+<a id="org1103848"></a>
 
 # Environment Variables
 
