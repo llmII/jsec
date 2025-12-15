@@ -19,8 +19,10 @@
 #   -Wconversion/-Wsign-conversion: janet macros have size/sign conversions
 #   -Wmissing-prototypes: JANET_MODULE_ENTRY generates functions without
 #                         prototypes
+#
+# Production builds use -O2 for optimization. Debug builds use -Og instead.
 (def standard-cflags
-  ["-std=c99"
+  ["-std=c99" "-O2"
    "-Wall" "-Wextra" "-Wshadow" "-fno-common"
    "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
    "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"])
