@@ -2,7 +2,7 @@
  * client/io.c - DTLS client I/O operations (read, write, chunk)
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 
 /* External declarations */

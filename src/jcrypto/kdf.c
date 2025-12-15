@@ -2,7 +2,7 @@
  * jcrypto/kdf.c - Key Derivation Functions (HKDF, PBKDF2, ECDH)
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* HKDF - HMAC-based Key Derivation Function */
 Janet cfun_hkdf(int32_t argc, Janet *argv) {

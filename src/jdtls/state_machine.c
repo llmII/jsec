@@ -36,7 +36,7 @@
  * We integrate this with Janet's ev/deadline or manual timeout tracking.
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 #include <errno.h>
 
 /*

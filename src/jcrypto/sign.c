@@ -2,7 +2,7 @@
  * jcrypto/sign.c - Digital signature functions
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Sign */
 Janet cfun_sign(int32_t argc, Janet *argv) {

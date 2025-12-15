@@ -8,7 +8,7 @@
  * :context option to reuse SSL_CTX settings across multiple connections.
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 #include <string.h>
 #include <openssl/x509v3.h>
 

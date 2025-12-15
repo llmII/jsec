@@ -2,7 +2,7 @@
  * jcrypto/random.c - Cryptographic random number generation
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Random bytes */
 Janet cfun_random_bytes(int32_t argc, Janet *argv) {

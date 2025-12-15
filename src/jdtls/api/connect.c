@@ -4,7 +4,7 @@
  * Provides dtls/connect for creating 1:1 DTLS client connections.
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>

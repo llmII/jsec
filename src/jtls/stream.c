@@ -8,7 +8,7 @@
  * License: ISC
  */
 
-#include "jtls_internal.h"
+#include "internal.h"
 
 /*============================================================================
  * SETUP TLS STREAM

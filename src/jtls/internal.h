@@ -1,5 +1,5 @@
 /*
- * jtls_internal.h - Internal header for JTLS (Janet TLS) implementation
+ * internal.h - Internal header for JTLS (Janet TLS) implementation
  *
  * This file defines the internal types, state machines, and function declarations
  * for the TLS implementation that integrates with Janet's event loop.

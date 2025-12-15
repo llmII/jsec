@@ -1,5 +1,5 @@
 /*
- * jdtls_internal.h - Internal definitions for DTLS implementation
+ * internal.h - Internal definitions for DTLS implementation
  *
  * Architecture Overview:
  * ======================

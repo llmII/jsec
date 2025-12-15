@@ -11,7 +11,7 @@
  * License: ISC
  */
 
-#include "jca_internal.h"
+#include "internal.h"
 #include <openssl/rand.h>
 
 /*

@@ -2,7 +2,7 @@
  * jcrypto/csr.c - Certificate Signing Request functions
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Generate CSR (Certificate Signing Request) */
 Janet cfun_generate_csr(int32_t argc, Janet *argv) {

@@ -5,8 +5,8 @@
  * License: ISC
  */
 
-#include "jutils.h"
-#include "jutils/internal.h"
+#include "../jutils.h"
+#include "../jutils/internal.h"
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>

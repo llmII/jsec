@@ -14,7 +14,7 @@
  * License: ISC
  */
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 #include <arpa/inet.h>
 #include <sys/un.h>
 

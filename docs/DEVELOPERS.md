@@ -143,7 +143,8 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     │   ├── security.c           # Security option parsing
     │   └── panic.c              # Error handling macros
     ├── jbio.c                   # Memory BIO operations
-    └── jcert.c                  # Certificate generation
+    ├── jcert/
+│   ├── jcert.c                  # Certificate generation
 
 
 <a id="orga99c7c9"></a>

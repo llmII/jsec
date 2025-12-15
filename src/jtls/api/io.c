@@ -12,7 +12,7 @@
  * License: ISC
  */
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 #include <math.h>
 
 /* Helper to check if timeout is infinite (avoids float comparison warning) */

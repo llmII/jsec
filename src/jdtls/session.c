@@ -5,7 +5,7 @@
  * Sessions are stored in a hash table keyed by peer address.
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 #include <string.h>
 
 /*
