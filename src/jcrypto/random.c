@@ -12,18 +12,13 @@ Janet cfun_random_bytes(int32_t argc, Janet *argv) {
         crypto_panic_param("byte count must be 1-65536, got %d", n);
     }
 
-    unsigned char *buf = janet_malloc(n);
-    if (!buf) {
-        crypto_panic_resource("failed to allocate buffer for random bytes");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *buf = janet_string_begin(n);
     if (RAND_bytes(buf, n) != 1) {
-        janet_free(buf);
         crypto_panic_ssl("failed to generate random bytes");
     }
 
-    Janet result = janet_stringv(buf, n);
-    janet_free(buf);
-    return result;
+    return janet_wrap_string(janet_string_end(buf));
 }
 
 /* Generate a challenge (random nonce for SCEP) */
@@ -37,16 +32,11 @@ Janet cfun_generate_challenge(int32_t argc, Janet *argv) {
         }
     }
 
-    unsigned char *buf = janet_malloc(len);
-    if (!buf) {
-        crypto_panic_resource("failed to allocate buffer for challenge");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *buf = janet_string_begin(len);
     if (RAND_bytes(buf, len) != 1) {
-        janet_free(buf);
         crypto_panic_ssl("failed to generate random challenge");
     }
 
-    Janet result = janet_stringv(buf, len);
-    janet_free(buf);
-    return result;
+    return janet_wrap_string(janet_string_end(buf));
 }

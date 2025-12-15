@@ -35,7 +35,9 @@ Janet cfun_base64_decode(int32_t argc, Janet *argv) {
     BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
     BIO_push(b64, mem);
 
-    /* Allocate max possible decoded size */
+    /* Allocate max possible decoded size - we must use intermediate buffer
+     * because actual decoded length may be less than max_len, and
+     * janet_string_begin/end expects exact fill */
     size_t max_len = ((size_t)data.len * 3) / 4 + 1;
     unsigned char *buf = janet_malloc(max_len);
     if (!buf) {
