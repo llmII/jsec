@@ -19,8 +19,10 @@
 #   -Wconversion/-Wsign-conversion: janet macros have size/sign conversions
 #   -Wmissing-prototypes: JANET_MODULE_ENTRY generates functions without
 #                         prototypes
+#
+# Production builds use -O2 for optimization. Debug builds use -Og instead.
 (def standard-cflags
-  ["-std=c99"
+  ["-std=c99" "-O2"
    "-Wall" "-Wextra" "-Wshadow" "-fno-common"
    "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
    "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"])
@@ -126,7 +128,7 @@
            "src/jutils/cert_loading.c"
            "src/jutils/security.c"
            "src/jutils/context.c"]
-  :headers ["src/jtls/jtls_internal.h"
+  :headers ["src/jtls/internal.h"
             "src/jutils.h"]
   :cflags build-cflags
   :lflags build-lflags)
@@ -153,7 +155,7 @@
            "src/jutils/cert_loading.c"
            "src/jutils/security.c"
            "src/jutils/context.c"]
-  :headers ["src/jdtls/jdtls_internal.h"
+  :headers ["src/jdtls/internal.h"
             "src/jutils.h"]
   :cflags build-cflags
   :lflags build-lflags)
@@ -165,7 +167,7 @@
 
 (declare-native
   :name "jsec/cert"
-  :source ["src/jcert.c"
+  :source ["src/jcert/jcert.c"
            "src/jcert/verify.c"
            "src/jutils/error.c"
            "src/jutils/janet_types.c"
@@ -210,7 +212,7 @@
            "src/jutils/cert_loading.c"
            "src/jutils/security.c"
            "src/jutils/context.c"]
-  :headers ["src/jcrypto/jcrypto_internal.h"
+  :headers ["src/jcrypto/internal.h"
             "src/jutils.h"]
   :cflags build-cflags
   :lflags build-lflags)
@@ -228,7 +230,7 @@
            "src/jutils/cert_loading.c"
            "src/jutils/security.c"
            "src/jutils/context.c"]
-  :headers ["src/jca/jca_internal.h"
+  :headers ["src/jca/internal.h"
             "src/jutils.h"]
   :cflags build-cflags
   :lflags build-lflags)
@@ -314,7 +316,7 @@
    "src/jdtls/api/module.c"
    "src/jdtls/server.c"
    "src/jdtls/module.c"
-   "src/jcert.c"
+   "src/jcert/jcert.c"
    "src/jbio.c"
    "src/jcrypto/module.c"
    "src/jcrypto/digest.c"

@@ -2,7 +2,7 @@
  * jcrypto/base64.c - Base64 encoding/decoding functions
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Base64 encode */
 Janet cfun_base64_encode(int32_t argc, Janet *argv) {

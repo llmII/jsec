@@ -11,7 +11,7 @@
  * License: ISC
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
 #include <openssl/core_names.h>

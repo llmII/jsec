@@ -5,7 +5,7 @@
  * License: ISC
  */
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 
 /*============================================================================
  * OCSP STATUS CALLBACK

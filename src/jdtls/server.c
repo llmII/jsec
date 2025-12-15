@@ -15,11 +15,17 @@
  * This matches Janet's net/recv-from and net/send-to conventions.
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+/* MSG_DONTWAIT may not be available on all platforms.
+ * Since our sockets are already non-blocking, we can use 0 as fallback. */
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
 
 /*
  * =============================================================================
@@ -497,7 +503,6 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
     }
 
     switch (event) {
-        case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_DEINIT:
             break;
 
@@ -517,6 +522,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             janet_async_end(fiber);
             return;
 
+        case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
                 DTLSServer *server = state->server;
 
@@ -532,13 +538,10 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
                     if (n < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            /* No more data - re-register and wait */
-                            DTLSRecvFromState *saved = state;
-                            fiber->ev_state = NULL;
-                            janet_async_end(fiber);
-                            janet_async_start_fiber(fiber, server->transport, JANET_ASYNC_LISTEN_READ,
-                                                    dtls_recv_from_callback, saved);
-                            return;
+                            /* No more data available - just return and wait for
+                             * the next READ event. The fiber is already registered
+                             * for JANET_ASYNC_LISTEN_READ. */
+                            break;  /* Exit loop, stay registered */
                         }
                         janet_cancel(fiber, janet_cstringv(strerror(errno)));
                         janet_async_end(fiber);

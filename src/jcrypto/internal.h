@@ -1,5 +1,5 @@
 /*
- * jcrypto_internal.h - Internal header for jcrypto module
+ * internal.h - Internal header for jcrypto module
  *
  * Author: llmII <dev@amlegion.org>
  * License: ISC

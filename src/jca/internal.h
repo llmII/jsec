@@ -1,5 +1,5 @@
 /*
- * jca_internal.h - Internal definitions for CA (Certificate Authority) implementation
+ * internal.h - Internal definitions for CA (Certificate Authority) implementation
  *
  * Architecture Overview:
  * ======================

@@ -2,7 +2,7 @@
  * jcrypto/digest.c - Message digest functions
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Digest */
 Janet cfun_digest(int32_t argc, Janet *argv) {

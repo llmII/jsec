@@ -15,7 +15,7 @@
 #define _GNU_SOURCE  /* For accept4 */
 #endif
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 #include <sys/un.h>
 
 /*============================================================================

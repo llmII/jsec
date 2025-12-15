@@ -1,5 +1,5 @@
 /*
- * jdtls_internal.h - Internal definitions for DTLS implementation
+ * internal.h - Internal definitions for DTLS implementation
  *
  * Architecture Overview:
  * ======================
@@ -66,10 +66,11 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
+#include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 /*
  * =============================================================================
@@ -79,9 +80,9 @@
 
 /* Get current time in seconds (used for session timeout tracking) */
 static inline double get_current_time(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
 }
 
 /*

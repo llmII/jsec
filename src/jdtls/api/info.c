@@ -4,7 +4,7 @@
  * Provides getters for version, cipher, session, peer info, etc.
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 #include <time.h>
 #include <openssl/x509v3.h>

@@ -12,7 +12,7 @@
  * License: ISC
  */
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 
 /*============================================================================
  * HELPER: Check handshake completion
