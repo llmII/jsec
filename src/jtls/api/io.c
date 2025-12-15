@@ -198,6 +198,10 @@ Janet cfun_write(int32_t argc, Janet *argv) {
  * CLOSE - Close TLS stream
  *============================================================================
  * (close stream &opt force)
+ *
+ * Closes TLS stream, sending close_notify unless forced.
+ * Uses async state machine to properly handle I/O events during shutdown,
+ * which is critical for FreeBSD unix sockets where synchronous shutdown hangs.
  */
 Janet cfun_close(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
@@ -212,8 +216,6 @@ Janet cfun_close(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    tls->stream.flags |= JANET_STREAM_CLOSED;
-
     /* Cancel pending operations */
     if (tls->stream.read_fiber) {
         janet_cancel(tls->stream.read_fiber, janet_cstringv("stream closed"));
@@ -224,16 +226,27 @@ Janet cfun_close(int32_t argc, Janet *argv) {
         tls->stream.write_fiber = NULL;
     }
 
-    /* Send close_notify if not forced and connection is ready */
-    if (!force && tls->ssl && tls->conn_state == TLS_CONN_READY) {
-        SSL_set_shutdown(tls->ssl, SSL_SENT_SHUTDOWN);
-        int ret = SSL_shutdown(tls->ssl);
-        (void)ret;
+    /* Force close: skip TLS shutdown, just close transport */
+    if (force || !tls->ssl || tls->conn_state != TLS_CONN_READY) {
+        tls->stream.flags |= JANET_STREAM_CLOSED;
+        if (tls->transport && !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+            janet_stream_close(tls->transport);
+        }
+        return janet_wrap_nil();
     }
 
-    /* Close underlying transport */
-    if (tls->transport && !(tls->transport->flags & JANET_STREAM_CLOSED)) {
-        janet_stream_close(tls->transport);
+    /* Graceful close: use async state machine for TLS shutdown.
+     * This schedules the close operation through the event loop,
+     * allowing proper handling of I/O events during SSL_shutdown.
+     * Critical for FreeBSD unix sockets where synchronous shutdown hangs. */
+    TLSState *state = janet_malloc(sizeof(TLSState));
+    memset(state, 0, sizeof(TLSState));
+    state->tls = tls;
+    state->op = TLS_OP_CLOSE;
+
+    if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
+        janet_free(state);
+        return janet_wrap_nil();
     }
 
     return janet_wrap_nil();
