@@ -4,6 +4,24 @@
 
 * News
 
+** 2025-12-15 - FreeBSD Support & Performance Improvements
+
+All tests continue to pass under Linux and FreeBSD is now fully supported with
+all tests passing:
+
+*** FreeBSD Fixes
+- Fixed build failures: header order, implicit fallthrough warnings, MSG_DONTWAIT
+- Fixed time function calls: use ~clock_gettime~ with ~CLOCK_MONOTONIC~ instead
+  of ~gettimeofday~ which isn't available with ~__POSIX_C_SOURCE~
+- Fixed DTLS and Unix socket handling for FreeBSD's kqueue-based event loop
+- Better shutdown handling with scheduled close operations for TLS streams
+
+*** Performance Improvements
+- Embedded ~TLSState~ directly in ~TLSStream~ to eliminate malloc per I/O operation
+- Reduced ~memset~ calls in hot paths by only zeroing fields that need reset
+- Added ~-O2~ optimization flag to production builds
+- Some keywords cached to prevent runtime lookups in hot paths
+
 ** 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
 Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
