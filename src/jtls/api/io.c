@@ -84,7 +84,8 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
+    /* Use embedded read_state - no malloc needed */
+    TLSState *state = &tls->read_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = read_all ? TLS_OP_CHUNK : TLS_OP_READ;
@@ -98,10 +99,8 @@ Janet cfun_read(int32_t argc, Janet *argv) {
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         if (buffer->count == 0 && bytes_to_read > 0) {
-            janet_free(state);
             return janet_wrap_nil();
         }
-        janet_free(state);
         return janet_wrap_buffer(buffer);
     }
 
@@ -129,7 +128,8 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
+    /* Use embedded read_state - no malloc needed */
+    TLSState *state = &tls->read_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = TLS_OP_CHUNK;
@@ -142,7 +142,6 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_buffer(buffer);
     }
 
@@ -173,7 +172,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     JanetByteView bytes = janet_getbytes(argv, 1);
     double timeout = parse_timeout_opt(argc, argv, 2);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
+    /* Use embedded write_state - no malloc needed */
+    TLSState *state = &tls->write_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = TLS_OP_WRITE;
@@ -187,7 +187,6 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
@@ -238,14 +237,14 @@ Janet cfun_close(int32_t argc, Janet *argv) {
     /* Graceful close: use async state machine for TLS shutdown.
      * This schedules the close operation through the event loop,
      * allowing proper handling of I/O events during SSL_shutdown.
-     * Critical for FreeBSD unix sockets where synchronous shutdown hangs. */
-    TLSState *state = janet_malloc(sizeof(TLSState));
+     * Critical for FreeBSD unix sockets where synchronous shutdown hangs.
+     * Use write_state since close is a write-like operation. */
+    TLSState *state = &tls->write_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = TLS_OP_CLOSE;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
@@ -277,13 +276,13 @@ Janet cfun_shutdown(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
+    /* Use write_state since shutdown is a write-like operation */
+    TLSState *state = &tls->write_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = TLS_OP_SHUTDOWN;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
