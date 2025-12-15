@@ -151,6 +151,36 @@ typedef struct ALPNConfig ALPNConfig;
 typedef struct ServerCTXCache ServerCTXCache;
 
 /*============================================================================
+ * TLS OPERATION STATE
+ *============================================================================
+ * State for an in-flight async operation. Two instances are embedded in
+ * TLSStream to support concurrent read and write operations without malloc.
+ *
+ * This structure tracks:
+ * - Which TLS stream the operation is on
+ * - What type of operation (read/write/handshake/etc)
+ * - Current I/O state (waiting for read/write/complete/error)
+ * - Buffers for data transfer
+ * - Error messages
+ *
+ * Lifecycle:
+ * 1. Initialized when operation starts (using embedded state in TLSStream)
+ * 2. Updated as operation progresses
+ * 3. Reset when operation completes
+ */
+struct TLSState {
+    TLSStream *tls;              /* The TLS stream */
+    TLSOpType op;                /* Operation type */
+    TLSIOState io_state;         /* Current I/O state */
+    JanetBuffer *user_buf;       /* Buffer for read operations */
+    const uint8_t *write_data;   /* Data for write operations */
+    int32_t write_len;           /* Total bytes to write */
+    int32_t write_offset;        /* Bytes already written */
+    int32_t bytes_requested;     /* Bytes requested for read (-1 for any) */
+    char error_msg[256];         /* Error message buffer */
+};
+
+/*============================================================================
  * TLS STREAM STRUCTURE
  *============================================================================
  * The main TLS connection object. Contains the SSL state and references to
@@ -166,6 +196,11 @@ typedef struct ServerCTXCache ServerCTXCache;
  * - is_server: True for server-side connections
  * - owns_ctx: True if we should free ctx on cleanup
  * - buffer_size: Size for I/O buffers
+ *
+ * Embedded Operation States:
+ * - read_state: For read/chunk operations (only one active at a time)
+ * - write_state: For write operations (can be concurrent with read)
+ * This eliminates malloc/free for every I/O operation.
  */
 struct TLSStream {
     JanetStream stream;          /* Embedded stream for method dispatch */
@@ -180,6 +215,9 @@ struct TLSStream {
     /* Track pending operations for cooperative mode switching */
     JanetFiber *pending_read;    /* Fiber waiting on read */
     JanetFiber *pending_write;   /* Fiber waiting on write */
+    /* Embedded operation states - eliminates malloc per I/O operation */
+    TLSState read_state;         /* State for read/chunk operations */
+    TLSState write_state;        /* State for write/shutdown/close operations */
     /* BIO read-ahead buffer for reducing syscalls */
     struct {
         unsigned char *data;     /* Buffer storage */
@@ -191,37 +229,6 @@ struct TLSStream {
     int track_handshake_time;       /* Whether to record handshake timing */
     struct timespec ts_connect;     /* Time when stream was created */
     struct timespec ts_handshake;   /* Time when handshake completed */
-};
-
-/*============================================================================
- * TLS OPERATION STATE
- *============================================================================
- * State for an in-flight async operation. Stored in fiber->ev_state during
- * async operations.
- *
- * This structure tracks:
- * - Which TLS stream the operation is on
- * - What type of operation (read/write/handshake/etc)
- * - Current I/O state (waiting for read/write/complete/error)
- * - Buffers for data transfer
- * - Error messages
- *
- * Lifecycle:
- * 1. Allocated when operation starts
- * 2. Stored in fiber->ev_state
- * 3. Updated as operation progresses
- * 4. Freed when operation completes (by janet_async_end)
- */
-struct TLSState {
-    TLSStream *tls;              /* The TLS stream */
-    TLSOpType op;                /* Operation type */
-    TLSIOState io_state;         /* Current I/O state */
-    JanetBuffer *user_buf;       /* Buffer for read operations */
-    const uint8_t *write_data;   /* Data for write operations */
-    int32_t write_len;           /* Total bytes to write */
-    int32_t write_offset;        /* Bytes already written */
-    int32_t bytes_requested;     /* Bytes requested for read (-1 for any) */
-    char error_msg[256];         /* Error message buffer */
 };
 
 /*============================================================================

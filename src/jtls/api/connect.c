@@ -339,20 +339,20 @@ common_setup:
      *
      * For connect(), the handshake happens during the async callback,
      * so errors are properly propagated.
+     *
+     * Use write_state for handshake since it's not concurrent with I/O.
      */
-    TLSState *state = janet_malloc(sizeof(TLSState));
+    TLSState *state = &tls->write_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
     state->op = TLS_OP_HANDSHAKE;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_abstract(tls);
     }
 
     /* If no transport (manual mode), return stream even if handshake incomplete */
     if (!tls->transport) {
-        janet_free(state);
         return janet_wrap_abstract(tls);
     }
 

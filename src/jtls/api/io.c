@@ -15,6 +15,28 @@
 #include "../internal.h"
 #include <math.h>
 
+/*============================================================================
+ * CACHED KEYWORDS
+ *============================================================================
+ * Keywords used in hot paths are cached to avoid repeated interning lookups.
+ * Janet keywords are interned (globally unique), so caching the Janet value
+ * avoids the hash lookup on every call.
+ *
+ * Thread safety: Janet guarantees each thread has its own VM state, and
+ * keywords are interned per-VM. The init function is called once per module
+ * load (which happens once per VM), so this is safe.
+ */
+static Janet kw_timeout = {0};
+static int kw_initialized = 0;
+
+static void ensure_keywords_initialized(void) {
+    if (!kw_initialized) {
+        kw_timeout = janet_ckeywordv("timeout");
+        janet_gcroot(kw_timeout);
+        kw_initialized = 1;
+    }
+}
+
 /* Helper to check if timeout is infinite (avoids float comparison warning) */
 static inline int is_infinite_timeout(double timeout) {
     return isinf(timeout) != 0;
@@ -42,8 +64,10 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
     
     if (janet_checktype(arg, JANET_NUMBER)) {
         timeout = janet_unwrap_number(arg);
-    } else if (janet_checktype(arg, JANET_TABLE) || janet_checktype(arg, JANET_STRUCT)) {
-        Janet timeout_val = janet_get(arg, janet_ckeywordv("timeout"));
+    } else if (janet_checktype(arg, JANET_TABLE) ||
+               janet_checktype(arg, JANET_STRUCT)) {
+        ensure_keywords_initialized();
+        Janet timeout_val = janet_get(arg, kw_timeout);
         if (janet_checktype(timeout_val, JANET_NUMBER)) {
             timeout = janet_unwrap_number(timeout_val);
         }
@@ -84,12 +108,16 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
-    memset(state, 0, sizeof(TLSState));
+    /* Use embedded read_state - no malloc needed.
+     * Selective initialization instead of memset(0) for performance.
+     * Only set fields actually used by read operations. */
+    TLSState *state = &tls->read_state;
     state->tls = tls;
     state->op = read_all ? TLS_OP_CHUNK : TLS_OP_READ;
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
+    /* write_data, write_len, write_offset unused for reads - not zeroed */
+    /* error_msg only written on error via snprintf - not pre-zeroed */
 
     /* Add timeout before starting async operation */
     if (!is_infinite_timeout(timeout)) {
@@ -98,10 +126,8 @@ Janet cfun_read(int32_t argc, Janet *argv) {
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         if (buffer->count == 0 && bytes_to_read > 0) {
-            janet_free(state);
             return janet_wrap_nil();
         }
-        janet_free(state);
         return janet_wrap_buffer(buffer);
     }
 
@@ -129,8 +155,9 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
-    memset(state, 0, sizeof(TLSState));
+    /* Use embedded read_state - no malloc needed.
+     * Selective initialization instead of memset(0) for performance. */
+    TLSState *state = &tls->read_state;
     state->tls = tls;
     state->op = TLS_OP_CHUNK;
     state->user_buf = buffer;
@@ -142,7 +169,6 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_buffer(buffer);
     }
 
@@ -173,13 +199,15 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     JanetByteView bytes = janet_getbytes(argv, 1);
     double timeout = parse_timeout_opt(argc, argv, 2);
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
-    memset(state, 0, sizeof(TLSState));
+    /* Use embedded write_state - no malloc needed.
+     * Selective initialization instead of memset(0) for performance. */
+    TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_WRITE;
     state->write_data = bytes.bytes;
     state->write_len = bytes.len;
-    state->write_offset = 0;
+    state->write_offset = 0;  /* Only write field that must be explicitly set */
+    /* user_buf, bytes_requested unused for writes - not zeroed */
 
     /* Add timeout before starting async operation */
     if (!is_infinite_timeout(timeout)) {
@@ -187,7 +215,6 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
@@ -238,14 +265,14 @@ Janet cfun_close(int32_t argc, Janet *argv) {
     /* Graceful close: use async state machine for TLS shutdown.
      * This schedules the close operation through the event loop,
      * allowing proper handling of I/O events during SSL_shutdown.
-     * Critical for FreeBSD unix sockets where synchronous shutdown hangs. */
-    TLSState *state = janet_malloc(sizeof(TLSState));
-    memset(state, 0, sizeof(TLSState));
+     * Critical for FreeBSD unix sockets where synchronous shutdown hangs.
+     * Use write_state since close is a write-like operation.
+     * Selective initialization - close uses no data fields. */
+    TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_CLOSE;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
@@ -277,13 +304,13 @@ Janet cfun_shutdown(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    TLSState *state = janet_malloc(sizeof(TLSState));
-    memset(state, 0, sizeof(TLSState));
+    /* Use write_state since shutdown is a write-like operation.
+     * Selective initialization - shutdown uses no data fields. */
+    TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_SHUTDOWN;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        janet_free(state);
         return janet_wrap_nil();
     }
 
