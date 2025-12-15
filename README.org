@@ -141,9 +141,11 @@ The library is designed to abstract communication using multiple industry-standa
 - **mbedTLS (Planned):** Support for mbedTLS is intended for future releases to offer a lighter-weight alternative, particularly suited for embedded systems.
 
 ** Operating System Support
-- **Linux:** Fully supported from day one via standard CI pipelines. (CI planned)
-- **BSD & Windows (Planned):** These platforms are intended targets. The underlying architecture should make portability straightforward.
-  - If you are willing to help debug and test on these platforms, we encourage you to submit patches! The author welcomes contributions and will assist wherever possible in ironing out platform-specific bugs.
+- **Linux:** Fully supported. All tests pass.
+- **FreeBSD:** Fully supported. All tests pass. Tested on FreeBSD 15.
+- **Windows (Planned):** Windows support is an intended target. The underlying architecture should make portability straightforward.
+  - If you are willing to help debug and test on Windows, we encourage you to submit patches! The author welcomes contributions and will assist wherever possible in ironing out platform-specific bugs.
+- **macOS (Untested):** The author lacks Apple hardware; community testing and fixes are needed.
 
 ** Current Limitations
 - [ ] **DTLS Support is minimal/experimental.** It is not recommended for production use yet (mostly performance issues).
@@ -409,7 +411,7 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 *** Platform Support
 - *Windows:* Testing, debugging, and CI improvements for Windows builds (MSYS2/MinGW-w64)
 - *macOS:* The author lacks Apple hardware; community testing and fixes are essential
-- *BSD:* Porting and testing on FreeBSD, OpenBSD, NetBSD
+- *Other BSDs:* FreeBSD is fully supported; OpenBSD and NetBSD testing welcome
 
 *** Testing & Quality
 - *Test Suite Expansion:* Additional edge cases, protocol scenarios, error conditions
