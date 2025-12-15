@@ -11,7 +11,7 @@
  * - String representation (for debugging)
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 #include <string.h>
 #include <stdio.h>
 

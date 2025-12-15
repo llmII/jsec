@@ -10,7 +10,7 @@
  * License: ISC
  */
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 
 /*============================================================================
  * NEW-CONTEXT - Create a reusable TLS context

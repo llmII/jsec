@@ -28,7 +28,7 @@
  *   dtls/address?    - Check if value is address
  */
 
-#include "jdtls_internal.h"
+#include "internal.h"
 
 JANET_MODULE_ENTRY(JanetTable *env) {
     /* Register all components */

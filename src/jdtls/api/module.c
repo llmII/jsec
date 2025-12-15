@@ -5,7 +5,7 @@
  * Note: Implementation files are compiled separately via project.janet.
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 
 /*
  * =============================================================================

@@ -8,7 +8,7 @@
  * License: ISC
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /*============================================================================
  * Cipher Algorithm Lookup

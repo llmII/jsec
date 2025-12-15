@@ -2,7 +2,7 @@
  * jcrypto/hmac.c - HMAC functions
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* HMAC */
 Janet cfun_hmac(int32_t argc, Janet *argv) {

@@ -2,7 +2,7 @@
  * jcrypto/keys.c - Key generation and management
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* Key Management */
 Janet cfun_generate_key(int32_t argc, Janet *argv) {

@@ -2,7 +2,7 @@
  * jcrypto/cms.c - CMS/PKCS#7 functions for SCEP support
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 
 /* CMS/PKCS#7 Sign - Create signed data structure */
 Janet cfun_cms_sign(int32_t argc, Janet *argv) {

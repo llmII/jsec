@@ -15,7 +15,7 @@
  * License: ISC
  */
 
-#include "jcrypto_internal.h"
+#include "internal.h"
 #include <openssl/rsa.h>
 
 /*

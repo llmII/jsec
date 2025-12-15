@@ -2,10 +2,10 @@
  * client/types.c - DTLSClient type definition and lifecycle
  *
  * Defines the DTLSClient abstract type including GC, mark, and method dispatch.
- * Function declarations are in jdtls_internal.h for separate compilation.
+ * Function declarations are in internal.h for separate compilation.
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 
 static int dtls_client_gc(void *p, size_t s) {

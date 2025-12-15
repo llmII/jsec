@@ -16,7 +16,7 @@
  * License: ISC
  */
 
-#include "jtls_internal.h"
+#include "internal.h"
 
 /*============================================================================
  * BIO READ-AHEAD BUFFER SIZE

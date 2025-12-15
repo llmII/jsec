@@ -2,7 +2,7 @@
  * client/close.c - DTLS client shutdown and close operations
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 
 /* External declarations */

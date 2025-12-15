@@ -4,7 +4,7 @@
  * Handles async state machine for handshake, read, write, and close.
  */
 
-#include "../jdtls_internal.h"
+#include "../internal.h"
 #include <string.h>
 
 /*

@@ -13,7 +13,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "../jtls_internal.h"
+#include "../internal.h"
 #include <sys/un.h>
 
 /*============================================================================
