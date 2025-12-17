@@ -1,39 +1,39 @@
 
 # Table of Contents
 
-1.  [Overview](#orgb9ff619)
-2.  [Critical Constraints](#org21a54cf)
-    1.  [C Code Requirements](#org9b7150a)
-    2.  [API Compatibility](#org10e1835)
-    3.  [Platform Strategy](#org38e0cfa)
-        1.  [Windows Support](#org2346f67)
-        2.  [macOS Support](#orgb34897f)
-3.  [Source Organization](#orgee1d4dd)
-4.  [TLS State Machine](#orga99c7c9)
-    1.  [States](#org94dc6db)
-    2.  [State Transitions](#org5288ab1)
-    3.  [SSL<sub>ERROR</sub> Handling](#orge3cfbad)
-5.  [Event Loop Integration](#org99ceb6c)
-    1.  [The Async Pattern](#org059b688)
-    2.  [Key Functions](#orgbddb630)
-    3.  [Why WANT<sub>WRITE</sub> During Read?](#org21ec16e)
-6.  [Memory Management](#org0a7c1d8)
-    1.  [OpenSSL Objects](#orgd994a9b)
-    2.  [Janet Integration](#orgdd9f04a)
-    3.  [Error Path Cleanup](#org44487f4)
-7.  [Adding New Functionality](#org4174496)
-    1.  [Adding a Stream Method](#orgc13e17a)
-    2.  [Adding a Module Function](#org96ebcb7)
-8.  [Building and Debugging](#org16e8c23)
-    1.  [Build with Debug Symbols](#org516af09)
-    2.  [OpenSSL Error Messages](#org9d51228)
-    3.  [Useful Tools](#org02cf4d8)
-9.  [Common Pitfalls](#org4ee7c9a)
-10. [References](#orgfe7ea5d)
+1.  [Overview](#orga88fedc)
+2.  [Critical Constraints](#org7e42969)
+    1.  [C Code Requirements](#org50f9697)
+    2.  [API Compatibility](#org9a42bc9)
+    3.  [Platform Strategy](#org5c8a04a)
+        1.  [Windows Support](#org4bf44cf)
+        2.  [macOS Support](#orgc059f9f)
+3.  [Source Organization](#org70225f4)
+4.  [TLS State Machine](#orga211edb)
+    1.  [States](#org2a898fe)
+    2.  [State Transitions](#orga63921d)
+    3.  [SSL<sub>ERROR</sub> Handling](#org158af8b)
+5.  [Event Loop Integration](#orgc180863)
+    1.  [The Async Pattern](#org65db5fe)
+    2.  [Key Functions](#org567ff00)
+    3.  [Why WANT<sub>WRITE</sub> During Read?](#orgf7f9789)
+6.  [Memory Management](#org301a302)
+    1.  [OpenSSL Objects](#orgc3a9352)
+    2.  [Janet Integration](#org8f2b745)
+    3.  [Error Path Cleanup](#org6f6e9e2)
+7.  [Adding New Functionality](#org8bcab5c)
+    1.  [Adding a Stream Method](#org5a816f0)
+    2.  [Adding a Module Function](#org4532924)
+8.  [Building and Debugging](#orgdd061cc)
+    1.  [Build with Debug Symbols](#org971233a)
+    2.  [OpenSSL Error Messages](#orga14b82c)
+    3.  [Useful Tools](#org2895609)
+9.  [Common Pitfalls](#orgea29e2d)
+10. [References](#org6450f6f)
 
 
 
-<a id="orgb9ff619"></a>
+<a id="orga88fedc"></a>
 
 # Overview
 
@@ -41,12 +41,12 @@ This guide covers JSEC internals for contributors. JSEC provides TLS/DTLS
 integration for Janet that works seamlessly with Janet's event loop (`ev`).
 
 
-<a id="org21a54cf"></a>
+<a id="org7e42969"></a>
 
 # Critical Constraints
 
 
-<a id="org9b7150a"></a>
+<a id="org50f9697"></a>
 
 ## C Code Requirements
 
@@ -74,7 +74,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     -   Proper error handling is mandatory
 
 
-<a id="org10e1835"></a>
+<a id="org9a42bc9"></a>
 
 ## API Compatibility
 
@@ -88,12 +88,12 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
 3.  No features can be lost from prior versions
 
 
-<a id="org38e0cfa"></a>
+<a id="org5c8a04a"></a>
 
 ## Platform Strategy
 
 
-<a id="org2346f67"></a>
+<a id="org4bf44cf"></a>
 
 ### Windows Support
 
@@ -102,7 +102,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
 -   **Status:** Best-effort
 
 
-<a id="orgb34897f"></a>
+<a id="orgc059f9f"></a>
 
 ### macOS Support
 
@@ -112,7 +112,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
 -   **Policy:** macOS-specific issues require community PRs
 
 
-<a id="orgee1d4dd"></a>
+<a id="org70225f4"></a>
 
 # Source Organization
 
@@ -144,15 +144,15 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     │   └── panic.c              # Error handling macros
     ├── jbio.c                   # Memory BIO operations
     ├── jcert/
-│   ├── jcert.c                  # Certificate generation
+    │   ├── jcert.c                  # Certificate generation
 
 
-<a id="orga99c7c9"></a>
+<a id="orga211edb"></a>
 
 # TLS State Machine
 
 
-<a id="org94dc6db"></a>
+<a id="org2a898fe"></a>
 
 ## States
 
@@ -166,7 +166,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     } tls_state_t;
 
 
-<a id="org5288ab1"></a>
+<a id="orga63921d"></a>
 
 ## State Transitions
 
@@ -211,7 +211,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
                            └───────────────┘      └─────────┘
 
 
-<a id="orge3cfbad"></a>
+<a id="org158af8b"></a>
 
 ## SSL<sub>ERROR</sub> Handling
 
@@ -265,14 +265,14 @@ When OpenSSL returns an error, check `SSL_get_error()`:
 </table>
 
 
-<a id="org99ceb6c"></a>
+<a id="orgc180863"></a>
 
 # Event Loop Integration
 
 JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
 
 
-<a id="org059b688"></a>
+<a id="org65db5fe"></a>
 
 ## The Async Pattern
 
@@ -315,7 +315,7 @@ JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
     }
 
 
-<a id="orgbddb630"></a>
+<a id="org567ff00"></a>
 
 ## Key Functions
 
@@ -324,7 +324,7 @@ JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
 -   `janet_async_mod()` - Change event registration (READ <-> WRITE)
 
 
-<a id="org21ec16e"></a>
+<a id="orgf7f9789"></a>
 
 ## Why WANT<sub>WRITE</sub> During Read?
 
@@ -336,12 +336,12 @@ a handshake message, returning `SSL_ERROR_WANT_WRITE`. We must:
 3.  OpenSSL handles the renegotiation transparently
 
 
-<a id="org0a7c1d8"></a>
+<a id="org301a302"></a>
 
 # Memory Management
 
 
-<a id="orgd994a9b"></a>
+<a id="orgc3a9352"></a>
 
 ## OpenSSL Objects
 
@@ -350,7 +350,7 @@ a handshake message, returning `SSL_ERROR_WANT_WRITE`. We must:
 -   `BIO` - Managed by SSL when attached, freed automatically
 
 
-<a id="orgdd9f04a"></a>
+<a id="org8f2b745"></a>
 
 ## Janet Integration
 
@@ -359,7 +359,7 @@ a handshake message, returning `SSL_ERROR_WANT_WRITE`. We must:
 -   Always clean up OpenSSL state in `gc` callback
 
 
-<a id="org44487f4"></a>
+<a id="org6f6e9e2"></a>
 
 ## Error Path Cleanup
 
@@ -387,12 +387,12 @@ Use goto cleanup pattern consistently:
     }
 
 
-<a id="org4174496"></a>
+<a id="org8bcab5c"></a>
 
 # Adding New Functionality
 
 
-<a id="orgc13e17a"></a>
+<a id="org5a816f0"></a>
 
 ## Adding a Stream Method
 
@@ -414,7 +414,7 @@ Use goto cleanup pattern consistently:
         };
 
 
-<a id="org96ebcb7"></a>
+<a id="org4532924"></a>
 
 ## Adding a Module Function
 
@@ -432,12 +432,12 @@ Use goto cleanup pattern consistently:
         };
 
 
-<a id="org16e8c23"></a>
+<a id="orgdd061cc"></a>
 
 # Building and Debugging
 
 
-<a id="org516af09"></a>
+<a id="org971233a"></a>
 
 ## Build with Debug Symbols
 
@@ -445,7 +445,7 @@ Use goto cleanup pattern consistently:
     jpm build -- -O0 -g
 
 
-<a id="org9d51228"></a>
+<a id="orga14b82c"></a>
 
 ## OpenSSL Error Messages
 
@@ -461,7 +461,7 @@ Use goto cleanup pattern consistently:
     fprintf(stderr, "OpenSSL error: %s\n", buf);
 
 
-<a id="org02cf4d8"></a>
+<a id="org2895609"></a>
 
 ## Useful Tools
 
@@ -471,7 +471,7 @@ Use goto cleanup pattern consistently:
 -   `wireshark` - Packet inspection (can decrypt with SSLKEYLOGFILE)
 
 
-<a id="org4ee7c9a"></a>
+<a id="orgea29e2d"></a>
 
 # Common Pitfalls
 
@@ -482,7 +482,7 @@ Use goto cleanup pattern consistently:
 5.  **Thread Safety** - OpenSSL 1.1.1+ is thread-safe, but not Janet streams
 
 
-<a id="orgfe7ea5d"></a>
+<a id="org6450f6f"></a>
 
 # References
 

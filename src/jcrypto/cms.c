@@ -29,7 +29,8 @@ Janet cfun_cms_sign(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(key_bio);
     if (!pkey) {
         X509_free(cert);
@@ -258,7 +259,8 @@ Janet cfun_cms_decrypt(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(key_bio);
     if (!pkey) {
         X509_free(cert);

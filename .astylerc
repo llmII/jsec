@@ -1,0 +1,38 @@
+# AStyle configuration for jsec C code
+# Enforces consistent C code formatting
+
+# Style - attach opening braces to functions
+--style=attach
+
+# Indentation
+--indent=spaces=4
+--indent-switches
+--indent-cases
+--indent-preproc-block
+--indent-preproc-define
+--min-conditional-indent=0
+
+# Brackets
+--attach-namespaces
+--attach-classes
+--attach-inlines
+--attach-extern-c
+
+# Indentation Options
+--max-code-length=78
+--break-after-logical
+
+# Padding
+--pad-oper
+--pad-header
+--unpad-paren
+--align-pointer=name
+
+# One-liners
+--keep-one-line-statements
+--keep-one-line-blocks
+
+# Other
+--suffix=none
+--formatted
+--lineend=linux
