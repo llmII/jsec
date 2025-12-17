@@ -17,7 +17,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(bio);
     if (!pkey) crypto_panic_ssl("failed to load private key");
 

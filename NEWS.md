@@ -1,19 +1,45 @@
 
 # Table of Contents
 
--   [News](#org12a51db)
-    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#org38f395f)
-    -   [2025-12-13 - Dependency Update](#orge1c0859)
-    -   [2025-12-12 - Initial Release](#org6e1b1a0)
+-   [News](#org6a15317)
+    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org6d4db6d)
+    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#orgc54ec0d)
+    -   [2025-12-13 - Dependency Update](#org6ee5138)
+    -   [2025-12-12 - Initial Release](#org680150f)
 
 
 
-<a id="org12a51db"></a>
+<a id="org6a15317"></a>
 
 # News
 
 
-<a id="org38f395f"></a>
+<a id="org6d4db6d"></a>
+
+## 2025-12-15 - FreeBSD Support & Performance Improvements
+
+All tests continue to pass under Linux and FreeBSD is now fully supported with
+all tests passing:
+
+
+### FreeBSD Fixes
+
+-   Fixed build failures: header order, implicit fallthrough warnings, MSG<sub>DONTWAIT</sub>
+-   Fixed time function calls: use `clock_gettime` with `CLOCK_MONOTONIC` instead
+    of `gettimeofday` which isn't available with `__POSIX_C_SOURCE`
+-   Fixed DTLS and Unix socket handling for FreeBSD's kqueue-based event loop
+-   Better shutdown handling with scheduled close operations for TLS streams
+
+
+### Performance Improvements
+
+-   Embedded `TLSState` directly in `TLSStream` to eliminate malloc per I/O operation
+-   Reduced `memset` calls in hot paths by only zeroing fields that need reset
+-   Added `-O2` optimization flag to production builds
+-   Some keywords cached to prevent runtime lookups in hot paths
+
+
+<a id="orgc54ec0d"></a>
 
 ## 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
@@ -32,7 +58,7 @@ Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
 These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
 
 
-<a id="orge1c0859"></a>
+<a id="org6ee5138"></a>
 
 ## 2025-12-13 - Dependency Update
 
@@ -40,7 +66,7 @@ These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
     merged the necessary changes for spork-https compatibility
 
 
-<a id="org6e1b1a0"></a>
+<a id="org680150f"></a>
 
 ## 2025-12-12 - Initial Release
 

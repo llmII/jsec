@@ -34,7 +34,7 @@ static X509 *load_cert_from_pem(const uint8_t *data, int32_t len) {
  * Load multiple certificates from PEM data (chain)
  */
 static STACK_OF(X509) *
-    load_cert_chain_from_pem(const uint8_t *data, int32_t len) {
+load_cert_chain_from_pem(const uint8_t *data, int32_t len) {
     STACK_OF(X509) *chain = sk_X509_new_null();
     if (!chain)
         return NULL;
@@ -172,15 +172,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :chain */
         val = opts ? janet_table_get(opts, janet_ckeywordv("chain"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
         if (!janet_checktype(val, JANET_NIL)) {
             if (!janet_checktype(val, JANET_ARRAY) &&
                 !janet_checktype(val, JANET_TUPLE)) {
                 cert_panic_param(":chain must be an array of PEM strings");
             }
             chain_arr = janet_checktype(val, JANET_ARRAY)
-                            ? janet_unwrap_array(val)
-                            : NULL;
+                        ? janet_unwrap_array(val)
+                        : NULL;
             /* Handle tuple as well */
             if (!chain_arr) {
                 JanetTuple tup = janet_unwrap_tuple(val);
@@ -193,15 +193,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :trusted */
         val = opts ? janet_table_get(opts, janet_ckeywordv("trusted"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("trusted"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("trusted"));
         if (!janet_checktype(val, JANET_NIL)) {
             if (!janet_checktype(val, JANET_ARRAY) &&
                 !janet_checktype(val, JANET_TUPLE)) {
                 cert_panic_param(":trusted must be an array of PEM strings");
             }
             trusted_arr = janet_checktype(val, JANET_ARRAY)
-                              ? janet_unwrap_array(val)
-                              : NULL;
+                          ? janet_unwrap_array(val)
+                          : NULL;
             if (!trusted_arr) {
                 JanetTuple tup = janet_unwrap_tuple(val);
                 trusted_arr = janet_array(janet_tuple_length(tup));
@@ -213,8 +213,8 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :trusted-dir */
         val = opts ? janet_table_get(opts, janet_ckeywordv("trusted-dir"))
-                   : janet_struct_get(opts_struct,
-                                      janet_ckeywordv("trusted-dir"));
+              : janet_struct_get(opts_struct,
+                                 janet_ckeywordv("trusted-dir"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             trusted_dir = (const char *)bv.bytes;
@@ -222,14 +222,14 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :purpose */
         val = opts ? janet_table_get(opts, janet_ckeywordv("purpose"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("purpose"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("purpose"));
         if (!janet_checktype(val, JANET_NIL)) {
             purpose_str = (const char *)janet_getkeyword(&val, 0);
         }
 
         /* :hostname */
         val = opts ? janet_table_get(opts, janet_ckeywordv("hostname"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("hostname"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("hostname"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             hostname = (const char *)bv.bytes;
@@ -237,7 +237,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :time */
         val = opts ? janet_table_get(opts, janet_ckeywordv("time"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("time"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("time"));
         if (!janet_checktype(val, JANET_NIL)) {
             verify_time = (time_t)janet_unwrap_number(val);
             use_verify_time = 1;
@@ -245,15 +245,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
         /* :check-crl */
         val = opts
-                  ? janet_table_get(opts, janet_ckeywordv("check-crl"))
-                  : janet_struct_get(opts_struct, janet_ckeywordv("check-crl"));
+              ? janet_table_get(opts, janet_ckeywordv("check-crl"))
+              : janet_struct_get(opts_struct, janet_ckeywordv("check-crl"));
         if (!janet_checktype(val, JANET_NIL)) {
             check_crl = janet_truthy(val);
         }
 
         /* :crl */
         val = opts ? janet_table_get(opts, janet_ckeywordv("crl"))
-                   : janet_struct_get(opts_struct, janet_ckeywordv("crl"));
+              : janet_struct_get(opts_struct, janet_ckeywordv("crl"));
         if (!janet_checktype(val, JANET_NIL)) {
             crl_pem = janet_getbytes(&val, 0);
             check_crl = 1; /* Implicitly enable CRL check */

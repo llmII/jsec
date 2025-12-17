@@ -217,7 +217,8 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, (int)key_pem.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(bio);
 
     if (!pkey) {

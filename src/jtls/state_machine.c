@@ -735,7 +735,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
-                    } else if (ssl_err == SSL_ERROR_SYSCALL && 
+                    } else if (ssl_err == SSL_ERROR_SYSCALL &&
                                (errno == 0 || errno == ECONNRESET)) {
                         /* Connection reset - return what we have or nil */
                         Janet result = (state->user_buf->count > 0) ?

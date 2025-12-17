@@ -89,7 +89,8 @@ int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) return 0;
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
     if (!pkey) {
         BIO_free(bio);
         return 0;

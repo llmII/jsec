@@ -1,0 +1,53 @@
+# JSEC Clang-Tidy Configuration
+# C99 project for OpenSSL bindings to Janet
+# Focus: reliability, robustness, security, portability
+
+# Checks enabled:
+# - clang-analyzer-*: Static analysis
+# - bugprone-*: Bug detection
+# - readability-*: Code readability
+# - cert-*: Security checks
+# - misc-*: Logic and hygiene
+# - concurrency-*: Thread safety
+# - performance-*: Performance issues
+# - portability-*: Cross-platform correctness
+#
+# Disabled checks (with reasons):
+# - readability-magic-numbers: Too noisy for buffer sizes, etc.
+# - readability-function-cognitive-complexity: Some complex functions are necessary
+# - readability-identifier-length: Short names like 'i', 'n' are fine in C
+# - readability-identifier-naming: Our naming conventions differ
+# - readability-braces-around-statements: Single-line if/return is acceptable
+# - readability-else-after-return: Early returns with else chains are readable
+# - readability-isolate-declaration: Multiple related declarations together is fine
+# - readability-math-missing-parentheses: Standard precedence is well understood
+# - readability-redundant-declaration: Forward declarations in .c files for organization
+# - readability-non-const-parameter: OpenSSL callbacks have fixed signatures
+# - bugprone-easily-swappable-parameters: Too noisy for Janet API functions
+# - bugprone-reserved-identifier: _POSIX_C_SOURCE is intentional
+# - bugprone-branch-clone: Some duplicate branches are intentional for clarity
+# - bugprone-multi-level-implicit-pointer-conversion: Required for void* callbacks
+# - misc-no-recursion: Some algorithms need recursion
+# - misc-include-cleaner: Indirect includes via internal.h are intentional
+# - cert-err33-c: Not all return values need checking
+# - cert-err34-c: atoi usage in controlled contexts is acceptable
+# - cert-dcl37-c, cert-dcl51-cpp: Reserved identifiers like _POSIX_C_SOURCE
+# - clang-analyzer-security.insecureAPI.*: Controlled usage of string functions
+# - concurrency-mt-unsafe: strerror() usage is acceptable in our context
+# - performance-no-int-to-ptr: OpenSSL NID_* constants require this pattern
+
+Checks: '-*,clang-analyzer-*,bugprone-*,readability-*,cert-*,misc-*,concurrency-*,performance-*,portability-*,-readability-magic-numbers,-readability-function-cognitive-complexity,-readability-identifier-length,-readability-identifier-naming,-readability-braces-around-statements,-readability-else-after-return,-readability-isolate-declaration,-readability-math-missing-parentheses,-readability-redundant-declaration,-readability-non-const-parameter,-bugprone-easily-swappable-parameters,-bugprone-reserved-identifier,-bugprone-branch-clone,-bugprone-multi-level-implicit-pointer-conversion,-misc-no-recursion,-misc-include-cleaner,-cert-err33-c,-cert-err34-c,-cert-dcl37-c,-cert-dcl51-cpp,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy,-concurrency-mt-unsafe,-performance-no-int-to-ptr'
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: 'src/.*\.h$'
+
+CheckOptions:
+  - key: readability-function-size.LineThreshold
+    value: '450'
+  - key: readability-function-size.StatementThreshold
+    value: '350'
+  - key: readability-function-size.BranchThreshold
+    value: '60'
+  - key: readability-function-size.ParameterThreshold
+    value: '10'

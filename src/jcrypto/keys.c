@@ -99,7 +99,8 @@ Janet cfun_export_public_key(int32_t argc, Janet *argv) {
     JanetByteView key_pem = janet_getbytes(argv, 0);
 
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(bio);
 
     if (!pkey) crypto_panic_ssl("failed to load private key");
@@ -136,7 +137,7 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
     if (!bio) crypto_panic_resource("failed to create BIO");
 
     EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_password_cb,
-                                             (void *)password);
+                     (void *)password);
     BIO_free(bio);
 
     if (!pkey) {
@@ -241,7 +242,8 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
     BIO_free(bio);
 
     if (!pkey) crypto_panic_ssl("failed to load private key");
@@ -308,7 +310,8 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
+                     NULL);
 
     if (!pkey) {
         /* Reset BIO and try loading as public key */
