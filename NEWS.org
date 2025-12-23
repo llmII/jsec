@@ -4,6 +4,14 @@
 
 * News
 
+** 2025-12-23 - macOS Support via Homebrew OpenSSL
+
+macOS is now fully supported with all tests passing:
+
+*** Requirements
+- Homebrew OpenSSL 3.x: ~brew install openssl@3~
+- Janet and jpm
+
 ** 2025-12-15 - FreeBSD Support & Performance Improvements
 
 All tests continue to pass under Linux and FreeBSD is now fully supported with

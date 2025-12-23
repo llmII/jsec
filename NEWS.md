@@ -1,20 +1,34 @@
 
 # Table of Contents
 
--   [News](#org6a15317)
-    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org6d4db6d)
-    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#orgc54ec0d)
-    -   [2025-12-13 - Dependency Update](#org6ee5138)
-    -   [2025-12-12 - Initial Release](#org680150f)
+-   [News](#orga094e85)
+    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#org898fe99)
+    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org84f5b3b)
+    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#orgcfe8bca)
+    -   [2025-12-13 - Dependency Update](#orgb0e8b77)
+    -   [2025-12-12 - Initial Release](#org487de19)
 
 
 
-<a id="org6a15317"></a>
+<a id="orga094e85"></a>
 
 # News
 
 
-<a id="org6d4db6d"></a>
+<a id="org898fe99"></a>
+
+## 2025-12-23 - macOS Support via Homebrew OpenSSL
+
+macOS is now fully supported with all tests passing:
+
+
+### Requirements
+
+-   Homebrew OpenSSL 3.x: `brew install openssl@3`
+-   Janet and jpm
+
+
+<a id="org84f5b3b"></a>
 
 ## 2025-12-15 - FreeBSD Support & Performance Improvements
 
@@ -39,7 +53,7 @@ all tests passing:
 -   Some keywords cached to prevent runtime lookups in hot paths
 
 
-<a id="orgc54ec0d"></a>
+<a id="orgcfe8bca"></a>
 
 ## 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
@@ -58,7 +72,7 @@ Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
 These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
 
 
-<a id="org6ee5138"></a>
+<a id="orgb0e8b77"></a>
 
 ## 2025-12-13 - Dependency Update
 
@@ -66,7 +80,7 @@ These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
     merged the necessary changes for spork-https compatibility
 
 
-<a id="org680150f"></a>
+<a id="org487de19"></a>
 
 ## 2025-12-12 - Initial Release
 
