@@ -17,8 +17,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
     if (!pkey) crypto_panic_ssl("failed to load private key");
 
@@ -28,7 +28,7 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to create CSR");
     }
 
-    X509_REQ_set_version(req, 0);  /* Version 1 */
+    X509_REQ_set_version(req, 0); /* Version 1 */
     X509_REQ_set_pubkey(req, pkey);
 
     X509_NAME *name = X509_REQ_get_subject_name(req);
@@ -38,48 +38,56 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("common-name"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("country"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("state"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "ST", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("locality"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "L", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("organization"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("organizational-unit"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     val = janet_get(opts, janet_ckeywordv("email"));
     if (janet_checktype(val, JANET_STRING)) {
         X509_NAME_add_entry_by_txt(name, "emailAddress", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1, 0);
+                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
+                                   0);
     }
 
     /* Add Subject Alternative Names if provided */
     val = janet_get(opts, janet_ckeywordv("san"));
-    if (janet_checktype(val, JANET_TUPLE) || janet_checktype(val, JANET_ARRAY)) {
+    if (janet_checktype(val, JANET_TUPLE) ||
+        janet_checktype(val, JANET_ARRAY)) {
         const Janet *san_arr;
         int32_t san_len;
         janet_indexed_view(val, &san_arr, &san_len);
@@ -95,8 +103,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
                 janet_buffer_push_cstring(san_buf, (const char *)san);
             }
 
-            X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, NULL, NID_subject_alt_name,
-                                  (char *)san_buf->data);
+            X509_EXTENSION *ext = X509V3_EXT_conf_nid(
+                NULL, NULL, NID_subject_alt_name, (char *)san_buf->data);
             if (ext) {
                 sk_X509_EXTENSION_push(exts, ext);
                 X509_REQ_add_extensions(req, exts);
@@ -166,7 +174,8 @@ Janet cfun_parse_csr(int32_t argc, Janet *argv) {
         OBJ_obj2txt(obj_buf, sizeof(obj_buf), obj, 0);
 
         janet_table_put(subject, janet_ckeywordv(obj_buf),
-                        janet_stringv(ASN1_STRING_get0_data(str), ASN1_STRING_length(str)));
+                        janet_stringv(ASN1_STRING_get0_data(str),
+                                      ASN1_STRING_length(str)));
     }
     janet_table_put(result, janet_ckeywordv("subject"),
                     janet_wrap_table(subject));
@@ -176,10 +185,14 @@ Janet cfun_parse_csr(int32_t argc, Janet *argv) {
     if (pkey) {
         int key_type = EVP_PKEY_base_id(pkey);
         const char *key_type_str = "unknown";
-        if (key_type == EVP_PKEY_RSA) key_type_str = "rsa";
-        else if (key_type == EVP_PKEY_EC) key_type_str = "ec";
-        else if (key_type == EVP_PKEY_ED25519) key_type_str = "ed25519";
-        else if (key_type == EVP_PKEY_X25519) key_type_str = "x25519";
+        if (key_type == EVP_PKEY_RSA)
+            key_type_str = "rsa";
+        else if (key_type == EVP_PKEY_EC)
+            key_type_str = "ec";
+        else if (key_type == EVP_PKEY_ED25519)
+            key_type_str = "ed25519";
+        else if (key_type == EVP_PKEY_X25519)
+            key_type_str = "x25519";
 
         janet_table_put(result, janet_ckeywordv("key-type"),
                         janet_ckeywordv(key_type_str));

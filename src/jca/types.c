@@ -76,8 +76,7 @@ const JanetMethod ca_methods[] = {
     {"parse-ocsp-request", cfun_ca_parse_ocsp_request},
     {"create-ocsp-response", cfun_ca_create_ocsp_response},
 
-    {NULL, NULL}
-};
+    {NULL, NULL}};
 
 int ca_get(void *p, Janet key, Janet *out) {
     (void)p;
@@ -93,20 +92,18 @@ int ca_get(void *p, Janet key, Janet *out) {
  * =============================================================================
  */
 
-const JanetAbstractType ca_type = {
-    "ca/CA",
-    ca_gc,
-    ca_gcmark,
-    ca_get,
-    NULL,  /* put */
-    NULL,  /* marshal */
-    NULL,  /* unmarshal */
-    NULL,  /* tostring */
-    NULL,  /* compare */
-    NULL,  /* hash */
-    NULL,  /* next */
-    JANET_ATEND_NEXT
-};
+const JanetAbstractType ca_type = {"ca/CA",
+                                   ca_gc,
+                                   ca_gcmark,
+                                   ca_get,
+                                   NULL, /* put */
+                                   NULL, /* marshal */
+                                   NULL, /* unmarshal */
+                                   NULL, /* tostring */
+                                   NULL, /* compare */
+                                   NULL, /* hash */
+                                   NULL, /* next */
+                                   JANET_ATEND_NEXT};
 
 /*
  * =============================================================================
@@ -140,8 +137,8 @@ EVP_PKEY *ca_pem_to_key(Janet pem) {
         ca_panic_resource("failed to create BIO for private key");
     }
 
-    EVP_PKEY *key = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                                            NULL);
+    EVP_PKEY *key =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
     if (!key) {
@@ -196,7 +193,7 @@ EVP_PKEY *ca_generate_keypair(Janet key_type) {
     EVP_PKEY *key = NULL;
     EVP_PKEY_CTX *ctx = NULL;
 
-    const char *type_str = "ec-p256";  /* default */
+    const char *type_str = "ec-p256"; /* default */
     if (!janet_checktype(key_type, JANET_NIL)) {
         type_str = janet_to_string_or_keyword(key_type);
     }
@@ -206,21 +203,22 @@ EVP_PKEY *ca_generate_keypair(Janet key_type) {
         if (!ctx) goto error;
         if (EVP_PKEY_keygen_init(ctx) <= 0) goto error;
         if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx,
-                NID_X9_62_prime256v1) <= 0) goto error;
+                                                   NID_X9_62_prime256v1) <= 0)
+            goto error;
         if (EVP_PKEY_keygen(ctx, &key) <= 0) goto error;
     } else if (strcmp(type_str, "ec-p384") == 0) {
         ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
         if (!ctx) goto error;
         if (EVP_PKEY_keygen_init(ctx) <= 0) goto error;
-        if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx,
-                NID_secp384r1) <= 0) goto error;
+        if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_secp384r1) <= 0)
+            goto error;
         if (EVP_PKEY_keygen(ctx, &key) <= 0) goto error;
     } else if (strcmp(type_str, "ec-p521") == 0) {
         ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
         if (!ctx) goto error;
         if (EVP_PKEY_keygen_init(ctx) <= 0) goto error;
-        if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx,
-                NID_secp521r1) <= 0) goto error;
+        if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_secp521r1) <= 0)
+            goto error;
         if (EVP_PKEY_keygen(ctx, &key) <= 0) goto error;
     } else if (strcmp(type_str, "rsa-2048") == 0 ||
                strcmp(type_str, "rsa") == 0) {
@@ -236,7 +234,8 @@ EVP_PKEY *ca_generate_keypair(Janet key_type) {
         if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 4096) <= 0) goto error;
         if (EVP_PKEY_keygen(ctx, &key) <= 0) goto error;
     } else {
-        ca_panic_param("unknown key type: %s (expected ec-p256, ec-p384, ec-p521, rsa-2048, rsa-4096)",
+        ca_panic_param("unknown key type: %s (expected ec-p256, ec-p384, "
+                       "ec-p521, rsa-2048, rsa-4096)",
                        type_str);
     }
 
@@ -247,7 +246,7 @@ error:
     if (ctx) EVP_PKEY_CTX_free(ctx);
     if (key) EVP_PKEY_free(key);
     ca_panic_ssl("failed to generate keypair");
-    return NULL;  /* unreachable */
+    return NULL; /* unreachable */
 }
 
 /* Add X509v3 extension to certificate */
@@ -283,7 +282,8 @@ static const char *cfun_ca_create_docstring =
     "Create a CA from existing certificate and private key PEM data.\n\n"
     "Options:\n"
     "  :serial <number>       - Starting serial number (default: 1)\n"
-    "  :track-issued <bool>   - Track issued certificates (default: false)\n\n"
+    "  :track-issued <bool>   - Track issued certificates (default: "
+    "false)\n\n"
     "Returns a CA object that can sign CSRs and issue certificates.";
 
 Janet cfun_ca_create(int32_t argc, Janet *argv) {
@@ -344,7 +344,8 @@ static const char *cfun_ca_generate_docstring =
     "Options:\n"
     "  :common-name <string>  - CA common name (default: \"Root CA\")\n"
     "  :days-valid <number>   - Validity period in days (default: 3650)\n"
-    "  :key-type <keyword>    - Key type: :ec-p256, :ec-p384, :rsa-2048, :rsa-4096 (default: :ec-p256)\n"
+    "  :key-type <keyword>    - Key type: :ec-p256, :ec-p384, :rsa-2048, "
+    ":rsa-4096 (default: :ec-p256)\n"
     "  :serial <number>       - Starting serial number (default: 1)\n"
     "  :track-issued <bool>   - Track issued certificates (default: false)\n"
     "  :organization <string> - Organization name\n"
@@ -420,20 +421,21 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert), (long)days_valid * 24 * 60 * 60);
+    X509_gmtime_adj(X509_getm_notAfter(cert),
+                    (long)days_valid * 24 * 60 * 60);
 
     /* Set subject name */
     X509_NAME *name = X509_get_subject_name(cert);
     if (country) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country), -1, -1,
-                                   0);
-    }
-    if (organization) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(organization),
+        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
                                    -1, -1, 0);
     }
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(common_name),
-                               -1, -1, 0);
+    if (organization) {
+        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                   OSSL_STR(organization), -1, -1, 0);
+    }
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               OSSL_STR(common_name), -1, -1, 0);
 
     /* Self-signed: issuer = subject */
     X509_set_issuer_name(cert, name);
@@ -443,9 +445,11 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
 
     /* Add CA extensions */
     ca_add_extension(cert, cert, NID_basic_constraints, "critical,CA:TRUE");
-    ca_add_extension(cert, cert, NID_key_usage, "critical,keyCertSign,cRLSign");
+    ca_add_extension(cert, cert, NID_key_usage,
+                     "critical,keyCertSign,cRLSign");
     ca_add_extension(cert, cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, cert, NID_authority_key_identifier, "keyid:always");
+    ca_add_extension(cert, cert, NID_authority_key_identifier,
+                     "keyid:always");
 
     /* Sign the certificate */
     if (!X509_sign(cert, key, EVP_sha256())) {
@@ -476,7 +480,8 @@ static const char *cfun_ca_generate_intermediate_docstring =
     "(ca/generate-intermediate parent-ca &opt opts)\n\n"
     "Generate an intermediate CA signed by a parent CA.\n\n"
     "Options:\n"
-    "  :common-name <string>  - CA common name (default: \"Intermediate CA\")\n"
+    "  :common-name <string>  - CA common name (default: \"Intermediate "
+    "CA\")\n"
     "  :days-valid <number>   - Validity period in days (default: 1825)\n"
     "  :key-type <keyword>    - Key type (default: :ec-p256)\n"
     "  :path-length <number>  - Max number of sub-CAs allowed (default: 0)\n"
@@ -494,7 +499,7 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
 
     /* Parse options */
     const char *common_name = "Intermediate CA";
-    int days_valid = 1825;  /* 5 years */
+    int days_valid = 1825; /* 5 years */
     Janet key_type = janet_wrap_nil();
     int path_length = 0;
     int64_t serial = 1;
@@ -563,20 +568,21 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert), (long)days_valid * 24 * 60 * 60);
+    X509_gmtime_adj(X509_getm_notAfter(cert),
+                    (long)days_valid * 24 * 60 * 60);
 
     /* Set subject name */
     X509_NAME *name = X509_get_subject_name(cert);
     if (country) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country), -1, -1,
-                                   0);
-    }
-    if (organization) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(organization),
+        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
                                    -1, -1, 0);
     }
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(common_name),
-                               -1, -1, 0);
+    if (organization) {
+        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                   OSSL_STR(organization), -1, -1, 0);
+    }
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               OSSL_STR(common_name), -1, -1, 0);
 
     /* Set issuer from parent */
     X509_set_issuer_name(cert, X509_get_subject_name(parent->cert));
@@ -605,7 +611,7 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
 
     /* Track in parent if enabled */
     if (parent->track_issued && parent->issued) {
-        X509_up_ref(cert);  /* Increase ref count */
+        X509_up_ref(cert); /* Increase ref count */
         sk_X509_push(parent->issued, cert);
     }
 

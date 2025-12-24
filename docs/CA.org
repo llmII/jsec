@@ -58,15 +58,15 @@ Generate a new self-signed root CA.
 #+end_src
 
 Options:
-| Option          | Default      | Description                                  |
-|-----------------+--------------+----------------------------------------------|
-| ~:common-name~  | "Root CA"    | CA common name                               |
-| ~:days-valid~   | 3650         | Validity period in days                      |
-| ~:key-type~     | ~:ec-p256~   | Key type (see Key Types below)               |
-| ~:serial~       | 1            | Starting serial number for issued certs      |
-| ~:track-issued~ | false        | Track issued certificates in memory          |
-| ~:organization~ | nil          | Organization name                            |
-| ~:country~      | nil          | Two-letter country code                      |
+| Option          | Default    | Description                             |
+|-----------------+------------+-----------------------------------------|
+| ~:common-name~  | "Root CA"  | CA common name                          |
+| ~:days-valid~   | 3650       | Validity period in days                 |
+| ~:key-type~     | ~:ec-p256~ | Key type (see Key Types below)          |
+| ~:serial~       | 1          | Starting serial number for issued certs |
+| ~:track-issued~ | false      | Track issued certificates in memory     |
+| ~:organization~ | nil        | Organization name                       |
+| ~:country~      | nil        | Two-letter country code                 |
 
 *** ~ca/generate-intermediate~
 
@@ -77,11 +77,11 @@ Generate an intermediate CA signed by a parent CA.
 #+end_src
 
 Options are the same as ~ca/generate~ plus:
-| Option         | Default           | Description                      |
-|----------------+-------------------+----------------------------------|
-| ~:path-length~ | 0                 | Maximum sub-CAs allowed          |
-| ~:common-name~ | "Intermediate CA" | (different default)              |
-| ~:days-valid~  | 1825              | (different default - 5 years)    |
+| Option         |           Default | Description                   |
+|----------------+-------------------+-------------------------------|
+| ~:path-length~ |                 0 | Maximum sub-CAs allowed       |
+| ~:common-name~ | "Intermediate CA" | (different default)           |
+| ~:days-valid~  |              1825 | (different default - 5 years) |
 
 *** ~ca/create~
 
@@ -114,16 +114,16 @@ method for most use cases.
 #+end_src
 
 Options:
-| Option                | Required | Description                            |
-|-----------------------+----------+----------------------------------------|
-| ~:common-name~        | YES      | Certificate common name                |
-| ~:san~                | no       | Subject Alternative Names (array)      |
-| ~:days-valid~         | no       | Validity period (default: 365)         |
-| ~:key-type~           | no       | Key type (default: ~:ec-p256~)         |
-| ~:key-usage~          | no       | Override key usage extension           |
-| ~:extended-key-usage~ | no       | e.g., "serverAuth", "clientAuth"       |
-| ~:organization~       | no       | Organization name                      |
-| ~:country~            | no       | Country code                           |
+| Option                | Required | Description                       |
+|-----------------------+----------+-----------------------------------|
+| ~:common-name~        | YES      | Certificate common name           |
+| ~:san~                | no       | Subject Alternative Names (array) |
+| ~:days-valid~         | no       | Validity period (default: 365)    |
+| ~:key-type~           | no       | Key type (default: ~:ec-p256~)    |
+| ~:key-usage~          | no       | Override key usage extension      |
+| ~:extended-key-usage~ | no       | e.g., "serverAuth", "clientAuth"  |
+| ~:organization~       | no       | Organization name                 |
+| ~:country~            | no       | Country code                      |
 
 Returns: ~{:cert <pem> :key <pem>}~
 
@@ -138,16 +138,16 @@ over the certificate request process.
 #+end_src
 
 Options:
-| Option              | Default           | Description                       |
-|---------------------+-------------------+-----------------------------------|
-| ~:days-valid~       | 365               | Validity period                   |
-| ~:serial~           | auto              | Override serial number            |
-| ~:copy-extensions~  | false             | Copy extensions from CSR          |
-| ~:key-usage~        | digitalSignature, | Key usage extension               |
-|                     | keyEncipherment   |                                   |
-| ~:extended-key-usage~ | nil             | Extended key usage                |
-| ~:san~              | nil               | Subject Alternative Names         |
-| ~:basic-constraints~ | "CA:FALSE"       | Basic constraints extension       |
+| Option                | Default           | Description                 |
+|-----------------------+-------------------+-----------------------------|
+| ~:days-valid~         | 365               | Validity period             |
+| ~:serial~             | auto              | Override serial number      |
+| ~:copy-extensions~    | false             | Copy extensions from CSR    |
+| ~:key-usage~          | digitalSignature, | Key usage extension         |
+|                       | keyEncipherment   |                             |
+| ~:extended-key-usage~ | nil               | Extended key usage          |
+| ~:san~                | nil               | Subject Alternative Names   |
+| ~:basic-constraints~  | "CA:FALSE"        | Basic constraints extension |
 
 Returns: Certificate in PEM format.
 
@@ -212,18 +212,18 @@ Revoke a certificate by serial number.
 #+end_src
 
 Revocation reasons:
-| Keyword                    | Description                    |
-|----------------------------+--------------------------------|
-| ~:unspecified~             | Default                        |
-| ~:key-compromise~          | Private key compromised        |
-| ~:ca-compromise~           | CA key compromised             |
-| ~:affiliation-changed~     | Subject affiliation changed    |
-| ~:superseded~              | Replaced by new certificate    |
-| ~:cessation-of-operation~  | No longer in use               |
-| ~:certificate-hold~        | Temporarily suspended          |
-| ~:remove-from-crl~         | Remove from CRL (unrevoke)     |
-| ~:privilege-withdrawn~     | Privileges revoked             |
-| ~:aa-compromise~           | AA key compromised             |
+| Keyword                   | Description                 |
+|---------------------------+-----------------------------|
+| ~:unspecified~            | Default                     |
+| ~:key-compromise~         | Private key compromised     |
+| ~:ca-compromise~          | CA key compromised          |
+| ~:affiliation-changed~    | Subject affiliation changed |
+| ~:superseded~             | Replaced by new certificate |
+| ~:cessation-of-operation~ | No longer in use            |
+| ~:certificate-hold~       | Temporarily suspended       |
+| ~:remove-from-crl~        | Remove from CRL (unrevoke)  |
+| ~:privilege-withdrawn~    | Privileges revoked          |
+| ~:aa-compromise~          | AA key compromised          |
 
 *** ~:generate-crl~ / ~ca/crl~
 
@@ -284,11 +284,11 @@ Create an OCSP response for a certificate status query.
 (ca/create-ocsp-response ca request-info status &opt opts)
 #+end_src
 
-| Argument       | Description                                |
-|----------------+--------------------------------------------|
-| ~ca~           | The CA that issued the certificate         |
+| Argument       | Description                                 |
+|----------------+---------------------------------------------|
+| ~ca~           | The CA that issued the certificate          |
 | ~request-info~ | Parsed request from ~ca/parse-ocsp-request~ |
-| ~status~       | ~:good~, ~:revoked~, or ~:unknown~         |
+| ~status~       | ~:good~, ~:revoked~, or ~:unknown~          |
 
 Options:
 | Option               | Description                                |
@@ -330,15 +330,15 @@ Returns: DER-encoded OCSP response bytes.
 
 Supported key types for CA and certificate generation:
 
-| Keyword      | Algorithm | Size/Curve | Notes              |
-|--------------+-----------+------------+--------------------|
-| ~:ec-p256~   | EC        | P-256      | Default, fast      |
-| ~:ec~        | EC        | P-256      | Alias              |
-| ~:ec-p384~   | EC        | P-384      | Higher security    |
-| ~:ec-p521~   | EC        | P-521      | Maximum security   |
-| ~:rsa-2048~  | RSA       | 2048 bits  | Compatibility      |
-| ~:rsa~       | RSA       | 2048 bits  | Alias              |
-| ~:rsa-4096~  | RSA       | 4096 bits  | Higher security    |
+| Keyword     | Algorithm | Size/Curve | Notes            |
+|-------------+-----------+------------+------------------|
+| ~:ec-p256~  | EC        | P-256      | Default, fast    |
+| ~:ec~       | EC        | P-256      | Alias            |
+| ~:ec-p384~  | EC        | P-384      | Higher security  |
+| ~:ec-p521~  | EC        | P-521      | Maximum security |
+| ~:rsa-2048~ | RSA       | 2048 bits  | Compatibility    |
+| ~:rsa~      | RSA       | 2048 bits  | Alias            |
+| ~:rsa-4096~ | RSA       | 4096 bits  | Higher security  |
 
 EC keys are recommended for new deployments. RSA keys are available for
 compatibility with legacy systems.
@@ -397,12 +397,12 @@ The ~:san~ option accepts an array of SAN entries:
 #+end_src
 
 Prefix types:
-| Prefix   | Description                |
-|----------+----------------------------|
-| ~DNS:~   | DNS name (most common)     |
-| ~IP:~    | IP address                 |
-| ~email:~ | Email address              |
-| ~URI:~   | Uniform Resource ID        |
+| Prefix   | Description            |
+|----------+------------------------|
+| ~DNS:~   | DNS name (most common) |
+| ~IP:~    | IP address             |
+| ~email:~ | Email address          |
+| ~URI:~   | Uniform Resource ID    |
 
 * PKI Hierarchy Example
 

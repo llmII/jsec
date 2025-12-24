@@ -32,7 +32,7 @@ unsigned char *jtls_array_to_alpn_wire(Janet array, unsigned int *out_len) {
     for (int32_t i = 0; i < len; i++) {
         if (!janet_checktype(vals[i], JANET_STRING)) return NULL;
         int32_t slen = janet_string_length(janet_unwrap_string(vals[i]));
-        if (slen > 255) return NULL;  /* ALPN protocol name limit */
+        if (slen > 255) return NULL; /* ALPN protocol name limit */
         total_len += 1 + (size_t)slen;
     }
 
@@ -71,11 +71,11 @@ int jtls_alpn_select_cb(SSL *ssl, const unsigned char **out,
         return SSL_TLSEXT_ERR_NOACK;
     }
 
-    /* SSL_select_next_proto has an unfortunate API that takes non-const out */
+    /* SSL_select_next_proto has an unfortunate API that takes non-const out
+     */
     unsigned char *selected = NULL;
-    if (SSL_select_next_proto(&selected, outlen,
-                              conf->wire, conf->len,
-                              in, inlen) != OPENSSL_NPN_NEGOTIATED) {
+    if (SSL_select_next_proto(&selected, outlen, conf->wire, conf->len, in,
+                              inlen) != OPENSSL_NPN_NEGOTIATED) {
         return SSL_TLSEXT_ERR_NOACK;
     }
     *out = selected;
@@ -83,9 +83,13 @@ int jtls_alpn_select_cb(SSL *ssl, const unsigned char **out,
 }
 
 /* Free callback for ALPN ex_data */
-void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                       int idx, long argl, void *argp) {
-    (void)parent; (void)ad; (void)idx; (void)argl; (void)argp;
+void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                       long argl, void *argp) {
+    (void)parent;
+    (void)ad;
+    (void)idx;
+    (void)argl;
+    (void)argp;
     if (ptr) {
         ALPNConfig *conf = (ALPNConfig *)ptr;
         if (conf->wire) free(conf->wire);

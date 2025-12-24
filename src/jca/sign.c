@@ -68,19 +68,21 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
  */
 
 /* Docstring for :sign-csr method - used in help/documentation */
-#define SIGN_CSR_DOC \
+#define SIGN_CSR_DOC                                                         \
     "(:sign-csr ca csr-pem &opt opts) or (ca/sign ca csr-pem &opt opts)\n\n" \
-    "Sign a Certificate Signing Request (CSR) to issue a certificate.\n\n" \
-    "Options:\n" \
+    "Sign a Certificate Signing Request (CSR) to issue a certificate.\n\n"   \
+    "Options:\n"                                                             \
     "  :days-valid <number>      - Validity period in days (default: 365)\n" \
-    "  :not-before <time>        - Custom start time\n" \
-    "  :not-after <time>         - Custom end time\n" \
-    "  :serial <number>          - Override serial (default: auto-increment)\n" \
-    "  :copy-extensions <bool>   - Copy extensions from CSR (default: false)\n" \
-    "  :key-usage <string>       - Override key usage\n" \
-    "  :extended-key-usage <string> - e.g., \"serverAuth,clientAuth\"\n" \
-    "  :san [\"DNS:...\" ...]    - Subject Alternative Names\n" \
-    "  :basic-constraints <string> - e.g., \"CA:FALSE\"\n\n" \
+    "  :not-before <time>        - Custom start time\n"                      \
+    "  :not-after <time>         - Custom end time\n"                        \
+    "  :serial <number>          - Override serial (default: "               \
+    "auto-increment)\n"                                                      \
+    "  :copy-extensions <bool>   - Copy extensions from CSR (default: "      \
+    "false)\n"                                                               \
+    "  :key-usage <string>       - Override key usage\n"                     \
+    "  :extended-key-usage <string> - e.g., \"serverAuth,clientAuth\"\n"     \
+    "  :san [\"DNS:...\" ...]    - Subject Alternative Names\n"              \
+    "  :basic-constraints <string> - e.g., \"CA:FALSE\"\n\n"                 \
     "Returns certificate in PEM format."
 
 Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
@@ -92,7 +94,7 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
     /* Parse options */
     int days_valid = 365;
-    int64_t serial = -1;  /* -1 means auto */
+    int64_t serial = -1; /* -1 means auto */
     int copy_extensions = 0;
     const char *key_usage = NULL;
     const char *extended_key_usage = NULL;
@@ -179,7 +181,8 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert), (long)days_valid * 24 * 60 * 60);
+    X509_gmtime_adj(X509_getm_notAfter(cert),
+                    (long)days_valid * 24 * 60 * 60);
 
     /* Copy subject from CSR */
     X509_set_subject_name(cert, X509_REQ_get_subject_name(csr));
@@ -203,7 +206,8 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Add standard extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints, basic_constraints);
+    ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                     basic_constraints);
     ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
     ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
                      "keyid:always");
@@ -219,7 +223,8 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
     /* Add extended key usage if specified */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage, extended_key_usage);
+        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                         extended_key_usage);
     }
 
     /* Add SAN if specified */
@@ -260,7 +265,8 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
 static const char *cfun_ca_issue_docstring =
     "(:issue ca &opt opts) or (ca/issue ca &opt opts)\n\n"
-    "Issue a new certificate (generate key, create CSR, sign - all in one step).\n"
+    "Issue a new certificate (generate key, create CSR, sign - all in one "
+    "step).\n"
     "This is the recommended method for most use cases.\n\n"
     "Options:\n"
     "  :common-name <string>     - Certificate common name (required)\n"
@@ -361,20 +367,21 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert), (long)days_valid * 24 * 60 * 60);
+    X509_gmtime_adj(X509_getm_notAfter(cert),
+                    (long)days_valid * 24 * 60 * 60);
 
     /* Set subject name */
     X509_NAME *name = X509_get_subject_name(cert);
     if (country) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country), -1, -1,
-                                   0);
-    }
-    if (organization) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(organization),
+        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
                                    -1, -1, 0);
     }
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(common_name),
-                               -1, -1, 0);
+    if (organization) {
+        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                   OSSL_STR(organization), -1, -1, 0);
+    }
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               OSSL_STR(common_name), -1, -1, 0);
 
     /* Set issuer from CA */
     X509_set_issuer_name(cert, X509_get_subject_name(ca->cert));
@@ -398,7 +405,8 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
 
     /* Extended key usage */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage, extended_key_usage);
+        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                         extended_key_usage);
     }
 
     /* SAN */
@@ -484,7 +492,8 @@ Janet cfun_ca_is_tracking(int32_t argc, Janet *argv) {
 static const char *cfun_ca_get_issued_docstring =
     "(:get-issued ca) or (ca/get-issued ca)\n\n"
     "Get list of issued certificates (only if tracking is enabled).\n"
-    "Returns an array of PEM-encoded certificates, or nil if tracking disabled.";
+    "Returns an array of PEM-encoded certificates, or nil if tracking "
+    "disabled.";
 
 Janet cfun_ca_get_issued(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);

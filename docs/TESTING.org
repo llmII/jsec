@@ -78,14 +78,14 @@ Use ~--filter-help~ for complete syntax documentation.
 
 ** Verbosity Levels
 
-| Level | Shows                                            |
-|-------+--------------------------------------------------|
-|     0 | Summary only (pass/fail totals)                  |
-|     1 | + Suite results                                  |
-|     2 | + Categories, timing, memory stats               |
-|     4 | + Skip/expected-fail reasons                     |
-|     5 | + Individual test results                        |
-|     6 | + Stack traces, failing assertion forms          |
+| Level | Shows                                   |
+|-------+-----------------------------------------|
+|     0 | Summary only (pass/fail totals)         |
+|     1 | + Suite results                         |
+|     2 | + Categories, timing, memory stats      |
+|     4 | + Skip/expected-fail reasons            |
+|     5 | + Individual test results               |
+|     6 | + Stack traces, failing assertion forms |
 
 #+begin_src bash
 janet test/runner.janet --verbosity 5
@@ -239,13 +239,13 @@ The perf9 suite tests combinations of:
 
 * Test Categories
 
-| Category    | Purpose                                      |
-|-------------+----------------------------------------------|
-| unit        | Fast, isolated unit tests                    |
-| integration | Cross-module integration tests               |
-| regression  | Tests for specific fixed bugs                |
-| coverage    | Internal API coverage tests                  |
-| performance | Long-running performance benchmarks          |
+| Category    | Purpose                             |
+|-------------+-------------------------------------|
+| unit        | Fast, isolated unit tests           |
+| integration | Cross-module integration tests      |
+| regression  | Tests for specific fixed bugs       |
+| coverage    | Internal API coverage tests         |
+| performance | Long-running performance benchmarks |
 
 * Naming Conventions
 
@@ -255,7 +255,7 @@ The perf9 suite tests combinations of:
 
 * Environment Variables
 
-| Variable             | Description                          |
-|----------------------+--------------------------------------|
-| JSEC_DEBUG           | Enable debug output (1=on)           |
-| JSEC_VERBOSE         | Enable verbose output (1=on)         |
+| Variable     | Description                  |
+|--------------+------------------------------|
+| JSEC_DEBUG   | Enable debug output (1=on)   |
+| JSEC_VERBOSE | Enable verbose output (1=on) |

@@ -26,9 +26,8 @@ int ocsp_idx = -1;
 int alpn_idx = -1;
 
 /* Server context cache for session resumption */
-ServerCTXCache server_ctx_cache = {
-    NULL, NULL, NULL, NULL, 0, NULL, 0, NULL, 0
-};
+ServerCTXCache server_ctx_cache = {NULL, NULL, NULL, NULL, 0,
+                                   NULL, 0,    NULL, 0};
 
 /* Mutex protecting the context cache (allocated in module init) */
 JanetOSMutex *ctx_cache_lock = NULL;
@@ -41,7 +40,8 @@ FILE *keylog_file = NULL;
  *============================================================================
  * Now uses the unified SSLContext type from jshared.c.
  * The tls_context_type macro aliases ssl_context_type.
- * jtls_context_gc is kept for backwards compatibility but delegates to shared.
+ * jtls_context_gc is kept for backwards compatibility but delegates to
+ * shared.
  */
 
 int jtls_context_gc(void *p, size_t s) {
@@ -74,7 +74,7 @@ int jtls_stream_gc(void *p, size_t s) {
     if (tls->ssl) {
         SSL_free(tls->ssl);
         tls->ssl = NULL;
-        tls->bio = NULL;  /* BIO is freed by SSL_free */
+        tls->bio = NULL; /* BIO is freed by SSL_free */
     }
     if (tls->ctx && tls->owns_ctx) {
         SSL_CTX_free(tls->ctx);
@@ -97,7 +97,8 @@ int jtls_stream_mark(void *p, size_t s) {
 int jtls_stream_getter(void *p, Janet key, Janet *out) {
     (void)p;
     if (!janet_checktype(key, JANET_KEYWORD)) return 0;
-    return janet_getmethod(janet_unwrap_keyword(key), tls_stream_methods, out);
+    return janet_getmethod(janet_unwrap_keyword(key), tls_stream_methods,
+                           out);
 }
 
 /*============================================================================
@@ -123,15 +124,15 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :cipher           - Get cipher suite name
  *   :cipher-bits      - Get cipher strength
  *   :connection-info  - Get detailed connection info
- *   :handshake-time   - Get handshake duration in seconds (nil if not complete)
- *   :renegotiate      - Trigger renegotiation (TLS 1.2)
- *   :key-update       - Trigger key update (TLS 1.3)
+ *   :handshake-time   - Get handshake duration in seconds (nil if not
+ * complete) :renegotiate      - Trigger renegotiation (TLS 1.2) :key-update
+ *     - Trigger key update (TLS 1.3)
  */
 const JanetMethod tls_stream_methods[] = {
     {"close", cfun_close},
     {"shutdown", cfun_shutdown},
     {"read", cfun_read},
-    {"chunk", cfun_chunk},  /* Proper chunk (blocks until n bytes or EOF) */
+    {"chunk", cfun_chunk}, /* Proper chunk (blocks until n bytes or EOF) */
     {"write", cfun_write},
     {"localname", cfun_localname},
     {"peername", cfun_peername},
@@ -145,23 +146,22 @@ const JanetMethod tls_stream_methods[] = {
     {"handshake-time", cfun_get_handshake_time},
     {"renegotiate", cfun_renegotiate},
     {"key-update", cfun_key_update},
-    {NULL, NULL}
-};
+    {NULL, NULL}};
 
 const JanetAbstractType tls_stream_type = {
     "jsec/tls-stream",
     jtls_stream_gc,
     jtls_stream_mark,
     jtls_stream_getter,
-    NULL,  /* put */
-    NULL,  /* marshal */
-    NULL,  /* unmarshal */
-    NULL,  /* tostring */
-    NULL,  /* compare */
-    NULL,  /* hash */
-    NULL,  /* next */
-    NULL,  /* call */
-    NULL,  /* length */
-    NULL,  /* bytes */
-    NULL   /* gcperthread */
+    NULL, /* put */
+    NULL, /* marshal */
+    NULL, /* unmarshal */
+    NULL, /* tostring */
+    NULL, /* compare */
+    NULL, /* hash */
+    NULL, /* next */
+    NULL, /* call */
+    NULL, /* length */
+    NULL, /* bytes */
+    NULL  /* gcperthread */
 };

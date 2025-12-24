@@ -80,7 +80,7 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
             tls->bio_ahead.p += count;
             return (int)count;
         } else if (n == 0) {
-            return 0;  /* EOF */
+            return 0; /* EOF */
         } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 BIO_set_retry_read(bio);
@@ -214,7 +214,7 @@ static BIO_METHOD *bio_method = NULL;
 
 void jtls_init_bio_method(void) {
     if (bio_method != NULL) {
-        return;  /* Already initialized */
+        return; /* Already initialized */
     }
 
     int type = BIO_get_new_index();

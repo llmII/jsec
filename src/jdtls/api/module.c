@@ -29,7 +29,8 @@ static const JanetReg client_cfuns[] = {
     {"upgrade", cfun_dtls_upgrade,
      "(dtls/upgrade transport &opt opts)\n\n"
      "Upgrade an existing connected UDP socket to DTLS.\n"
-     "The transport must be a connected UDP socket (from net/connect :datagram).\n\n"
+     "The transport must be a connected UDP socket (from net/connect "
+     ":datagram).\n\n"
      "Options:\n"
      "  :cert - Certificate for mutual TLS\n"
      "  :key - Private key\n"
@@ -46,7 +47,8 @@ static const JanetReg client_cfuns[] = {
     {"chunk", cfun_dtls_chunk,
      "(dtls/chunk client n &opt buf timeout)\n\n"
      "Read exactly n bytes from DTLS client.\n"
-     "Unlike read, will not return early if less than n bytes are available.\n"
+     "Unlike read, will not return early if less than n bytes are "
+     "available.\n"
      "Returns buffer with exactly n bytes, or what's available on EOF.\n"
      "Note: For datagrams, each read returns a complete datagram."},
     {"write", cfun_dtls_write,
@@ -85,25 +87,27 @@ static const JanetReg client_cfuns[] = {
     {"session", cfun_dtls_get_session,
      "(:session client)\n\n"
      "Get the session data for resumption.\n"
-     "Returns a buffer containing the serialized session, or nil if not available."},
+     "Returns a buffer containing the serialized session, or nil if not "
+     "available."},
     {"set-session", cfun_dtls_set_session,
      "(dtls/set-session client session-data)\n\n"
      "Set session data for resumption.\n"
-     "The session-data should be a buffer from a previous dtls/get-session call.\n"
+     "The session-data should be a buffer from a previous dtls/get-session "
+     "call.\n"
      "Returns true if session was set successfully, false otherwise."},
     {"trust-cert", cfun_dtls_trust_cert,
      "(dtls/trust-cert client cert-pem)\n\n"
      "Trust a specific certificate for this connection.\n"
      "Useful for self-signed certificates or certificate pinning.\n"
-     "The cert-pem should be a string/buffer containing PEM-encoded certificate."},
+     "The cert-pem should be a string/buffer containing PEM-encoded "
+     "certificate."},
     {"localname", cfun_dtls_localname,
      "(dtls/localname client)\n\n"
      "Get the local address as a DTLSAddress."},
     {"peername", cfun_dtls_peername,
      "(dtls/peername client)\n\n"
      "Get the peer's address as a DTLSAddress."},
-    {NULL, NULL, NULL}
-};
+    {NULL, NULL, NULL}};
 
 void jdtls_register_client(JanetTable *env) {
     janet_register_abstract_type(&dtls_client_type);

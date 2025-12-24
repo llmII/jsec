@@ -30,8 +30,8 @@
 TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
                              int is_server, int owns_ctx, int32_t buffer_size,
                              int tcp_nodelay, int track_handshake_time) {
-    TLSStream *tls = (TLSStream *)janet_abstract(&tls_stream_type,
-                     sizeof(TLSStream));
+    TLSStream *tls =
+        (TLSStream *)janet_abstract(&tls_stream_type, sizeof(TLSStream));
     memset(tls, 0, sizeof(TLSStream));
 
     /* Initialize the embedded JanetStream portion */
@@ -42,7 +42,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
                             JANET_STREAM_WRITABLE;
     } else {
         /* Manual BIO mode: no underlying socket, user manages I/O
-         * Intentionally omit JANET_STREAM_SOCKET flag since there's no socket */
+         * Intentionally omit JANET_STREAM_SOCKET flag since there's no socket
+         */
         tls->stream.flags = JANET_STREAM_READABLE | JANET_STREAM_WRITABLE;
     }
     tls->stream.methods = tls_stream_methods;
@@ -64,7 +65,7 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     /* Enable partial writes and moving write buffer
      * This allows SSL_write to succeed with partial writes */
     SSL_set_mode(tls->ssl, SSL_MODE_ENABLE_PARTIAL_WRITE |
-                 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+                               SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
     /* Create custom BIO for direct socket I/O */
     BIO_METHOD *bio_method = jtls_get_bio_method();
@@ -92,18 +93,19 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     SSL_set_read_ahead(tls->ssl, 1);
 
     /* Allocate BIO read-ahead buffer.
-     * Use buffer_size if specified and reasonable, otherwise default to 128KB.
-     * Testing showed 128KB provides best balance of throughput and memory.
-     * Minimum is 16KB (one TLS record), maximum capped at 256KB. */
-    size_t bio_ahead_size = 131072;  /* Default: 128KB (eight TLS records) */
+     * Use buffer_size if specified and reasonable, otherwise default to
+     * 128KB. Testing showed 128KB provides best balance of throughput and
+     * memory. Minimum is 16KB (one TLS record), maximum capped at 256KB. */
+    size_t bio_ahead_size = 131072; /* Default: 128KB (eight TLS records) */
     if (buffer_size >= 16384 && buffer_size <= 262144) {
         bio_ahead_size = (size_t)buffer_size;
     }
     tls->bio_ahead.capacity = bio_ahead_size;
-    tls->bio_ahead.data = (unsigned char *)janet_malloc(tls->bio_ahead.capacity);
+    tls->bio_ahead.data =
+        (unsigned char *)janet_malloc(tls->bio_ahead.capacity);
     if (tls->bio_ahead.data) {
         tls->bio_ahead.p = tls->bio_ahead.data;
-        tls->bio_ahead.pe = tls->bio_ahead.data;  /* Empty initially */
+        tls->bio_ahead.pe = tls->bio_ahead.data; /* Empty initially */
     } else {
         /* Non-fatal: we'll just do direct reads without buffering */
         tls->bio_ahead.capacity = 0;
@@ -120,8 +122,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
 #ifdef SO_NOSIGPIPE
     if (transport) {
         int enable = 1;
-        setsockopt((int)transport->handle, SOL_SOCKET, SO_NOSIGPIPE,
-                   &enable, sizeof(int));
+        setsockopt((int)transport->handle, SOL_SOCKET, SO_NOSIGPIPE, &enable,
+                   sizeof(int));
     }
 #endif
 
@@ -129,8 +131,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
      * TLS already does its own buffering, so Nagle just adds delay. */
     if (transport && tcp_nodelay != 0) {
         int enable = 1;
-        setsockopt((int)transport->handle, IPPROTO_TCP, TCP_NODELAY,
-                   &enable, sizeof(int));
+        setsockopt((int)transport->handle, IPPROTO_TCP, TCP_NODELAY, &enable,
+                   sizeof(int));
     }
 
     /* Handshake timing - only record if explicitly enabled.

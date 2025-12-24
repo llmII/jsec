@@ -235,10 +235,10 @@ typedef struct {
     DTLSAsyncState state;
     SSL *ssl;
     JanetStream *transport;
-    DTLSState *dtls_state;      /* Pointer to update session/client state */
-    int is_server;              /* Server uses memory BIO */
-    DTLSSession *session;       /* For server: the session being operated on */
-    void *owner;                /* DTLSServer or DTLSClient */
+    DTLSState *dtls_state; /* Pointer to update session/client state */
+    int is_server;         /* Server uses memory BIO */
+    DTLSSession *session;  /* For server: the session being operated on */
+    void *owner;           /* DTLSServer or DTLSClient */
 } DTLSAsyncData;
 
 static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
@@ -279,115 +279,118 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
         case JANET_ASYNC_EVENT_READ:
         case JANET_ASYNC_EVENT_WRITE: {
+            DTLSResult result;
+            Janet retval = janet_wrap_nil();
 
-                DTLSResult result;
-                Janet retval = janet_wrap_nil();
-
-                switch (data->state.op) {
-                    case DTLS_OP_HANDSHAKE:
-                        result = dtls_do_handshake(data->ssl);
-                        if (result == DTLS_RESULT_OK) {
-                            if (data->dtls_state) {
-                                *data->dtls_state = DTLS_STATE_ESTABLISHED;
-                            }
-                            retval = janet_ckeywordv("ok");
+            switch (data->state.op) {
+                case DTLS_OP_HANDSHAKE:
+                    result = dtls_do_handshake(data->ssl);
+                    if (result == DTLS_RESULT_OK) {
+                        if (data->dtls_state) {
+                            *data->dtls_state = DTLS_STATE_ESTABLISHED;
                         }
-                        break;
+                        retval = janet_ckeywordv("ok");
+                    }
+                    break;
 
-                    case DTLS_OP_READ: {
-                            int32_t nread = 0;
-                            result = dtls_do_read(data->ssl,
-                                                  data->state.buffer->data + data->state.buffer->count,
-                                                  data->state.nbytes - data->state.buffer->count,
-                                                  &nread);
-                            if (nread > 0) {
-                                data->state.buffer->count += nread;
-                            }
-                            if (result == DTLS_RESULT_OK || data->state.buffer->count > 0) {
-                                /* Return what we have */
-                                retval = janet_wrap_buffer(data->state.buffer);
-                                result = DTLS_RESULT_OK;
-                            } else if (result == DTLS_RESULT_EOF) {
-                                if (data->state.buffer->count > 0) {
-                                    retval = janet_wrap_buffer(data->state.buffer);
-                                }
-                                /* EOF with no data = nil */
-                            }
-                            break;
+                case DTLS_OP_READ: {
+                    int32_t nread = 0;
+                    result = dtls_do_read(
+                        data->ssl,
+                        data->state.buffer->data + data->state.buffer->count,
+                        data->state.nbytes - data->state.buffer->count,
+                        &nread);
+                    if (nread > 0) {
+                        data->state.buffer->count += nread;
+                    }
+                    if (result == DTLS_RESULT_OK ||
+                        data->state.buffer->count > 0) {
+                        /* Return what we have */
+                        retval = janet_wrap_buffer(data->state.buffer);
+                        result = DTLS_RESULT_OK;
+                    } else if (result == DTLS_RESULT_EOF) {
+                        if (data->state.buffer->count > 0) {
+                            retval = janet_wrap_buffer(data->state.buffer);
                         }
-
-                    case DTLS_OP_WRITE: {
-                            int32_t nwritten = 0;
-                            result = dtls_do_write(data->ssl,
-                                                   data->state.write_data.bytes,
-                                                   data->state.write_data.len,
-                                                   &nwritten);
-                            if (result == DTLS_RESULT_OK) {
-                                retval = janet_wrap_integer(nwritten);
-                            }
-                            break;
-                        }
-
-                    case DTLS_OP_SHUTDOWN:
-                        result = dtls_do_shutdown(data->ssl);
-                        if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF) {
-                            if (data->dtls_state) {
-                                *data->dtls_state = DTLS_STATE_CLOSED;
-                            }
-                            retval = janet_ckeywordv("ok");
-                            result = DTLS_RESULT_OK;
-                        }
-                        break;
-
-                    default:
-                        janet_cancel(fiber, janet_cstringv("invalid operation"));
-                        janet_async_end(fiber);
-                        return;
+                        /* EOF with no data = nil */
+                    }
+                    break;
                 }
 
-                /* Handle result */
-                switch (result) {
-                    case DTLS_RESULT_OK:
-                        janet_schedule(fiber, retval);
-                        janet_async_end(fiber);
-                        break;
+                case DTLS_OP_WRITE: {
+                    int32_t nwritten = 0;
+                    result =
+                        dtls_do_write(data->ssl, data->state.write_data.bytes,
+                                      data->state.write_data.len, &nwritten);
+                    if (result == DTLS_RESULT_OK) {
+                        retval = janet_wrap_integer(nwritten);
+                    }
+                    break;
+                }
 
-                    case DTLS_RESULT_WANT_READ:
-                        janet_async_start(data->transport, JANET_ASYNC_LISTEN_READ,
-                                          dtls_async_callback, data);
-                        break;
-
-                    case DTLS_RESULT_WANT_WRITE:
-                        janet_async_start(data->transport, JANET_ASYNC_LISTEN_WRITE,
-                                          dtls_async_callback, data);
-                        break;
-
-                    case DTLS_RESULT_EOF:
+                case DTLS_OP_SHUTDOWN:
+                    result = dtls_do_shutdown(data->ssl);
+                    if (result == DTLS_RESULT_OK ||
+                        result == DTLS_RESULT_EOF) {
                         if (data->dtls_state) {
                             *data->dtls_state = DTLS_STATE_CLOSED;
                         }
-                        janet_schedule(fiber, janet_wrap_nil());
-                        janet_async_end(fiber);
-                        break;
+                        retval = janet_ckeywordv("ok");
+                        result = DTLS_RESULT_OK;
+                    }
+                    break;
 
-                    case DTLS_RESULT_ERROR: {
-                            char buf[256];
-                            unsigned long err = ERR_get_error();
-                            if (err) {
-                                ERR_error_string_n(err, buf, sizeof(buf));
-                            } else {
-                                snprintf(buf, sizeof(buf), "SSL error");
-                            }
-                            if (data->dtls_state) {
-                                *data->dtls_state = DTLS_STATE_ERROR;
-                            }
-                            janet_cancel(fiber, janet_cstringv(buf));
-                            janet_async_end(fiber);
-                            break;
-                        }
-                }
-                break;
+                default:
+                    janet_cancel(fiber, janet_cstringv("invalid operation"));
+                    janet_async_end(fiber);
+                    return;
             }
+
+            /* Handle result */
+            switch (result) {
+                case DTLS_RESULT_OK:
+                    janet_schedule(fiber, retval);
+                    janet_async_end(fiber);
+                    break;
+
+                case DTLS_RESULT_WANT_READ:
+                    janet_async_start(data->transport,
+                                      JANET_ASYNC_LISTEN_READ,
+                                      dtls_async_callback, data);
+                    break;
+
+                case DTLS_RESULT_WANT_WRITE:
+                    janet_async_start(data->transport,
+                                      JANET_ASYNC_LISTEN_WRITE,
+                                      dtls_async_callback, data);
+                    break;
+
+                case DTLS_RESULT_EOF:
+                    if (data->dtls_state) {
+                        *data->dtls_state = DTLS_STATE_CLOSED;
+                    }
+                    janet_schedule(fiber, janet_wrap_nil());
+                    janet_async_end(fiber);
+                    break;
+
+                case DTLS_RESULT_ERROR: {
+                    char buf[256];
+                    unsigned long err = ERR_get_error();
+                    if (err) {
+                        ERR_error_string_n(err, buf, sizeof(buf));
+                    } else {
+                        snprintf(buf, sizeof(buf), "SSL error");
+                    }
+                    if (data->dtls_state) {
+                        *data->dtls_state = DTLS_STATE_ERROR;
+                    }
+                    janet_cancel(fiber, janet_cstringv(buf));
+                    janet_async_end(fiber);
+                    break;
+                }
+            }
+            break;
+        }
 
         default:
             break;
@@ -418,13 +421,12 @@ void dtls_async_handshake(JanetStream *transport, SSL *ssl,
     if (result == DTLS_RESULT_OK) {
         if (state_ptr) *state_ptr = DTLS_STATE_ESTABLISHED;
         janet_free(data);
-        return;  /* Completed synchronously */
+        return; /* Completed synchronously */
     }
 
     /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_WRITE)
-               ? JANET_ASYNC_LISTEN_WRITE
-               : JANET_ASYNC_LISTEN_READ;
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
@@ -444,8 +446,8 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
 
     /* Try initial read */
     int32_t nread = 0;
-    DTLSResult result = dtls_do_read(ssl, data->state.buffer->data, nbytes,
-                                     &nread);
+    DTLSResult result =
+        dtls_do_read(ssl, data->state.buffer->data, nbytes, &nread);
     if (nread > 0) {
         data->state.buffer->count = nread;
     }
@@ -457,16 +459,14 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
     }
 
     /* Wait for data */
-    int mode = (result == DTLS_RESULT_WANT_WRITE)
-               ? JANET_ASYNC_LISTEN_WRITE
-               : JANET_ASYNC_LISTEN_READ;
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
 /* Start async write */
 void dtls_async_write(JanetStream *transport, SSL *ssl,
-                      JanetByteView data_view,
-                      double timeout, void *owner) {
+                      JanetByteView data_view, double timeout, void *owner) {
     DTLSAsyncData *data = janet_malloc(sizeof(DTLSAsyncData));
     memset(data, 0, sizeof(DTLSAsyncData));
 
@@ -479,17 +479,16 @@ void dtls_async_write(JanetStream *transport, SSL *ssl,
 
     /* Try initial write */
     int32_t nwritten = 0;
-    DTLSResult result = dtls_do_write(ssl, data_view.bytes, data_view.len,
-                                      &nwritten);
+    DTLSResult result =
+        dtls_do_write(ssl, data_view.bytes, data_view.len, &nwritten);
 
     if (result == DTLS_RESULT_OK) {
         /* Completed synchronously - still go through async machinery */
     }
 
     /* Wait for writable */
-    int mode = (result == DTLS_RESULT_WANT_READ)
-               ? JANET_ASYNC_LISTEN_READ
-               : JANET_ASYNC_LISTEN_WRITE;
+    int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
+                                                 : JANET_ASYNC_LISTEN_WRITE;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
@@ -515,8 +514,7 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
     }
 
     /* Wait for peer's close_notify */
-    int mode = (result == DTLS_RESULT_WANT_WRITE)
-               ? JANET_ASYNC_LISTEN_WRITE
-               : JANET_ASYNC_LISTEN_READ;
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }

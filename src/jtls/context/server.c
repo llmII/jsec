@@ -46,20 +46,21 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     int session_cache = 1;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet cache_opt = janet_table_get(opts_table,
-                                          janet_ckeywordv("session-cache"));
+        Janet cache_opt =
+            janet_table_get(opts_table, janet_ckeywordv("session-cache"));
         if (!janet_checktype(cache_opt, JANET_NIL)) {
             session_cache = janet_truthy(cache_opt);
         }
     }
-    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_SERVER : SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_SERVER
+                                                      : SSL_SESS_CACHE_OFF);
 
     /* Handle session tickets */
     int tickets = 1;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ticket_opt = janet_table_get(opts_table,
-                                           janet_ckeywordv("session-tickets"));
+        Janet ticket_opt =
+            janet_table_get(opts_table, janet_ckeywordv("session-tickets"));
         if (!janet_checktype(ticket_opt, JANET_NIL)) {
             tickets = janet_truthy(ticket_opt);
         }
@@ -72,7 +73,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     int ocsp_stapling = 0;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ocsp_opt = janet_table_get(opts_table, janet_ckeywordv("ocsp-stapling"));
+        Janet ocsp_opt =
+            janet_table_get(opts_table, janet_ckeywordv("ocsp-stapling"));
         if (!janet_checktype(ocsp_opt, JANET_NIL)) {
             ocsp_stapling = janet_truthy(ocsp_opt);
         }
@@ -86,8 +88,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     long cache_size = 1000;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet size_opt = janet_table_get(opts_table,
-                                         janet_ckeywordv("session-cache-size"));
+        Janet size_opt = janet_table_get(
+            opts_table, janet_ckeywordv("session-cache-size"));
         if (janet_checktype(size_opt, JANET_NUMBER)) {
             cache_size = (long)janet_unwrap_number(size_opt);
             if (cache_size < 0) cache_size = 1000;
@@ -97,7 +99,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
 
     /* Set session ID context for resumption */
     const unsigned char session_id_ctx[] = "jsec_server";
-    SSL_CTX_set_session_id_context(ctx, session_id_ctx, sizeof(session_id_ctx) - 1);
+    SSL_CTX_set_session_id_context(ctx, session_id_ctx,
+                                   sizeof(session_id_ctx) - 1);
 }
 
 /*============================================================================
@@ -110,36 +113,34 @@ static int check_cache_hit(const char *cert_path, const char *key_path,
                            const unsigned char *key_data, int key_len,
                            unsigned char *alpn_wire, unsigned int alpn_len) {
     /* Check file-based credentials */
-    if (cert_path && key_path &&
-        server_ctx_cache.cert_path &&
+    if (cert_path && key_path && server_ctx_cache.cert_path &&
         server_ctx_cache.key_path &&
         strcmp(server_ctx_cache.cert_path, cert_path) == 0 &&
         strcmp(server_ctx_cache.key_path, key_path) == 0) {
-
         if (server_ctx_cache.alpn_len == alpn_len) {
             if (alpn_len == 0) {
                 return 1;
             } else if (server_ctx_cache.alpn_wire && alpn_wire &&
-                       memcmp(server_ctx_cache.alpn_wire, alpn_wire, alpn_len) == 0) {
+                       memcmp(server_ctx_cache.alpn_wire, alpn_wire,
+                              alpn_len) == 0) {
                 return 1;
             }
         }
     }
 
     /* Check memory-based credentials */
-    if (cert_data && key_data &&
-        server_ctx_cache.cert_data &&
-        server_ctx_cache.key_data &&
-        cert_len == server_ctx_cache.cert_len &&
+    if (cert_data && key_data && server_ctx_cache.cert_data &&
+        server_ctx_cache.key_data && cert_len == server_ctx_cache.cert_len &&
         key_len == server_ctx_cache.key_len &&
-        memcmp(cert_data, server_ctx_cache.cert_data, (size_t)cert_len) == 0 &&
+        memcmp(cert_data, server_ctx_cache.cert_data, (size_t)cert_len) ==
+            0 &&
         memcmp(key_data, server_ctx_cache.key_data, (size_t)key_len) == 0) {
-
         if (server_ctx_cache.alpn_len == alpn_len) {
             if (alpn_len == 0) {
                 return 1;
             } else if (server_ctx_cache.alpn_wire && alpn_wire &&
-                       memcmp(server_ctx_cache.alpn_wire, alpn_wire, alpn_len) == 0) {
+                       memcmp(server_ctx_cache.alpn_wire, alpn_wire,
+                              alpn_len) == 0) {
                 return 1;
             }
         }
@@ -153,9 +154,10 @@ static int check_cache_hit(const char *cert_path, const char *key_path,
  *============================================================================
  * Store context and credentials in cache.
  */
-static void update_cache(SSL_CTX *ctx, const char *cert_path, const char *key_path,
-                         const unsigned char *cert_data, int cert_len,
-                         const unsigned char *key_data, int key_len) {
+static void update_cache(SSL_CTX *ctx, const char *cert_path,
+                         const char *key_path, const unsigned char *cert_data,
+                         int cert_len, const unsigned char *key_data,
+                         int key_len) {
     /* Free old cache data */
     if (server_ctx_cache.ctx && server_ctx_cache.ctx != ctx) {
         SSL_CTX_free(server_ctx_cache.ctx);
@@ -295,7 +297,8 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
 
     /* Load certificate */
     if (cert_path) {
-        if (SSL_CTX_use_certificate_file(ctx, cert_path, SSL_FILETYPE_PEM) <= 0) {
+        if (SSL_CTX_use_certificate_file(ctx, cert_path, SSL_FILETYPE_PEM) <=
+            0) {
             goto error;
         }
     } else {
@@ -306,7 +309,8 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
 
     /* Load private key */
     if (key_path) {
-        if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <= 0) {
+        if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <=
+            0) {
             goto error;
         }
     } else {
@@ -336,7 +340,7 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
         }
         conf->wire = alpn_wire;
         conf->len = alpn_len;
-        alpn_wire = NULL;  /* Ownership transferred */
+        alpn_wire = NULL; /* Ownership transferred */
 
         if (!SSL_CTX_set_ex_data(ctx, alpn_idx, conf)) {
             free(conf);
@@ -355,8 +359,8 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
 
     /* Update cache if requested */
     if (use_cache) {
-        update_cache(ctx, cert_path, key_path, cert_data, cert_len,
-                     key_data, key_len);
+        update_cache(ctx, cert_path, key_path, cert_data, cert_len, key_data,
+                     key_len);
     }
 
     janet_os_mutex_unlock(ctx_cache_lock);

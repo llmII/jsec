@@ -5,6 +5,7 @@
 (import assay)
 (import jsec/crypto :as crypto)
 (import jsec/cert :as cert)
+(import jsec/utils :as utils)
 (import ../helpers :prefix "")
 
 (assay/def-suite :name "Crypto Suite"
@@ -124,7 +125,9 @@
                                  (assert-error (crypto/digest :invalid "data")))
 
                  (assay/def-test "RSA key bits boundary"
-                                 (assert-error (crypto/generate-key :rsa 256))
+                                 # LibreSSL allows 256-bit RSA keys, OpenSSL 3.0+ rejects them
+                                 (when (= :openssl (utils/ssl-backend))
+                                   (assert-error (crypto/generate-key :rsa 256)))
                                  (assert-no-error (crypto/generate-key :rsa 1024)))
 
                  (assay/def-test "X25519 key exchange"

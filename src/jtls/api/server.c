@@ -12,7 +12,7 @@
  */
 
 #ifdef __linux__
-#define _GNU_SOURCE  /* For accept4 */
+  #define _GNU_SOURCE /* For accept4 */
 #endif
 
 #include "../internal.h"
@@ -30,7 +30,8 @@
  * This is the TLS equivalent of net/accept-loop.
  */
 
-/* State for TLS accept loop - level triggered to handle multiple connections */
+/* State for TLS accept loop - level triggered to handle multiple connections
+ */
 typedef struct {
     SSL_CTX *ctx;
     int owns_ctx;
@@ -41,7 +42,8 @@ typedef struct {
 } TLSAcceptLoopState;
 
 /* Async callback for TLS accept loop */
-static void tls_accept_loop_callback(JanetFiber *fiber, JanetAsyncEvent event) {
+static void tls_accept_loop_callback(JanetFiber *fiber,
+                                     JanetAsyncEvent event) {
     JanetStream *listener = fiber->ev_stream;
     TLSAcceptLoopState *state = (TLSAcceptLoopState *)fiber->ev_state;
 
@@ -67,10 +69,12 @@ static void tls_accept_loop_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
-            /* Try to accept connections - level triggered so we may get multiple */
+            /* Try to accept connections - level triggered so we may get
+             * multiple */
             while (1) {
 #ifdef __linux__
-                int client_fd = accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
+                int client_fd =
+                    accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
 #else
                 int client_fd = accept(listener->handle, NULL, NULL);
 #endif
@@ -95,19 +99,25 @@ static void tls_accept_loop_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 #endif
                 /* Create stream for client socket */
-                JanetStream *client_stream = janet_stream(client_fd, JANET_STREAM_SOCKET |
-                                                          JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+                JanetStream *client_stream =
+                    janet_stream(client_fd,
+                                 JANET_STREAM_SOCKET | JANET_STREAM_READABLE |
+                                     JANET_STREAM_WRITABLE,
+                                 NULL);
 
-                /* Create TLS stream - handshake happens lazily on first I/O */
-                /* We need to up_ref the ctx since it's shared across connections */
+                /* Create TLS stream - handshake happens lazily on first I/O
+                 */
+                /* We need to up_ref the ctx since it's shared across
+                 * connections */
                 SSL_CTX_up_ref(state->ctx);
-                TLSStream *tls = jtls_setup_stream(client_stream, state->ctx, 1, 1, 
-                                                   state->buffer_size, state->tcp_nodelay,
-                                                   state->track_handshake_time);
+                TLSStream *tls = jtls_setup_stream(
+                    client_stream, state->ctx, 1, 1, state->buffer_size,
+                    state->tcp_nodelay, state->track_handshake_time);
 
                 /* Spawn a fiber to handle this connection */
                 Janet tls_val = janet_wrap_abstract(tls);
-                JanetFiber *handler_fiber = janet_fiber(state->handler, 64, 1, &tls_val);
+                JanetFiber *handler_fiber =
+                    janet_fiber(state->handler, 64, 1, &tls_val);
                 handler_fiber->supervisor_channel = fiber->supervisor_channel;
                 janet_schedule(handler_fiber, janet_wrap_nil());
             }
@@ -135,7 +145,8 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
-    } else if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
+    } else if (janet_checktype(argv[1], JANET_TABLE) ||
+               janet_checktype(argv[1], JANET_STRUCT)) {
         Janet cert = janet_get(argv[1], janet_ckeywordv("cert"));
         Janet key = janet_get(argv[1], janet_ckeywordv("key"));
         Janet security_opts = janet_get(argv[1], janet_ckeywordv("security"));
@@ -147,13 +158,16 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
         }
         owns_ctx = 1;
     } else {
-        tls_panic_config("accept-loop requires a TLS context or options table");
+        tls_panic_config(
+            "accept-loop requires a TLS context or options table");
     }
 
     /* Parse buffer-size option */
     int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet buf_size_opt = janet_get(argv[1], janet_ckeywordv("buffer-size"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet buf_size_opt =
+            janet_get(argv[1], janet_ckeywordv("buffer-size"));
         if (!janet_checktype(buf_size_opt, JANET_NIL)) {
             if (janet_checktype(buf_size_opt, JANET_NUMBER)) {
                 int32_t size = (int32_t)janet_unwrap_integer(buf_size_opt);
@@ -166,8 +180,10 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
 
     /* Parse tcp-nodelay option (default: enabled) */
     int tcp_nodelay = 1;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet nodelay_opt = janet_get(argv[1], janet_ckeywordv("tcp-nodelay"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet nodelay_opt =
+            janet_get(argv[1], janet_ckeywordv("tcp-nodelay"));
         if (!janet_checktype(nodelay_opt, JANET_NIL)) {
             tcp_nodelay = janet_truthy(nodelay_opt);
         }
@@ -175,8 +191,10 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
 
     /* Parse handshake-timing option (default: disabled) */
     int track_handshake_time = 0;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet timing_opt = janet_get(argv[1], janet_ckeywordv("handshake-timing"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet timing_opt =
+            janet_get(argv[1], janet_ckeywordv("handshake-timing"));
         if (!janet_checktype(timing_opt, JANET_NIL)) {
             track_handshake_time = janet_truthy(timing_opt);
         }
@@ -195,7 +213,8 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
     janet_stream_level_triggered(listener);
 
     /* Start accept loop */
-    janet_async_start(listener, JANET_ASYNC_LISTEN_READ, tls_accept_loop_callback, state);
+    janet_async_start(listener, JANET_ASYNC_LISTEN_READ,
+                      tls_accept_loop_callback, state);
 
     janet_panic("unreachable");
 }
@@ -233,13 +252,14 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
 
     /* Check for unix socket mode: (listen :unix path &opt opts) */
-    int is_unix = janet_checktype(argv[0], JANET_KEYWORD) &&
-                  !strcmp((const char *)janet_unwrap_keyword(argv[0]), "unix");
-    
+    int is_unix =
+        janet_checktype(argv[0], JANET_KEYWORD) &&
+        !strcmp((const char *)janet_unwrap_keyword(argv[0]), "unix");
+
     const char *host = NULL;
     const char *port = NULL;
     const char *unix_path = NULL;
-    
+
     if (is_unix) {
         unix_path = janet_getcstring(argv, 1);
     } else {
@@ -254,7 +274,7 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
 
     /* Default backlog, can be overridden by opts table */
     int backlog = 1024;
-    
+
     /* Check for optional opts table */
     if (argc >= 3 && janet_checktype(argv[2], JANET_TABLE)) {
         JanetTable *opts = janet_unwrap_table(argv[2]);
@@ -266,7 +286,8 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         }
     } else if (argc >= 3 && janet_checktype(argv[2], JANET_STRUCT)) {
         JanetStruct opts = janet_unwrap_struct(argv[2]);
-        Janet backlog_val = janet_struct_get(opts, janet_ckeywordv("backlog"));
+        Janet backlog_val =
+            janet_struct_get(opts, janet_ckeywordv("backlog"));
         if (!janet_checktype(backlog_val, JANET_NIL)) {
             backlog = janet_getinteger(&backlog_val, 0);
             if (backlog < 1) backlog = 1;
@@ -275,37 +296,40 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
     }
 
     int fd = -1;
-    
+
     if (is_unix) {
         /* Unix socket listener */
         struct sockaddr_un addr;
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, unix_path, sizeof(addr.sun_path) - 1);
-        
+
         socklen_t addrlen = sizeof(addr);
-        
+
         /* Support Linux abstract namespace sockets (start with @) */
 #ifdef __linux__
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
-            addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + strlen(unix_path));
+            addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
+                                  strlen(unix_path));
         }
 #endif
-        
+
         /* Remove existing socket file (if not abstract) */
         if (unix_path[0] != '@') {
             unlink(unix_path);
         }
-        
+
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd == -1) {
             tls_panic_socket("could not create unix socket");
         }
-        
+
         if (bind(fd, (struct sockaddr *)&addr, addrlen) != 0) {
             close(fd);
-            jsec_panic(JSEC_MOD_TLS, "SOCKET", "could not bind to unix socket %s: %s", unix_path, strerror(errno));
+            jsec_panic(JSEC_MOD_TLS, "SOCKET",
+                       "could not bind to unix socket %s: %s", unix_path,
+                       strerror(errno));
         }
     } else {
         /* TCP listener */
@@ -318,7 +342,8 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         struct addrinfo *ai = NULL;
         int status = getaddrinfo(host, port, &hints, &ai);
         if (status != 0) {
-            jsec_panic(JSEC_MOD_TLS, "SOCKET", "getaddrinfo failed: %s", gai_strerror(status));
+            jsec_panic(JSEC_MOD_TLS, "SOCKET", "getaddrinfo failed: %s",
+                       gai_strerror(status));
         }
 
         struct addrinfo *rp;
@@ -341,7 +366,8 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         freeaddrinfo(ai);
 
         if (fd == -1) {
-            jsec_panic(JSEC_MOD_TLS, "SOCKET", "failed to bind to %s:%s", host, port);
+            jsec_panic(JSEC_MOD_TLS, "SOCKET", "failed to bind to %s:%s",
+                       host, port);
         }
     }
 
@@ -355,7 +381,8 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     /* Return a Janet stream */
-    return janet_wrap_abstract(janet_stream(fd, JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
+    return janet_wrap_abstract(janet_stream(
+        fd, JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
 }
 
 /*============================================================================
@@ -401,7 +428,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_READ: {
             /* Try to accept a TCP connection */
 #ifdef __linux__
-            int client_fd = accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
+            int client_fd =
+                accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
 #else
             int client_fd = accept(listener->handle, NULL, NULL);
 #endif
@@ -418,14 +446,18 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 #endif
                 /* Create stream for client socket */
-                JanetStream *client_stream = janet_stream(client_fd, JANET_STREAM_SOCKET |
-                                                          JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+                JanetStream *client_stream =
+                    janet_stream(client_fd,
+                                 JANET_STREAM_SOCKET | JANET_STREAM_READABLE |
+                                     JANET_STREAM_WRITABLE,
+                                 NULL);
 
                 /* Create TLS stream - handshake will happen on first I/O */
-                TLSStream *tls = jtls_setup_stream(client_stream, state->ctx, 1, 
-                                                   state->owns_ctx, state->buffer_size,
-                                                   state->tcp_nodelay, state->track_handshake_time);
-                
+                TLSStream *tls = jtls_setup_stream(
+                    client_stream, state->ctx, 1, state->owns_ctx,
+                    state->buffer_size, state->tcp_nodelay,
+                    state->track_handshake_time);
+
                 /* Ownership transferred to TLS stream */
                 state->owns_ctx = 0;
 
@@ -452,22 +484,23 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
 
     JanetStream *listener = janet_getabstract(argv, 0, &janet_stream_type);
-    
+
     /* Second arg can be TLSContext or options table */
     SSL_CTX *ctx = NULL;
     int owns_ctx = 0;
-    
+
     if (janet_checkabstract(argv[1], &tls_context_type)) {
         TLSContext *tls_ctx = janet_getabstract(argv, 1, &tls_context_type);
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
-    } else if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
+    } else if (janet_checktype(argv[1], JANET_TABLE) ||
+               janet_checktype(argv[1], JANET_STRUCT)) {
         Janet cert = janet_get(argv[1], janet_ckeywordv("cert"));
         Janet key = janet_get(argv[1], janet_ckeywordv("key"));
         Janet security_opts = janet_get(argv[1], janet_ckeywordv("security"));
         Janet alpn_opt = janet_get(argv[1], janet_ckeywordv("alpn"));
-        
+
         ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt, 1);
         if (!ctx) {
             tls_panic_ssl("failed to create server context");
@@ -479,8 +512,10 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
 
     /* Parse buffer-size option */
     int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet buf_size_opt = janet_get(argv[1], janet_ckeywordv("buffer-size"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet buf_size_opt =
+            janet_get(argv[1], janet_ckeywordv("buffer-size"));
         if (!janet_checktype(buf_size_opt, JANET_NIL)) {
             if (janet_checktype(buf_size_opt, JANET_NUMBER)) {
                 int32_t size = (int32_t)janet_unwrap_integer(buf_size_opt);
@@ -493,8 +528,10 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
 
     /* Parse tcp-nodelay option (default: enabled) */
     int tcp_nodelay = 1;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet nodelay_opt = janet_get(argv[1], janet_ckeywordv("tcp-nodelay"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet nodelay_opt =
+            janet_get(argv[1], janet_ckeywordv("tcp-nodelay"));
         if (!janet_checktype(nodelay_opt, JANET_NIL)) {
             tcp_nodelay = janet_truthy(nodelay_opt);
         }
@@ -502,8 +539,10 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
 
     /* Parse handshake-timing option (default: disabled) */
     int track_handshake_time = 0;
-    if (janet_checktype(argv[1], JANET_TABLE) || janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet timing_opt = janet_get(argv[1], janet_ckeywordv("handshake-timing"));
+    if (janet_checktype(argv[1], JANET_TABLE) ||
+        janet_checktype(argv[1], JANET_STRUCT)) {
+        Janet timing_opt =
+            janet_get(argv[1], janet_ckeywordv("handshake-timing"));
         if (!janet_checktype(timing_opt, JANET_NIL)) {
             track_handshake_time = janet_truthy(timing_opt);
         }
@@ -518,7 +557,8 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     state->track_handshake_time = track_handshake_time;
 
     /* Start async accept operation */
-    janet_async_start(listener, JANET_ASYNC_LISTEN_READ, tls_accept_callback, state);
+    janet_async_start(listener, JANET_ASYNC_LISTEN_READ, tls_accept_callback,
+                      state);
 
     /* This never returns - fiber is suspended until accept completes */
     janet_panic("unreachable");

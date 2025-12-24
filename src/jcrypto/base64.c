@@ -15,7 +15,7 @@ Janet cfun_base64_encode(int32_t argc, Janet *argv) {
     BIO_push(b64, mem);
 
     BIO_write(b64, data.bytes, data.len);
-    BIO_flush(b64);
+    (void)BIO_flush(b64);
 
     char *out;
     long out_len = BIO_get_mem_data(mem, &out);
@@ -70,7 +70,7 @@ Janet cfun_base64url_encode(int32_t argc, Janet *argv) {
     BIO_push(b64, mem);
 
     BIO_write(b64, data.bytes, data.len);
-    BIO_flush(b64);
+    (void)BIO_flush(b64);
 
     char *out;
     long out_len = BIO_get_mem_data(mem, &out);
@@ -78,9 +78,12 @@ Janet cfun_base64url_encode(int32_t argc, Janet *argv) {
     /* Convert to URL-safe: + -> -, / -> _, remove padding */
     JanetBuffer *buf = janet_buffer((int32_t)out_len);
     for (long i = 0; i < out_len; i++) {
-        if (out[i] == '+') janet_buffer_push_u8(buf, (uint8_t)'-');
-        else if (out[i] == '/') janet_buffer_push_u8(buf, (uint8_t)'_');
-        else if (out[i] != '=') janet_buffer_push_u8(buf, (uint8_t)out[i]);
+        if (out[i] == '+')
+            janet_buffer_push_u8(buf, (uint8_t)'-');
+        else if (out[i] == '/')
+            janet_buffer_push_u8(buf, (uint8_t)'_');
+        else if (out[i] != '=')
+            janet_buffer_push_u8(buf, (uint8_t)out[i]);
     }
 
     BIO_free_all(b64);
@@ -95,9 +98,12 @@ Janet cfun_base64url_decode(int32_t argc, Janet *argv) {
     /* Convert from URL-safe back to standard base64 */
     JanetBuffer *buf = janet_buffer(data.len + 4);
     for (int32_t i = 0; i < data.len; i++) {
-        if (data.bytes[i] == '-') janet_buffer_push_u8(buf, '+');
-        else if (data.bytes[i] == '_') janet_buffer_push_u8(buf, '/');
-        else janet_buffer_push_u8(buf, data.bytes[i]);
+        if (data.bytes[i] == '-')
+            janet_buffer_push_u8(buf, '+');
+        else if (data.bytes[i] == '_')
+            janet_buffer_push_u8(buf, '/');
+        else
+            janet_buffer_push_u8(buf, data.bytes[i]);
     }
     /* Add padding if needed */
     while (buf->count % 4 != 0) {

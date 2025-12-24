@@ -5,15 +5,17 @@
  * License: ISC
  */
 
+#include "../compat.h" /* For LibreSSL/OpenSSL detection */
 #include "../jutils.h"
-#include "../jutils/internal.h"
+#include <openssl/ec.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <openssl/ec.h>
-#include <openssl/core_names.h>
-#include <time.h>
+#if JSEC_HAS_OSSL_PARAM
+  #include <openssl/core_names.h>
+#endif
 #include <string.h>
+#include <time.h>
 
 /* Forward declarations for jcert/verify.c functions */
 extern Janet cfun_cert_verify_chain(int32_t argc, Janet *argv);
@@ -36,8 +38,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     int bits = 2048;
     const char *country = "US";
     const char *org = "Test";
-    const char *key_type =
-        "rsa";  /* Default to RSA, supports: rsa, ec-p256, ec-p384, ec-p521, ed25519 */
+    const char *key_type = "rsa"; /* Default to RSA, supports: rsa, ec-p256,
+                                   ec-p384, ec-p521, ed25519 */
 
     if (argc > 0) {
         if (!janet_checktype(argv[0], JANET_TABLE) &&
@@ -48,28 +50,30 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
         Janet val;
 
         val = janet_get(argv[0], janet_ckeywordv("common-name"));
-        if (janet_checktype(val,
-                            JANET_STRING)) cn = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            cn = (const char *)janet_unwrap_string(val);
 
         val = janet_get(argv[0], janet_ckeywordv("days-valid"));
-        if (janet_checktype(val, JANET_NUMBER)) days = (int)janet_unwrap_number(val);
+        if (janet_checktype(val, JANET_NUMBER))
+            days = (int)janet_unwrap_number(val);
 
         val = janet_get(argv[0], janet_ckeywordv("bits"));
-        if (janet_checktype(val, JANET_NUMBER)) bits = (int)janet_unwrap_number(val);
+        if (janet_checktype(val, JANET_NUMBER))
+            bits = (int)janet_unwrap_number(val);
 
         val = janet_get(argv[0], janet_ckeywordv("country"));
-        if (janet_checktype(val,
-                            JANET_STRING)) country = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            country = (const char *)janet_unwrap_string(val);
 
         val = janet_get(argv[0], janet_ckeywordv("organization"));
-        if (janet_checktype(val,
-                            JANET_STRING)) org = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            org = (const char *)janet_unwrap_string(val);
 
         val = janet_get(argv[0], janet_ckeywordv("key-type"));
-        if (janet_checktype(val,
-                            JANET_KEYWORD)) key_type = (const char *)janet_unwrap_keyword(val);
-        else if (janet_checktype(val,
-                                 JANET_STRING)) key_type = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_KEYWORD))
+            key_type = (const char *)janet_unwrap_keyword(val);
+        else if (janet_checktype(val, JANET_STRING))
+            key_type = (const char *)janet_unwrap_string(val);
     }
 
     EVP_PKEY *pkey = NULL;
@@ -100,7 +104,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     } else if (strcmp(key_type, "ed25519") == 0) {
         pkey_type = EVP_PKEY_ED25519;
     } else {
-        cert_panic_param("unsupported key type: %s (supported: rsa, ec-p256, ec-p384, ec-p521, ed25519)",
+        cert_panic_param("unsupported key type: %s (supported: rsa, ec-p256, "
+                         "ec-p384, ec-p521, ed25519)",
                          key_type);
     }
 
@@ -143,19 +148,19 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2); /* Version 3 */
+    X509_set_version(x509, 2);                        /* Version 3 */
     ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
 
     X509_NAME *name = X509_get_subject_name(x509);
-    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
-                               -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(org), -1,
+    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country), -1,
                                -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(cn), -1,
-                               -1, 0);
+    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(org), -1, -1,
+                               0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(cn), -1, -1,
+                               0);
 
     X509_set_issuer_name(x509, name);
 
@@ -181,11 +186,13 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
         X509_EXTENSION_free(ext);
     }
 
-    /* Subject Alternative Name (SAN) - Required for modern TLS hostname verification
-     * We add both DNS and IP entries for the common name, as it might be either */
+    /* Subject Alternative Name (SAN) - Required for modern TLS hostname
+     * verification We add both DNS and IP entries for the common name, as it
+     * might be either */
     {
         char san_value[512];
-        /* Check if cn looks like an IP address (contains only digits and dots for IPv4) */
+        /* Check if cn looks like an IP address (contains only digits and dots
+         * for IPv4) */
         int is_ip = 1;
         for (const char *p = cn; *p; p++) {
             if (*p != '.' && (*p < '0' || *p > '9')) {
@@ -204,7 +211,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
             snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
         }
 
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name, san_value);
+        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
+                                  san_value);
         if (ext) {
             X509_add_ext(x509, ext, -1);
             X509_EXTENSION_free(ext);
@@ -212,7 +220,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     }
 
     /* Subject Key Identifier */
-    ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
+    ext =
+        X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
@@ -229,8 +238,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
 
     key_bio = BIO_new(BIO_s_mem());
     if (!key_bio) goto cleanup;
-    if (!PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL,
-                                  NULL)) goto cleanup;
+    if (!PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL, NULL))
+        goto cleanup;
 
     cert_len = BIO_get_mem_data(cert_bio, &cert_buf);
     key_len = BIO_get_mem_data(key_bio, &key_buf);
@@ -289,19 +298,20 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
         Janet val;
 
         val = janet_get(argv[1], janet_ckeywordv("common-name"));
-        if (janet_checktype(val,
-                            JANET_STRING)) cn = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            cn = (const char *)janet_unwrap_string(val);
 
         val = janet_get(argv[1], janet_ckeywordv("days-valid"));
-        if (janet_checktype(val, JANET_NUMBER)) days = (int)janet_unwrap_number(val);
+        if (janet_checktype(val, JANET_NUMBER))
+            days = (int)janet_unwrap_number(val);
 
         val = janet_get(argv[1], janet_ckeywordv("country"));
-        if (janet_checktype(val,
-                            JANET_STRING)) country = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            country = (const char *)janet_unwrap_string(val);
 
         val = janet_get(argv[1], janet_ckeywordv("organization"));
-        if (janet_checktype(val,
-                            JANET_STRING)) org = (const char *)janet_unwrap_string(val);
+        if (janet_checktype(val, JANET_STRING))
+            org = (const char *)janet_unwrap_string(val);
     }
 
     EVP_PKEY *pkey = NULL;
@@ -314,7 +324,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
     if (!key_bio) goto cleanup;
 
-    pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
+    pkey =
+        PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
     key_bio = NULL;
 
@@ -326,19 +337,19 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2); /* Version 3 */
+    X509_set_version(x509, 2);                        /* Version 3 */
     ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
 
     X509_NAME *name = X509_get_subject_name(x509);
-    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
-                               -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(org), -1,
+    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country), -1,
                                -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(cn), -1,
-                               -1, 0);
+    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, OSSL_STR(org), -1, -1,
+                               0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, OSSL_STR(cn), -1, -1,
+                               0);
 
     X509_set_issuer_name(x509, name);
 
@@ -384,7 +395,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
             snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
         }
 
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name, san_value);
+        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
+                                  san_value);
         if (ext) {
             X509_add_ext(x509, ext, -1);
             X509_EXTENSION_free(ext);
@@ -392,7 +404,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     }
 
     /* Subject Key Identifier */
-    ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
+    ext =
+        X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
@@ -442,7 +455,7 @@ static Janet format_serial(ASN1_INTEGER *serial) {
 
     /* Format with colons (AB:CD:EF...) */
     size_t hex_len = strlen(hex);
-    size_t result_len = hex_len + (hex_len / 2);  /* Add space for colons */
+    size_t result_len = hex_len + (hex_len / 2); /* Add space for colons */
     char *result = janet_smalloc(result_len + 1);
     if (!result) {
         OPENSSL_free(hex);
@@ -586,11 +599,13 @@ static int64_t asn1_time_to_unix(const ASN1_TIME *time) {
     }
 
     /* Months to days */
-    static const int mdays[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+    static const int mdays[] = {0,   31,  59,  90,  120, 151,
+                                181, 212, 243, 273, 304, 334};
     days += mdays[t.tm_mon] + t.tm_mday - 1;
 
     /* Leap day adjustment */
-    if (t.tm_mon > 1 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) {
+    if (t.tm_mon > 1 &&
+        (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) {
         days++;
     }
 
@@ -600,8 +615,8 @@ static int64_t asn1_time_to_unix(const ASN1_TIME *time) {
 
 /* Helper: Extract Subject Alternative Names */
 static Janet extract_san(X509 *cert) {
-    GENERAL_NAMES *names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL,
-                                            NULL);
+    GENERAL_NAMES *names =
+        X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
     if (!names) return janet_wrap_nil();
 
     int count = sk_GENERAL_NAME_num(names);
@@ -625,29 +640,33 @@ static Janet extract_san(X509 *cert) {
                 janet_array_push(arr, janet_cstringv(buf));
                 break;
             case GEN_URI:
-                snprintf(buf, sizeof(buf), "URI:%.*s",
-                         ASN1_STRING_length(gen->d.uniformResourceIdentifier),
-                         ASN1_STRING_get0_data(gen->d.uniformResourceIdentifier));
+                snprintf(
+                    buf, sizeof(buf), "URI:%.*s",
+                    ASN1_STRING_length(gen->d.uniformResourceIdentifier),
+                    ASN1_STRING_get0_data(gen->d.uniformResourceIdentifier));
                 janet_array_push(arr, janet_cstringv(buf));
                 break;
             case GEN_IPADD: {
-                    ASN1_OCTET_STRING *ip = gen->d.iPAddress;
-                    if (ip->length == 4) {
-                        snprintf(buf, sizeof(buf), "IP:%d.%d.%d.%d",
-                                 ip->data[0], ip->data[1], ip->data[2], ip->data[3]);
-                        janet_array_push(arr, janet_cstringv(buf));
-                    } else if (ip->length == 16) {
-                        /* IPv6 - simplified output */
-                        snprintf(buf, sizeof(buf), "IP:%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
-                                 "%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                                 ip->data[0], ip->data[1], ip->data[2], ip->data[3],
-                                 ip->data[4], ip->data[5], ip->data[6], ip->data[7],
-                                 ip->data[8], ip->data[9], ip->data[10], ip->data[11],
-                                 ip->data[12], ip->data[13], ip->data[14], ip->data[15]);
-                        janet_array_push(arr, janet_cstringv(buf));
-                    }
-                    break;
+                ASN1_OCTET_STRING *ip = gen->d.iPAddress;
+                if (ip->length == 4) {
+                    snprintf(buf, sizeof(buf), "IP:%d.%d.%d.%d", ip->data[0],
+                             ip->data[1], ip->data[2], ip->data[3]);
+                    janet_array_push(arr, janet_cstringv(buf));
+                } else if (ip->length == 16) {
+                    /* IPv6 - simplified output */
+                    snprintf(buf, sizeof(buf),
+                             "IP:%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                             "%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                             ip->data[0], ip->data[1], ip->data[2],
+                             ip->data[3], ip->data[4], ip->data[5],
+                             ip->data[6], ip->data[7], ip->data[8],
+                             ip->data[9], ip->data[10], ip->data[11],
+                             ip->data[12], ip->data[13], ip->data[14],
+                             ip->data[15]);
+                    janet_array_push(arr, janet_cstringv(buf));
                 }
+                break;
+            }
             default:
                 break;
         }
@@ -659,7 +678,8 @@ static Janet extract_san(X509 *cert) {
 
 /* Helper: Extract key usage bits */
 static Janet extract_key_usage(X509 *cert) {
-    ASN1_BIT_STRING *usage = X509_get_ext_d2i(cert, NID_key_usage, NULL, NULL);
+    ASN1_BIT_STRING *usage =
+        X509_get_ext_d2i(cert, NID_key_usage, NULL, NULL);
     if (!usage) return janet_wrap_nil();
 
     JanetArray *arr = janet_array(9);
@@ -689,8 +709,8 @@ static Janet extract_key_usage(X509 *cert) {
 
 /* Helper: Extract extended key usage */
 static Janet extract_ext_key_usage(X509 *cert) {
-    EXTENDED_KEY_USAGE *eku = X509_get_ext_d2i(cert, NID_ext_key_usage, NULL,
-                              NULL);
+    EXTENDED_KEY_USAGE *eku =
+        X509_get_ext_d2i(cert, NID_ext_key_usage, NULL, NULL);
     if (!eku) return janet_wrap_nil();
 
     int count = sk_ASN1_OBJECT_num(eku);
@@ -720,11 +740,11 @@ static Janet extract_ext_key_usage(X509 *cert) {
                 janet_array_push(arr, janet_ckeywordv("ocsp-signing"));
                 break;
             default: {
-                    char buf[80];
-                    OBJ_obj2txt(buf, sizeof(buf), obj, 1);
-                    janet_array_push(arr, janet_cstringv(buf));
-                    break;
-                }
+                char buf[80];
+                OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+                janet_array_push(arr, janet_cstringv(buf));
+                break;
+            }
         }
     }
 
@@ -743,33 +763,63 @@ static Janet get_pubkey_info(EVP_PKEY *pkey) {
 
     switch (type) {
         case EVP_PKEY_RSA:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("rsa"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("rsa"));
             break;
         case EVP_PKEY_EC: {
-                janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("ec"));
-                /* Use OpenSSL 3.0 API to get curve name */
-                char curve_name[80];
-                size_t curve_len = sizeof(curve_name);
-                if (EVP_PKEY_get_utf8_string_param(pkey, OSSL_PKEY_PARAM_GROUP_NAME,
-                                                   curve_name, curve_len, &curve_len) == 1) {
-                    janet_table_put(info, janet_ckeywordv("curve"), janet_cstringv(curve_name));
-                }
-                break;
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("ec"));
+#if JSEC_HAS_OSSL_PARAM
+            /* Use OpenSSL 3.0 API to get curve name */
+            char curve_name[80];
+            size_t curve_len = sizeof(curve_name);
+            if (EVP_PKEY_get_utf8_string_param(
+                    pkey, OSSL_PKEY_PARAM_GROUP_NAME, curve_name, curve_len,
+                    &curve_len) == 1) {
+                janet_table_put(info, janet_ckeywordv("curve"),
+                                janet_cstringv(curve_name));
             }
+#else
+            /* LibreSSL fallback: use EC_KEY APIs */
+            EC_KEY *ec = EVP_PKEY_get1_EC_KEY(pkey);
+            if (ec) {
+                const EC_GROUP *group = EC_KEY_get0_group(ec);
+                if (group) {
+                    int nid = EC_GROUP_get_curve_name(group);
+                    const char *name = OBJ_nid2sn(nid);
+                    if (name) {
+                        janet_table_put(info, janet_ckeywordv("curve"),
+                                        janet_cstringv(name));
+                    }
+                }
+                EC_KEY_free(ec);
+            }
+#endif
+            break;
+        }
         case EVP_PKEY_ED25519:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("ed25519"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("ed25519"));
             break;
+#ifdef EVP_PKEY_ED448
         case EVP_PKEY_ED448:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("ed448"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("ed448"));
             break;
+#endif
         case EVP_PKEY_X25519:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("x25519"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("x25519"));
             break;
+#ifdef EVP_PKEY_X448
         case EVP_PKEY_X448:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("x448"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("x448"));
             break;
+#endif
         default:
-            janet_table_put(info, janet_ckeywordv("type"), janet_ckeywordv("unknown"));
+            janet_table_put(info, janet_ckeywordv("type"),
+                            janet_ckeywordv("unknown"));
             break;
     }
 
@@ -860,14 +910,17 @@ static Janet cfun_parse_cert(int32_t argc, Janet *argv) {
 
     /* Validity */
     janet_table_put(result, janet_ckeywordv("not-before"),
-                    janet_wrap_number((double)asn1_time_to_unix(X509_get0_notBefore(cert))));
+                    janet_wrap_number((double)asn1_time_to_unix(
+                        X509_get0_notBefore(cert))));
     janet_table_put(result, janet_ckeywordv("not-after"),
-                    janet_wrap_number((double)asn1_time_to_unix(X509_get0_notAfter(cert))));
+                    janet_wrap_number(
+                        (double)asn1_time_to_unix(X509_get0_notAfter(cert))));
 
     /* Public key info */
     EVP_PKEY *pkey = X509_get_pubkey(cert);
     if (pkey) {
-        janet_table_put(result, janet_ckeywordv("public-key"), get_pubkey_info(pkey));
+        janet_table_put(result, janet_ckeywordv("public-key"),
+                        get_pubkey_info(pkey));
         EVP_PKEY_free(pkey);
     }
 
@@ -890,17 +943,20 @@ static Janet cfun_parse_cert(int32_t argc, Janet *argv) {
     }
 
     /* Basic constraints - is CA */
-    BASIC_CONSTRAINTS *bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL,
-                            NULL);
+    BASIC_CONSTRAINTS *bc =
+        X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL);
     if (bc) {
-        janet_table_put(result, janet_ckeywordv("is-ca"), janet_wrap_boolean(bc->ca));
+        janet_table_put(result, janet_ckeywordv("is-ca"),
+                        janet_wrap_boolean(bc->ca));
         if (bc->pathlen) {
-            janet_table_put(result, janet_ckeywordv("path-length"),
-                            janet_wrap_integer(ASN1_INTEGER_get(bc->pathlen)));
+            janet_table_put(
+                result, janet_ckeywordv("path-length"),
+                janet_wrap_integer(ASN1_INTEGER_get(bc->pathlen)));
         }
         BASIC_CONSTRAINTS_free(bc);
     } else {
-        janet_table_put(result, janet_ckeywordv("is-ca"), janet_wrap_boolean(0));
+        janet_table_put(result, janet_ckeywordv("is-ca"),
+                        janet_wrap_boolean(0));
     }
 
     /* Fingerprints */
@@ -1037,92 +1093,86 @@ static Janet cfun_verify_signature(int32_t argc, Janet *argv) {
 
 JANET_MODULE_ENTRY(JanetTable *env) {
     JanetReg cfuns[] = {
-        {
-            "generate-self-signed-cert", cfun_generate_self_signed_cert,
-            "(jsec/cert/generate-self-signed-cert &opt options)\n\n"
-            "Generate a self-signed certificate and private key.\n"
-            "Returns a struct {:cert \"PEM...\" :key \"PEM...\"}.\n"
-            "Options table keys:\n"
-            "  :common-name (default \"localhost\")\n"
-            "  :days-valid (default 365)\n"
-            "  :bits (default 2048, RSA only)\n"
-            "  :key-type - :rsa, :ec-p256, :ec-p384, :ec-p521, :ed25519 (default :rsa)\n"
-            "  :country (default \"US\")\n"
-            "  :organization (default \"Test\")"
-        },
-        {
-            "generate-self-signed-from-key", cfun_generate_self_signed_from_key,
-            "(jsec/cert/generate-self-signed-from-key key-pem &opt options)\n\n"
-            "Generate a self-signed certificate from an existing private key.\n"
-            "Returns the certificate PEM string.\n"
-            "Options table keys:\n"
-            "  :common-name (default \"localhost\")\n"
-            "  :days-valid (default 365)\n"
-            "  :country (default \"US\")\n"
-            "  :organization (default \"Test\")"
-        },
-        {
-            "parse", cfun_parse_cert,
-            "(jsec/cert/parse cert-pem)\n\n"
-            "Parse an X.509 certificate and return its details.\n"
-            "Returns a table with:\n"
-            "  :version      - Certificate version (1, 2, or 3)\n"
-            "  :serial       - Serial number as hex string\n"
-            "  :subject      - Subject fields {:cn :o :ou :c :st :l :email :dn}\n"
-            "  :issuer       - Issuer fields (same structure as subject)\n"
-            "  :not-before   - Validity start (Unix timestamp)\n"
-            "  :not-after    - Validity end (Unix timestamp)\n"
-            "  :public-key   - Key info {:type :bits :curve}\n"
-            "  :san          - Subject Alternative Names array\n"
-            "  :key-usage    - Key usage array\n"
-            "  :ext-key-usage - Extended key usage array\n"
-            "  :is-ca        - Boolean indicating if cert is a CA\n"
-            "  :fingerprint-sha256 - SHA-256 fingerprint\n"
-            "  :fingerprint-sha1   - SHA-1 fingerprint\n"
-            "  :signature-algorithm - Signature algorithm name\n"
-            "  :pem          - Original PEM data"
-        },
-        {
-            "fingerprint", cfun_fingerprint,
-            "(jsec/cert/fingerprint cert-pem &opt algorithm)\n\n"
-            "Calculate certificate fingerprint.\n"
-            "algorithm defaults to :sha256.\n"
-            "Supported: :sha256, :sha384, :sha512, :sha1\n"
-            "Returns fingerprint as hex string with colons."
-        },
-        {
-            "verify-signature", cfun_verify_signature,
-            "(jsec/cert/verify-signature cert-pem issuer-cert-pem)\n\n"
-            "Verify that a certificate was signed by the issuer.\n"
-            "Returns true if signature is valid, false otherwise."
-        },
-        {
-            "verify-chain", cfun_cert_verify_chain,
-            "(jsec/cert/verify-chain cert-pem &opt opts)\n\n"
-            "Verify a certificate against a trust chain.\n"
-            "Options:\n"
-            "  :chain [<pem> ...] - Intermediate certificates\n"
-            "  :trusted [<pem> ...] - Trusted root certificates\n"
-            "  :trusted-dir \"/path\" - Directory of trusted certs (OpenSSL hash format)\n"
-            "  :purpose :server-auth - Certificate purpose (:server-auth, :client-auth, :code-signing, :email-protection, :timestamp, :any)\n"
-            "  :hostname \"example.com\" - Verify hostname in SAN/CN\n"
-            "  :time 1234567890 - Verify at specific Unix timestamp\n"
-            "  :check-crl true - Enable CRL checking\n"
-            "  :crl <pem> - CRL to check against\n\n"
-            "Returns table:\n"
-            "  {:valid true :chain [<pem> ...]} on success\n"
-            "  {:valid false :error \"message\" :depth N} on failure"
-        },
-        {
-            "build-chain", cfun_cert_build_chain,
-            "(jsec/cert/build-chain cert-pem intermediates trusted)\n\n"
-            "Build a certificate chain from cert to trusted root.\n"
-            "intermediates - array of PEM strings or single PEM with multiple certs\n"
-            "trusted - array of trusted root PEM strings or single PEM\n"
-            "Returns array of PEM strings from cert to root, or nil if chain can't be built."
-        },
-        {NULL, NULL, NULL}
-    };
+        {"generate-self-signed-cert", cfun_generate_self_signed_cert,
+         "(jsec/cert/generate-self-signed-cert &opt options)\n\n"
+         "Generate a self-signed certificate and private key.\n"
+         "Returns a struct {:cert \"PEM...\" :key \"PEM...\"}.\n"
+         "Options table keys:\n"
+         "  :common-name (default \"localhost\")\n"
+         "  :days-valid (default 365)\n"
+         "  :bits (default 2048, RSA only)\n"
+         "  :key-type - :rsa, :ec-p256, :ec-p384, :ec-p521, :ed25519 "
+         "(default "
+         ":rsa)\n"
+         "  :country (default \"US\")\n"
+         "  :organization (default \"Test\")"},
+        {"generate-self-signed-from-key", cfun_generate_self_signed_from_key,
+         "(jsec/cert/generate-self-signed-from-key key-pem &opt options)\n\n"
+         "Generate a self-signed certificate from an existing private key.\n"
+         "Returns the certificate PEM string.\n"
+         "Options table keys:\n"
+         "  :common-name (default \"localhost\")\n"
+         "  :days-valid (default 365)\n"
+         "  :country (default \"US\")\n"
+         "  :organization (default \"Test\")"},
+        {"parse", cfun_parse_cert,
+         "(jsec/cert/parse cert-pem)\n\n"
+         "Parse an X.509 certificate and return its details.\n"
+         "Returns a table with:\n"
+         "  :version      - Certificate version (1, 2, or 3)\n"
+         "  :serial       - Serial number as hex string\n"
+         "  :subject      - Subject fields {:cn :o :ou :c :st :l :email "
+         ":dn}\n"
+         "  :issuer       - Issuer fields (same structure as subject)\n"
+         "  :not-before   - Validity start (Unix timestamp)\n"
+         "  :not-after    - Validity end (Unix timestamp)\n"
+         "  :public-key   - Key info {:type :bits :curve}\n"
+         "  :san          - Subject Alternative Names array\n"
+         "  :key-usage    - Key usage array\n"
+         "  :ext-key-usage - Extended key usage array\n"
+         "  :is-ca        - Boolean indicating if cert is a CA\n"
+         "  :fingerprint-sha256 - SHA-256 fingerprint\n"
+         "  :fingerprint-sha1   - SHA-1 fingerprint\n"
+         "  :signature-algorithm - Signature algorithm name\n"
+         "  :pem          - Original PEM data"},
+        {"fingerprint", cfun_fingerprint,
+         "(jsec/cert/fingerprint cert-pem &opt algorithm)\n\n"
+         "Calculate certificate fingerprint.\n"
+         "algorithm defaults to :sha256.\n"
+         "Supported: :sha256, :sha384, :sha512, :sha1\n"
+         "Returns fingerprint as hex string with colons."},
+        {"verify-signature", cfun_verify_signature,
+         "(jsec/cert/verify-signature cert-pem issuer-cert-pem)\n\n"
+         "Verify that a certificate was signed by the issuer.\n"
+         "Returns true if signature is valid, false otherwise."},
+        {"verify-chain", cfun_cert_verify_chain,
+         "(jsec/cert/verify-chain cert-pem &opt opts)\n\n"
+         "Verify a certificate against a trust chain.\n"
+         "Options:\n"
+         "  :chain [<pem> ...] - Intermediate certificates\n"
+         "  :trusted [<pem> ...] - Trusted root certificates\n"
+         "  :trusted-dir \"/path\" - Directory of trusted certs (OpenSSL "
+         "hash "
+         "format)\n"
+         "  :purpose :server-auth - Certificate purpose (:server-auth, "
+         ":client-auth, :code-signing, :email-protection, :timestamp, :any)\n"
+         "  :hostname \"example.com\" - Verify hostname in SAN/CN\n"
+         "  :time 1234567890 - Verify at specific Unix timestamp\n"
+         "  :check-crl true - Enable CRL checking\n"
+         "  :crl <pem> - CRL to check against\n\n"
+         "Returns table:\n"
+         "  {:valid true :chain [<pem> ...]} on success\n"
+         "  {:valid false :error \"message\" :depth N} on failure"},
+        {"build-chain", cfun_cert_build_chain,
+         "(jsec/cert/build-chain cert-pem intermediates trusted)\n\n"
+         "Build a certificate chain from cert to trusted root.\n"
+         "intermediates - array of PEM strings or single PEM with multiple "
+         "certs\n"
+         "trusted - array of trusted root PEM strings or single PEM\n"
+         "Returns array of PEM strings from cert to root, or nil if chain "
+         "can't "
+         "be built."},
+        {NULL, NULL, NULL}};
     JanetReg *reg = cfuns;
     while (reg->name) {
         janet_def(env, reg->name, janet_wrap_cfunction(reg->cfun),

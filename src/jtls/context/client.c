@@ -14,7 +14,8 @@
  *
  * Parameters:
  *   verify        - Whether to verify server certificate
- *   security_opts - Janet table with security options (:min-version, :ciphers, etc.)
+ *   security_opts - Janet table with security options (:min-version,
+ * :ciphers, etc.)
  */
 SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts) {
     const SSL_METHOD *method = TLS_client_method();
@@ -45,20 +46,21 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts) {
     int session_cache = 1;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet cache_opt = janet_table_get(opts_table,
-                                          janet_ckeywordv("session-cache"));
+        Janet cache_opt =
+            janet_table_get(opts_table, janet_ckeywordv("session-cache"));
         if (!janet_checktype(cache_opt, JANET_NIL)) {
             session_cache = janet_truthy(cache_opt);
         }
     }
-    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_CLIENT : SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_CLIENT
+                                                      : SSL_SESS_CACHE_OFF);
 
     /* Handle session tickets */
     int tickets = 1;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ticket_opt = janet_table_get(opts_table,
-                                           janet_ckeywordv("session-tickets"));
+        Janet ticket_opt =
+            janet_table_get(opts_table, janet_ckeywordv("session-tickets"));
         if (!janet_checktype(ticket_opt, JANET_NIL)) {
             tickets = janet_truthy(ticket_opt);
         }
@@ -76,8 +78,8 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts) {
     long cache_size = 1000;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet size_opt = janet_table_get(opts_table,
-                                         janet_ckeywordv("session-cache-size"));
+        Janet size_opt = janet_table_get(
+            opts_table, janet_ckeywordv("session-cache-size"));
         if (janet_checktype(size_opt, JANET_NUMBER)) {
             cache_size = (long)janet_unwrap_number(size_opt);
             if (cache_size < 0) cache_size = 1000;

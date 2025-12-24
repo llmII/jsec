@@ -134,17 +134,17 @@ For critical security fixes:
 
 * Available Build Targets
 
-| Target           | Description                               |
-|------------------+-------------------------------------------|
-| ~format~         | Format all code (C and Janet)             |
-| ~format-c~       | Format C code with astyle                 |
-| ~format-janet~   | Format Janet code with janet-format       |
-| ~release~        | Clean and format for release              |
-| ~leak-check~     | Run valgrind memory leak detection        |
-| ~tidy~           | Run clang-tidy static analysis            |
-| ~tidy-fix~       | Run clang-tidy with auto-fix              |
-| ~test-sanitized~ | Build and test with ASan/UBSan            |
-| ~clean~          | Remove build artifacts                    |
+| Target           | Description                         |
+|------------------+-------------------------------------|
+| ~format~         | Format all code (C and Janet)       |
+| ~format-c~       | Format C code with astyle           |
+| ~format-janet~   | Format Janet code with janet-format |
+| ~release~        | Clean and format for release        |
+| ~leak-check~     | Run valgrind memory leak detection  |
+| ~tidy~           | Run clang-tidy static analysis      |
+| ~tidy-fix~       | Run clang-tidy with auto-fix        |
+| ~test-sanitized~ | Build and test with ASan/UBSan      |
+| ~clean~          | Remove build artifacts              |
 
 * Distribution
 

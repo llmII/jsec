@@ -20,10 +20,11 @@ Thank you for considering contributing to jsec! This document explains our stand
 
 ** C Code Style
 
-- K&R style (see [[file:.astylerc][.astylerc]])
+- K&R style (see [[file:.clang-format][.clang-format]])
 - 4-space indentation
-- Pointer alignment: ~int *ptr~
-- Format code with ~astyle~: =jpm run format-c=
+- 78-character soft limit, 80-character hard limit
+- Format code with ~clang-format~: =jpm run format-c=
+- Check formatting: =jpm run check-format-c=
 - Soft limit: 78 columns, hard limit: 80 columns
 - Comment complex logic, not obvious operations
 - Use Janet OS macros for platform guards

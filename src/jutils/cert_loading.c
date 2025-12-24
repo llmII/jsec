@@ -34,10 +34,11 @@ int jutils_password_cb(char *buf, int size, int rwflag, void *u) {
     }
     const char *pass = (const char *)u;
     int len = (int)strlen(pass);
-    if (len > size) {
-        len = size;
+    if (len >= size) {
+        len = size - 1; /* Leave room for null terminator */
     }
     memcpy(buf, pass, len);
+    buf[len] = '\0'; /* Null-terminate for safety */
     return len;
 }
 
@@ -73,7 +74,8 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
             BIO_free(bio);
             return 0;
         }
-        /* Note: SSL_CTX_add_extra_chain_cert takes ownership, don't free ca */
+        /* Note: SSL_CTX_add_extra_chain_cert takes ownership, don't free ca
+         */
     }
 
     BIO_free(bio);
@@ -89,8 +91,8 @@ int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) return 0;
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     if (!pkey) {
         BIO_free(bio);
         return 0;
@@ -179,7 +181,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
  * Returns: 1 on success, 0 on failure
  */
 int jutils_load_cert(SSL_CTX *ctx, Janet cert) {
-    if (janet_checktype(cert, JANET_NIL)) return 1;  /* Nothing to load */
+    if (janet_checktype(cert, JANET_NIL)) return 1; /* Nothing to load */
 
     if (janet_checktype(cert, JANET_STRING)) {
         const uint8_t *s = janet_unwrap_string(cert);
@@ -196,7 +198,7 @@ int jutils_load_cert(SSL_CTX *ctx, Janet cert) {
         return load_cert_chain_mem(ctx, b->data, b->count);
     }
 
-    return 0;  /* Invalid type */
+    return 0; /* Invalid type */
 }
 
 /*
@@ -206,7 +208,7 @@ int jutils_load_cert(SSL_CTX *ctx, Janet cert) {
  * Returns: 1 on success, 0 on failure
  */
 int jutils_load_key(SSL_CTX *ctx, Janet key) {
-    if (janet_checktype(key, JANET_NIL)) return 1;  /* Nothing to load */
+    if (janet_checktype(key, JANET_NIL)) return 1; /* Nothing to load */
 
     if (janet_checktype(key, JANET_STRING)) {
         const uint8_t *s = janet_unwrap_string(key);
@@ -223,7 +225,7 @@ int jutils_load_key(SSL_CTX *ctx, Janet key) {
         return load_key_mem(ctx, b->data, b->count);
     }
 
-    return 0;  /* Invalid type */
+    return 0; /* Invalid type */
 }
 
 /*
@@ -233,7 +235,7 @@ int jutils_load_key(SSL_CTX *ctx, Janet key) {
  * Returns: 1 on success, 0 on failure
  */
 int jutils_load_ca(SSL_CTX *ctx, Janet ca) {
-    if (janet_checktype(ca, JANET_NIL)) return 1;  /* Nothing to load */
+    if (janet_checktype(ca, JANET_NIL)) return 1; /* Nothing to load */
 
     if (janet_checktype(ca, JANET_STRING)) {
         const uint8_t *s = janet_unwrap_string(ca);
@@ -242,14 +244,15 @@ int jutils_load_ca(SSL_CTX *ctx, Janet ca) {
             return load_ca_mem(ctx, s, janet_string_length(s));
         } else {
             /* File path */
-            return SSL_CTX_load_verify_locations(ctx, (const char *)s, NULL) > 0;
+            return SSL_CTX_load_verify_locations(ctx, (const char *)s, NULL) >
+                   0;
         }
     } else if (janet_checktype(ca, JANET_BUFFER)) {
         JanetBuffer *b = janet_unwrap_buffer(ca);
         return load_ca_mem(ctx, b->data, b->count);
     }
 
-    return 0;  /* Invalid type */
+    return 0; /* Invalid type */
 }
 
 /*

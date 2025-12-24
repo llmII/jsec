@@ -44,7 +44,7 @@ static int get_rsa_padding(const char *name, const EVP_MD **oaep_md) {
         return RSA_PKCS1_PADDING;
     }
 
-    return -1;  /* Invalid */
+    return -1; /* Invalid */
 }
 
 /*
@@ -70,7 +70,8 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
             }
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[2]);
-            Janet pad_val = janet_struct_get(opts, janet_ckeywordv("padding"));
+            Janet pad_val =
+                janet_struct_get(opts, janet_ckeywordv("padding"));
             if (!janet_checktype(pad_val, JANET_NIL)) {
                 padding_name = (const char *)janet_getkeyword(&pad_val, 0);
             }
@@ -80,8 +81,10 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
     const EVP_MD *oaep_md = NULL;
     int padding = get_rsa_padding(padding_name, &oaep_md);
     if (padding < 0) {
-        crypto_panic_param("unsupported padding mode: %s (supported: oaep-sha256, oaep-sha1, oaep-sha384, oaep-sha512, pkcs1)",
-                           padding_name);
+        crypto_panic_param(
+            "unsupported padding mode: %s (supported: oaep-sha256, "
+            "oaep-sha1, oaep-sha384, oaep-sha512, pkcs1)",
+            padding_name);
     }
 
     /* Load key - try public key first, then private key (extracts public) */
@@ -93,7 +96,8 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
         /* Reset and try as private key */
         BIO_free(bio);
         bio = BIO_new_mem_buf(key_pem.bytes, (int)key_pem.len);
-        pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+        pkey =
+            PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     }
     BIO_free(bio);
 
@@ -104,7 +108,8 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
     /* Verify it's an RSA key */
     if (EVP_PKEY_base_id(pkey) != EVP_PKEY_RSA) {
         EVP_PKEY_free(pkey);
-        crypto_panic_param("RSA encryption requires RSA key, got different key type");
+        crypto_panic_param(
+            "RSA encryption requires RSA key, got different key type");
     }
 
     /* Create encryption context */
@@ -165,7 +170,8 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
         janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
-        crypto_panic_ssl("encryption failed (plaintext may be too large for key size)");
+        crypto_panic_ssl(
+            "encryption failed (plaintext may be too large for key size)");
     }
 
     Janet result = janet_stringv(outbuf, (int32_t)outlen);
@@ -200,7 +206,8 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
             }
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[2]);
-            Janet pad_val = janet_struct_get(opts, janet_ckeywordv("padding"));
+            Janet pad_val =
+                janet_struct_get(opts, janet_ckeywordv("padding"));
             if (!janet_checktype(pad_val, JANET_NIL)) {
                 padding_name = (const char *)janet_getkeyword(&pad_val, 0);
             }
@@ -217,12 +224,13 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, (int)key_pem.len);
     if (!bio) crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
     if (!pkey) {
-        crypto_panic_ssl("failed to load private key (RSA decryption requires private key)");
+        crypto_panic_ssl("failed to load private key (RSA decryption "
+                         "requires private key)");
     }
 
     /* Verify it's an RSA key */
@@ -288,7 +296,8 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
         janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
-        crypto_panic_ssl("decryption failed (wrong key, corrupted data, or padding mismatch)");
+        crypto_panic_ssl("decryption failed (wrong key, corrupted data, or "
+                         "padding mismatch)");
     }
 
     Janet result = janet_stringv(outbuf, (int32_t)outlen);
@@ -321,7 +330,8 @@ Janet cfun_rsa_max_plaintext(int32_t argc, Janet *argv) {
             }
         } else if (janet_checktype(argv[1], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[1]);
-            Janet pad_val = janet_struct_get(opts, janet_ckeywordv("padding"));
+            Janet pad_val =
+                janet_struct_get(opts, janet_ckeywordv("padding"));
             if (!janet_checktype(pad_val, JANET_NIL)) {
                 padding_name = (const char *)janet_getkeyword(&pad_val, 0);
             }
@@ -336,7 +346,8 @@ Janet cfun_rsa_max_plaintext(int32_t argc, Janet *argv) {
     if (!pkey) {
         BIO_free(bio);
         bio = BIO_new_mem_buf(key_pem.bytes, (int)key_pem.len);
-        pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+        pkey =
+            PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     }
     BIO_free(bio);
 
@@ -349,7 +360,7 @@ Janet cfun_rsa_max_plaintext(int32_t argc, Janet *argv) {
         crypto_panic_param("RSA operation requires RSA key");
     }
 
-    int key_size = EVP_PKEY_size(pkey);  /* In bytes */
+    int key_size = EVP_PKEY_size(pkey); /* In bytes */
     EVP_PKEY_free(pkey);
 
     int max_plaintext = 0;

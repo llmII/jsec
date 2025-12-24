@@ -81,16 +81,41 @@
 (def debug-lflags
   (build-sanitizer-flags))
 
+# macOS: Use Homebrew OpenSSL instead of outdated system LibreSSL 3.3.6
+# Set OPENSSL_PREFIX env var to override the default Homebrew location
+# DragonflyBSD: LibreSSL headers in /usr/local/include
+(def- macos? (= (os/which) :macos))
+(def- dragonfly? (= (os/which) :dragonfly))
+(def- openssl-prefix
+  (cond
+    macos?
+    (or (os/getenv "OPENSSL_PREFIX")
+        (if (os/stat "/opt/homebrew/opt/openssl@3")
+          "/opt/homebrew/opt/openssl@3" # ARM Mac (M1/M2/M3)
+          "/usr/local/opt/openssl@3")) # Intel Mac (x86_64)
+    dragonfly? "/usr/local"
+    nil))
+
+(def platform-cflags
+  (if openssl-prefix
+    [(string "-I" openssl-prefix "/include")]
+    []))
+
+(def platform-lflags
+  (if openssl-prefix
+    [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
+    ["-lssl" "-lcrypto"]))
+
 # Debug build support: set JSEC_DEBUG env var to enable
 (def build-cflags
   (if debug?
-    [;standard-cflags ;debug-extra-cflags]
-    standard-cflags))
+    [;standard-cflags ;debug-extra-cflags ;platform-cflags]
+    [;standard-cflags ;platform-cflags]))
 
 (def build-lflags
   (if debug?
-    ["-lssl" "-lcrypto" ;debug-lflags]
-    ["-lssl" "-lcrypto"]))
+    [;platform-lflags ;debug-lflags]
+    platform-lflags))
 
 # jsec/utils - Shared utilities and types (must be loaded first)
 (declare-native
@@ -247,10 +272,15 @@
        (os/shell "rm -f valgrind-output.txt")
        (os/shell "rm -f debug.log"))
 
-# Format C code with astyle
+# Format C code with clang-format
 (phony "format-c" []
-       (print "Formatting C source files with astyle...")
-       (os/shell "astyle --options=.astylerc src/*.c src/**/*.c src/*.h src/**/*.h"))
+       (print "Formatting C source files with clang-format...")
+       (os/shell "find src -name '*.c' -o -name '*.h' | xargs clang-format -i"))
+
+# Check C code formatting
+(phony "check-format-c" []
+       (print "Checking C code formatting...")
+       (os/shell "find src -name '*.c' -o -name '*.h' | xargs clang-format --dry-run --Werror"))
 
 # Format Janet code with janet-format
 (phony "format-janet" []
@@ -260,8 +290,13 @@
                          "-not -path './build/*' "
                          "| xargs janet-format -f")))
 
+# Format org files - align tables
+(phony "format-org" []
+       (print "Aligning tables in org files...")
+       (os/shell "find . -type f -name '*.org' -not -path '*/.*' -not -path './jpm_tree/*' -exec emacs --batch {} --eval \"(org-table-map-tables #'org-table-align t)\" -f save-buffer \\;"))
+
 # Format all code
-(phony "format" ["format-c" "format-janet"]
+(phony "format" ["format-c" "format-janet" "format-org"]
        (print "All code formatted"))
 
 # Release task - generate markdown from org files

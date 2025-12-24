@@ -18,10 +18,11 @@
  * HELPER: Check handshake completion
  *============================================================================*/
 static void check_handshake(TLSStream *tls) {
-    if (tls->conn_state != TLS_CONN_READY && tls->ssl && SSL_is_init_finished(tls->ssl)) {
+    if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
+        SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time && 
-            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
+        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
+            tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }
@@ -135,9 +136,15 @@ Janet cfun_key_update(int32_t argc, Janet *argv) {
 
     if (!tls->ssl) tls_panic_io("stream not initialized");
 
+#if JSEC_HAS_KEY_UPDATE
     int ret = SSL_key_update(tls->ssl, SSL_KEY_UPDATE_REQUESTED);
     if (ret == 1) return janet_ckeywordv("ok");
 
     tls_panic_ssl("key update failed");
+#else
+    /* LibreSSL does not support TLS 1.3 key update */
+    (void)tls; /* Suppress unused warning */
+    tls_panic_io("key update not supported (LibreSSL lacks SSL_key_update)");
+#endif
     return janet_wrap_nil();
 }

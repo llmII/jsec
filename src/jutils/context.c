@@ -17,9 +17,7 @@
 
 /* Method table for SSLContext */
 const JanetMethod ssl_context_methods[] = {
-    {"trust-cert", cfun_ssl_context_trust_cert},
-    {NULL, NULL}
-};
+    {"trust-cert", cfun_ssl_context_trust_cert}, {NULL, NULL}};
 
 /* GC callback for unified context */
 int ssl_context_gc(void *p, size_t s) {
@@ -36,23 +34,22 @@ int ssl_context_gc(void *p, size_t s) {
 int ssl_context_get(void *p, Janet key, Janet *out) {
     (void)p;
     if (!janet_checktype(key, JANET_KEYWORD)) return 0;
-    return janet_getmethod(janet_unwrap_keyword(key), ssl_context_methods, out);
+    return janet_getmethod(janet_unwrap_keyword(key), ssl_context_methods,
+                           out);
 }
 
 /* The unified context type */
-const JanetAbstractType ssl_context_type = {
-    "jsec/ssl-context",
-    ssl_context_gc,
-    NULL,  /* gcmark */
-    ssl_context_get,
-    NULL,  /* put */
-    NULL,  /* marshal */
-    NULL,  /* unmarshal */
-    NULL,  /* tostring */
-    NULL,  /* compare */
-    NULL,  /* hash */
-    JANET_ATEND_HASH
-};
+const JanetAbstractType ssl_context_type = {"jsec/ssl-context",
+                                            ssl_context_gc,
+                                            NULL, /* gcmark */
+                                            ssl_context_get,
+                                            NULL, /* put */
+                                            NULL, /* marshal */
+                                            NULL, /* unmarshal */
+                                            NULL, /* tostring */
+                                            NULL, /* compare */
+                                            NULL, /* hash */
+                                            JANET_ATEND_HASH};
 
 /* Flag to track if type is registered */
 static int ssl_context_type_registered = 0;
@@ -99,18 +96,17 @@ Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv) {
  * Options:
  *   :cert - Certificate (PEM string or file path)
  *   :key - Private key (PEM string or file path)
- *   :verify - Verify peer certificates (default: true for client, false for server)
- *   :ca - CA certificate path
- *   :trusted-cert - Trust specific certificate (for self-signed)
- *   :ciphers - Cipher suite string
- *   :security - Security options table
+ *   :verify - Verify peer certificates (default: true for client, false for
+ * server) :ca - CA certificate path :trusted-cert - Trust specific
+ * certificate (for self-signed) :ciphers - Cipher suite string :security -
+ * Security options table
  *
  * If :cert and :key are provided, creates a server-capable context.
  * Otherwise creates a client-only context.
  */
 SSLContext *jutils_create_context(Janet opts, int is_dtls) {
     int is_server = 0;
-    int verify = -1;  /* -1 means use default */
+    int verify = -1; /* -1 means use default */
 
     /* Check if this is a server context (has cert and key) */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -118,7 +114,8 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
         Janet cert = janet_get(opts, janet_ckeywordv("cert"));
         Janet key = janet_get(opts, janet_ckeywordv("key"));
 
-        if (!janet_checktype(cert, JANET_NIL) && !janet_checktype(key, JANET_NIL)) {
+        if (!janet_checktype(cert, JANET_NIL) &&
+            !janet_checktype(key, JANET_NIL)) {
             is_server = 1;
         }
 
@@ -129,17 +126,18 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
     }
 
     /* Create SSLContext */
-    SSLContext *ssl_ctx = janet_abstract(&ssl_context_type, sizeof(SSLContext));
+    SSLContext *ssl_ctx =
+        janet_abstract(&ssl_context_type, sizeof(SSLContext));
     memset(ssl_ctx, 0, sizeof(SSLContext));
     ssl_ctx->is_dtls = is_dtls;
 
     /* Create SSL_CTX with appropriate method */
     if (is_dtls) {
-        ssl_ctx->ctx = SSL_CTX_new(is_server ? DTLS_server_method() :
-                                   DTLS_client_method());
+        ssl_ctx->ctx = SSL_CTX_new(is_server ? DTLS_server_method()
+                                             : DTLS_client_method());
     } else {
-        ssl_ctx->ctx = SSL_CTX_new(is_server ? TLS_server_method() :
-                                   TLS_client_method());
+        ssl_ctx->ctx = SSL_CTX_new(is_server ? TLS_server_method()
+                                             : TLS_client_method());
     }
 
     if (!ssl_ctx->ctx) {
@@ -170,7 +168,8 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
         if (has_cert != has_key) {
             SSL_CTX_free(ssl_ctx->ctx);
             ssl_ctx->ctx = NULL;
-            janet_panicf("[TLS:CFG] :cert and :key must be provided together");
+            janet_panicf(
+                "[TLS:CFG] :cert and :key must be provided together");
         }
 
         if (has_cert) {
@@ -220,7 +219,8 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
         Janet ciphers = janet_get(opts, janet_ckeywordv("ciphers"));
         if (!janet_checktype(ciphers, JANET_NIL) &&
             janet_checktype(ciphers, JANET_STRING)) {
-            const char *cipher_str = (const char *)janet_unwrap_string(ciphers);
+            const char *cipher_str =
+                (const char *)janet_unwrap_string(ciphers);
             if (SSL_CTX_set_cipher_list(ssl_ctx->ctx, cipher_str) != 1) {
                 SSL_CTX_free(ssl_ctx->ctx);
                 ssl_ctx->ctx = NULL;
@@ -242,7 +242,8 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
             janet_checktype(opts, JANET_STRUCT)) {
             Janet trusted = janet_get(opts, janet_ckeywordv("trusted-cert"));
             Janet ca = janet_get(opts, janet_ckeywordv("ca"));
-            if (janet_checktype(trusted, JANET_NIL) && janet_checktype(ca, JANET_NIL)) {
+            if (janet_checktype(trusted, JANET_NIL) &&
+                janet_checktype(ca, JANET_NIL)) {
                 SSL_CTX_set_default_verify_paths(ssl_ctx->ctx);
             }
         } else {

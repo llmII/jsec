@@ -53,15 +53,15 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
     if (argc <= idx) {
         return INFINITY;
     }
-    
+
     Janet arg = argv[idx];
-    
+
     if (janet_checktype(arg, JANET_NIL)) {
         return INFINITY;
     }
-    
+
     double timeout = INFINITY;
-    
+
     if (janet_checktype(arg, JANET_NUMBER)) {
         timeout = janet_unwrap_number(arg);
     } else if (janet_checktype(arg, JANET_TABLE) ||
@@ -72,12 +72,12 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
             timeout = janet_unwrap_number(timeout_val);
         }
     }
-    
+
     /* Validate: negative timeouts are invalid */
     if (timeout < 0) {
         tls_panic_param("timeout must be non-negative, got %f", timeout);
     }
-    
+
     return timeout;
 }
 
@@ -97,14 +97,14 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     /* Handle :all keyword or integer for n */
     int read_all = 0;
     int32_t bytes_to_read = 4096;
-    
+
     if (janet_keyeq(argv[1], "all")) {
         read_all = 1;
         bytes_to_read = INT32_MAX;
     } else {
         bytes_to_read = janet_getnat(argv, 1);
     }
-    
+
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
@@ -192,7 +192,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
         tls_panic_io("stream is closed");
     }
 
-    if (tls->conn_state == TLS_CONN_SHUTDOWN_SENT || tls->conn_state == TLS_CONN_CLOSED) {
+    if (tls->conn_state == TLS_CONN_SHUTDOWN_SENT ||
+        tls->conn_state == TLS_CONN_CLOSED) {
         tls_panic_io("connection is shutting down");
     }
 
@@ -206,7 +207,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     state->op = TLS_OP_WRITE;
     state->write_data = bytes.bytes;
     state->write_len = bytes.len;
-    state->write_offset = 0;  /* Only write field that must be explicitly set */
+    state->write_offset =
+        0; /* Only write field that must be explicitly set */
     /* user_buf, bytes_requested unused for writes - not zeroed */
 
     /* Add timeout before starting async operation */
@@ -228,7 +230,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
  *
  * Closes TLS stream, sending close_notify unless forced.
  * Uses async state machine to properly handle I/O events during shutdown,
- * which is critical for FreeBSD unix sockets where synchronous shutdown hangs.
+ * which is critical for FreeBSD unix sockets where synchronous shutdown
+ * hangs.
  */
 Janet cfun_close(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
@@ -249,14 +252,16 @@ Janet cfun_close(int32_t argc, Janet *argv) {
         tls->stream.read_fiber = NULL;
     }
     if (tls->stream.write_fiber) {
-        janet_cancel(tls->stream.write_fiber, janet_cstringv("stream closed"));
+        janet_cancel(tls->stream.write_fiber,
+                     janet_cstringv("stream closed"));
         tls->stream.write_fiber = NULL;
     }
 
     /* Force close: skip TLS shutdown, just close transport */
     if (force || !tls->ssl || tls->conn_state != TLS_CONN_READY) {
         tls->stream.flags |= JANET_STREAM_CLOSED;
-        if (tls->transport && !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+        if (tls->transport &&
+            !(tls->transport->flags & JANET_STREAM_CLOSED)) {
             janet_stream_close(tls->transport);
         }
         return janet_wrap_nil();
