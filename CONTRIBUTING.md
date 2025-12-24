@@ -1,40 +1,40 @@
 
 # Table of Contents
 
-1.  [Welcome](#orgb9b8664)
-2.  [Code Standards](#org2ec14fb)
-    1.  [Janet Code Style](#org058db99)
-    2.  [C Code Style](#orgbc541a6)
-    3.  [Comments](#org03aea3f)
-3.  [Testing Requirements](#org0d5d246)
-    1.  [All Contributions Must Include Tests](#org55f0f25)
-    2.  [Running Tests](#org02f18ba)
-    3.  [Test Requirements](#org588ea62)
-    4.  [Test Style](#orgbae1377)
-    5.  [C Projects: Memory Testing](#org3becddf)
-4.  [Pull Request Process](#org1d4dacd)
-    1.  [Repository Information](#org6922dd1)
-    2.  [Submission Process](#org196a6f3)
-    3.  [PR Checklist](#orgbe92466)
-5.  [Documentation](#org41ad8bd)
-6.  [Getting Help](#orgd36b4b9)
-7.  [License](#org5ade36b)
+1.  [Welcome](#orge452936)
+2.  [Code Standards](#org05303c8)
+    1.  [Janet Code Style](#orgc39deb7)
+    2.  [C Code Style](#org69374ad)
+    3.  [Comments](#orga3d9c6e)
+3.  [Testing Requirements](#orgb64689f)
+    1.  [All Contributions Must Include Tests](#org3ff8997)
+    2.  [Running Tests](#orged67658)
+    3.  [Test Requirements](#org5536c06)
+    4.  [Test Style](#orge9915d4)
+    5.  [C Projects: Memory Testing](#orgb8f7d7a)
+4.  [Pull Request Process](#org25fb414)
+    1.  [Repository Information](#org7d2e69f)
+    2.  [Submission Process](#orga69b468)
+    3.  [PR Checklist](#orge3b8fe2)
+5.  [Documentation](#org779c61a)
+6.  [Getting Help](#orgfdb0e4a)
+7.  [License](#org8099349)
 
 
 
-<a id="orgb9b8664"></a>
+<a id="orge452936"></a>
 
 # Welcome
 
 Thank you for considering contributing to jsec! This document explains our standards and processes.
 
 
-<a id="org2ec14fb"></a>
+<a id="org05303c8"></a>
 
 # Code Standards
 
 
-<a id="org058db99"></a>
+<a id="orgc39deb7"></a>
 
 ## Janet Code Style
 
@@ -47,7 +47,7 @@ Thank you for considering contributing to jsec! This document explains our stand
     aid in this)
 
 
-<a id="orgbc541a6"></a>
+<a id="org69374ad"></a>
 
 ## C Code Style
 
@@ -61,7 +61,7 @@ Thank you for considering contributing to jsec! This document explains our stand
 -   No compiler warnings allowed
 
 
-<a id="org03aea3f"></a>
+<a id="orga3d9c6e"></a>
 
 ## Comments
 
@@ -72,19 +72,19 @@ Thank you for considering contributing to jsec! This document explains our stand
 -   Focus on "why" rather than "what" for complex sections
 
 
-<a id="org0d5d246"></a>
+<a id="orgb64689f"></a>
 
 # Testing Requirements
 
 
-<a id="org55f0f25"></a>
+<a id="org3ff8997"></a>
 
 ## All Contributions Must Include Tests
 
 New functionality or extended functionality **must** be appropriately tested for a contribution to be accepted.
 
 
-<a id="org02f18ba"></a>
+<a id="orged67658"></a>
 
 ## Running Tests
 
@@ -114,7 +114,7 @@ jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
 See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 
 
-<a id="org588ea62"></a>
+<a id="org5536c06"></a>
 
 ## Test Requirements
 
@@ -127,7 +127,7 @@ See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 -   No stubbed or incomplete tests accepted
 
 
-<a id="orgbae1377"></a>
+<a id="orge9915d4"></a>
 
 ## Test Style
 
@@ -140,7 +140,7 @@ See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 -   Use matrix tests for testing across configurations (TLS versions, protocols, etc.)
 
 
-<a id="org3becddf"></a>
+<a id="orgb8f7d7a"></a>
 
 ## C Projects: Memory Testing
 
@@ -156,12 +156,12 @@ For projects with C code, memory checking is mandatory (once developer tooling w
     jpm run tidy
 
 
-<a id="org1d4dacd"></a>
+<a id="org25fb414"></a>
 
 # Pull Request Process
 
 
-<a id="org6922dd1"></a>
+<a id="org7d2e69f"></a>
 
 ## Repository Information
 
@@ -172,7 +172,7 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   We attempt to credit contributor's GitHub/Git name appropriately
 
 
-<a id="org196a6f3"></a>
+<a id="orga69b468"></a>
 
 ## Submission Process
 
@@ -188,7 +188,7 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 10. Push to your fork and submit a pull request (Git) or commit (Fossil)
 
 
-<a id="orgbe92466"></a>
+<a id="orge3b8fe2"></a>
 
 ## PR Checklist
 
@@ -202,7 +202,7 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   [ ] Commit messages are clear and descriptive
 
 
-<a id="org41ad8bd"></a>
+<a id="org779c61a"></a>
 
 # Documentation
 
@@ -213,7 +213,7 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   Generate Markdown with `jpm run release`
 
 
-<a id="orgd36b4b9"></a>
+<a id="orgfdb0e4a"></a>
 
 # Getting Help
 
@@ -223,7 +223,7 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   Review [style guide](STYLE.md)
 
 
-<a id="org5ade36b"></a>
+<a id="org8099349"></a>
 
 # License
 

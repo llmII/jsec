@@ -11,8 +11,8 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
     const char *alg = (const char *)alg_kw;
 
     int type = EVP_PKEY_NONE;
-    int bits = 2048;  /* Default for RSA */
-    int nid = 0;      /* For EC curves */
+    int bits = 2048; /* Default for RSA */
+    int nid = 0;     /* For EC curves */
 
     if (strcmp(alg, "ed25519") == 0) {
         type = EVP_PKEY_ED25519;
@@ -33,7 +33,8 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
         type = EVP_PKEY_EC;
         nid = NID_secp521r1;
     } else {
-        crypto_panic_config("unsupported key algorithm: %s (supported: rsa, ed25519, x25519, ec-p256, ec-p384, ec-p521)",
+        crypto_panic_config("unsupported key algorithm: %s (supported: rsa, "
+                            "ed25519, x25519, ec-p256, ec-p384, ec-p521)",
                             alg);
     }
 
@@ -43,7 +44,8 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
     if (type == EVP_PKEY_EC) {
         /* EC key generation */
         pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
-        if (!pctx) crypto_panic_ssl("failed to create EC context");
+        if (!pctx)
+            crypto_panic_ssl("failed to create EC context");
 
         if (EVP_PKEY_keygen_init(pctx) <= 0) {
             EVP_PKEY_CTX_free(pctx);
@@ -61,7 +63,8 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
         }
     } else {
         pctx = EVP_PKEY_CTX_new_id(type, NULL);
-        if (!pctx) crypto_panic_ssl("failed to create context");
+        if (!pctx)
+            crypto_panic_ssl("failed to create context");
 
         if (EVP_PKEY_keygen_init(pctx) <= 0) {
             EVP_PKEY_CTX_free(pctx);
@@ -99,11 +102,12 @@ Janet cfun_export_public_key(int32_t argc, Janet *argv) {
     JanetByteView key_pem = janet_getbytes(argv, 0);
 
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
-    if (!pkey) crypto_panic_ssl("failed to load private key");
+    if (!pkey)
+        crypto_panic_ssl("failed to load private key");
 
     BIO *out = BIO_new(BIO_s_mem());
     PEM_write_bio_PUBKEY(out, pkey);
@@ -134,10 +138,11 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
     }
 
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
-    if (!bio) crypto_panic_resource("failed to create BIO");
+    if (!bio)
+        crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_password_cb,
-                     (void *)password);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_password_cb, (void *)password);
     BIO_free(bio);
 
     if (!pkey) {
@@ -146,7 +151,8 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
         int reason = ERR_GET_REASON(err);
         /* EVP_R_BAD_DECRYPT = 100 in OpenSSL */
         if (reason == 100) {
-            crypto_panic_param("incorrect password or encrypted key requires password");
+            crypto_panic_param(
+                "incorrect password or encrypted key requires password");
         }
         crypto_panic_ssl("failed to load private key");
     }
@@ -178,9 +184,12 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
  * Helper to get cipher from keyword
  */
 static const EVP_CIPHER *get_export_cipher(const char *name) {
-    if (strcmp(name, "aes-256-cbc") == 0) return EVP_aes_256_cbc();
-    if (strcmp(name, "aes-128-cbc") == 0) return EVP_aes_128_cbc();
-    if (strcmp(name, "des-ede3-cbc") == 0) return EVP_des_ede3_cbc();
+    if (strcmp(name, "aes-256-cbc") == 0)
+        return EVP_aes_256_cbc();
+    if (strcmp(name, "aes-128-cbc") == 0)
+        return EVP_aes_128_cbc();
+    if (strcmp(name, "des-ede3-cbc") == 0)
+        return EVP_des_ede3_cbc();
     return NULL;
 }
 
@@ -196,7 +205,7 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
 
     const char *password = NULL;
     size_t password_len = 0;
-    const EVP_CIPHER *cipher = EVP_aes_256_cbc();  /* Default */
+    const EVP_CIPHER *cipher = EVP_aes_256_cbc(); /* Default */
 
     if (argc > 1 && janet_checktype(argv[1], JANET_TABLE)) {
         JanetTable *opts = janet_unwrap_table(argv[1]);
@@ -213,7 +222,8 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
             const uint8_t *cipher_kw = janet_getkeyword(&cipher_val, 0);
             cipher = get_export_cipher((const char *)cipher_kw);
             if (!cipher) {
-                crypto_panic_param("unsupported cipher: %s (supported: aes-256-cbc, aes-128-cbc, des-ede3-cbc)",
+                crypto_panic_param("unsupported cipher: %s (supported: aes-256-cbc, "
+                                   "aes-128-cbc, des-ede3-cbc)",
                                    (const char *)cipher_kw);
             }
         }
@@ -232,7 +242,8 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
             const uint8_t *cipher_kw = janet_getkeyword(&cipher_val, 0);
             cipher = get_export_cipher((const char *)cipher_kw);
             if (!cipher) {
-                crypto_panic_param("unsupported cipher: %s (supported: aes-256-cbc, aes-128-cbc, des-ede3-cbc)",
+                crypto_panic_param("unsupported cipher: %s (supported: aes-256-cbc, "
+                                   "aes-128-cbc, des-ede3-cbc)",
                                    (const char *)cipher_kw);
             }
         }
@@ -240,13 +251,15 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
 
     /* Load the key */
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
-    if (!bio) crypto_panic_resource("failed to create BIO");
+    if (!bio)
+        crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
-    if (!pkey) crypto_panic_ssl("failed to load private key");
+    if (!pkey)
+        crypto_panic_ssl("failed to load private key");
 
     /* Export */
     BIO *out = BIO_new(BIO_s_mem());
@@ -257,9 +270,9 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
 
     int result;
     if (password && password_len > 0) {
-        result = PEM_write_bio_PrivateKey(out, pkey, cipher,
-                                          (unsigned char *)password, (int)password_len,
-                                          NULL, NULL);
+        result =
+            PEM_write_bio_PrivateKey(out, pkey, cipher, (unsigned char *)password,
+                                     (int)password_len, NULL, NULL);
     } else {
         result = PEM_write_bio_PrivateKey(out, pkey, NULL, NULL, 0, NULL, NULL);
     }
@@ -308,10 +321,11 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
 
     /* Try to load as private key first */
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
-    if (!bio) crypto_panic_resource("failed to create BIO");
+    if (!bio)
+        crypto_panic_resource("failed to create BIO");
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
 
     if (!pkey) {
         /* Reset BIO and try loading as public key */
@@ -343,27 +357,63 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
                 janet_table_put(info, janet_ckeywordv("bits"),
                                 janet_wrap_integer(EVP_PKEY_bits(pkey)));
                 /* Try to get curve name */
+#if JSEC_HAS_OSSL_PARAM
                 char curve_name[64] = {0};
                 size_t curve_name_len = sizeof(curve_name);
                 if (EVP_PKEY_get_utf8_string_param(pkey, OSSL_PKEY_PARAM_GROUP_NAME,
-                                                   curve_name, curve_name_len, &curve_name_len) > 0) {
+                                                   curve_name, curve_name_len,
+                                                   &curve_name_len) > 0) {
                     /* Map OpenSSL curve names to our keywords */
                     if (strcmp(curve_name, "prime256v1") == 0 ||
                         strcmp(curve_name, "P-256") == 0) {
-                        janet_table_put(info, janet_ckeywordv("curve"), janet_ckeywordv("p-256"));
+                        janet_table_put(info, janet_ckeywordv("curve"),
+                                        janet_ckeywordv("p-256"));
                     } else if (strcmp(curve_name, "secp384r1") == 0 ||
                                strcmp(curve_name, "P-384") == 0) {
-                        janet_table_put(info, janet_ckeywordv("curve"), janet_ckeywordv("p-384"));
+                        janet_table_put(info, janet_ckeywordv("curve"),
+                                        janet_ckeywordv("p-384"));
                     } else if (strcmp(curve_name, "secp521r1") == 0 ||
                                strcmp(curve_name, "P-521") == 0) {
-                        janet_table_put(info, janet_ckeywordv("curve"), janet_ckeywordv("p-521"));
+                        janet_table_put(info, janet_ckeywordv("curve"),
+                                        janet_ckeywordv("p-521"));
                     } else if (strcmp(curve_name, "secp256k1") == 0) {
-                        janet_table_put(info, janet_ckeywordv("curve"), janet_ckeywordv("secp256k1"));
+                        janet_table_put(info, janet_ckeywordv("curve"),
+                                        janet_ckeywordv("secp256k1"));
                     } else {
                         janet_table_put(info, janet_ckeywordv("curve"),
                                         janet_cstringv(curve_name));
                     }
                 }
+#else
+                /* LibreSSL fallback: use EC_KEY APIs */
+                EC_KEY *ec = EVP_PKEY_get1_EC_KEY(pkey);
+                if (ec) {
+                    const EC_GROUP *group = EC_KEY_get0_group(ec);
+                    if (group) {
+                        int nid = EC_GROUP_get_curve_name(group);
+                        const char *name = OBJ_nid2sn(nid);
+                        if (name) {
+                            if (strcmp(name, "prime256v1") == 0) {
+                                janet_table_put(info, janet_ckeywordv("curve"),
+                                                janet_ckeywordv("p-256"));
+                            } else if (strcmp(name, "secp384r1") == 0) {
+                                janet_table_put(info, janet_ckeywordv("curve"),
+                                                janet_ckeywordv("p-384"));
+                            } else if (strcmp(name, "secp521r1") == 0) {
+                                janet_table_put(info, janet_ckeywordv("curve"),
+                                                janet_ckeywordv("p-521"));
+                            } else if (strcmp(name, "secp256k1") == 0) {
+                                janet_table_put(info, janet_ckeywordv("curve"),
+                                                janet_ckeywordv("secp256k1"));
+                            } else {
+                                janet_table_put(info, janet_ckeywordv("curve"),
+                                                janet_cstringv(name));
+                            }
+                        }
+                    }
+                    EC_KEY_free(ec);
+                }
+#endif
                 break;
             }
         case EVP_PKEY_ED25519:
@@ -372,12 +422,16 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
         case EVP_PKEY_X25519:
             type_str = "x25519";
             break;
+#ifdef EVP_PKEY_ED448
         case EVP_PKEY_ED448:
             type_str = "ed448";
             break;
+#endif
+#ifdef EVP_PKEY_X448
         case EVP_PKEY_X448:
             type_str = "x448";
             break;
+#endif
         default:
             break;
     }

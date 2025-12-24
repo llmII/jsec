@@ -4,6 +4,27 @@
 
 * News
 
+** 2025-12-24 - NetBSD & DragonflyBSD Support
+
+NetBSD and DragonflyBSD are now fully supported with all tests passing:
+
+*** NetBSD (OpenSSL 3.x)
+- Tested on NetBSD 10.1
+- All 1934 tests pass
+- No platform-specific changes needed
+
+*** DragonflyBSD (LibreSSL 3.9+)
+- Tested on DragonflyBSD 6.4
+- All 1935 tests pass
+- Fixed ~BIO_flush~/~BIO_reset~ unused value warnings
+
+*** LibreSSL Compatibility
+- LibreSSL support now working across all BSD platforms excluding OpenBSD (WIP)
+- Conditional compilation for OpenSSL 3.0 vs LibreSSL APIs
+
+*** OpenBSD Status
+- Build and most tests work with LibreSSL 3.9+
+
 ** 2025-12-23 - macOS Support via Homebrew OpenSSL
 
 macOS is now fully supported with all tests passing:

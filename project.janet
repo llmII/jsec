@@ -83,21 +83,26 @@
 
 # macOS: Use Homebrew OpenSSL instead of outdated system LibreSSL 3.3.6
 # Set OPENSSL_PREFIX env var to override the default Homebrew location
+# DragonflyBSD: LibreSSL headers in /usr/local/include
 (def- macos? (= (os/which) :macos))
+(def- dragonfly? (= (os/which) :dragonfly))
 (def- openssl-prefix
-  (when macos?
+  (cond
+    macos?
     (or (os/getenv "OPENSSL_PREFIX")
         (if (os/stat "/opt/homebrew/opt/openssl@3")
           "/opt/homebrew/opt/openssl@3" # ARM Mac (M1/M2/M3)
-          "/usr/local/opt/openssl@3")))) # Intel Mac (x86_64)
+          "/usr/local/opt/openssl@3")) # Intel Mac (x86_64)
+    dragonfly? "/usr/local"
+    nil))
 
 (def platform-cflags
-  (if (and macos? openssl-prefix)
+  (if openssl-prefix
     [(string "-I" openssl-prefix "/include")]
     []))
 
 (def platform-lflags
-  (if (and macos? openssl-prefix)
+  (if openssl-prefix
     [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
     ["-lssl" "-lcrypto"]))
 

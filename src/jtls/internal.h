@@ -1,8 +1,9 @@
 /*
  * internal.h - Internal header for JTLS (Janet TLS) implementation
  *
- * This file defines the internal types, state machines, and function declarations
- * for the TLS implementation that integrates with Janet's event loop.
+ * This file defines the internal types, state machines, and function
+ * declarations for the TLS implementation that integrates with Janet's event
+ * loop.
  *
  * Architecture Overview:
  * =====================
@@ -13,10 +14,10 @@
  *
  * State Machine:
  * =============
- * TLS operations go through a state machine that handles the non-blocking nature
- * of SSL operations. When SSL_read/SSL_write/SSL_connect/SSL_accept returns
- * WANT_READ or WANT_WRITE, we register with Janet's event loop to be notified
- * when the socket is ready, then retry the operation.
+ * TLS operations go through a state machine that handles the non-blocking
+ * nature of SSL operations. When SSL_read/SSL_write/SSL_connect/SSL_accept
+ * returns WANT_READ or WANT_WRITE, we register with Janet's event loop to be
+ * notified when the socket is ready, then retry the operation.
  *
  * Flow:
  * 1. User calls tls/wrap, tls/connect, etc.
@@ -41,25 +42,26 @@
 #ifndef JTLS_INTERNAL_H
 #define JTLS_INTERNAL_H
 
+#include "../compat.h" /* For LibreSSL/OpenSSL detection */
 #include "../jutils.h"
-#include "../jutils/internal.h"  /* For standardized error macros */
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/bio.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>  /* For X509_CHECK_FLAG_* hostname verification flags */
-#include <string.h>
+/* Error macros now in jutils.h */
 #include <errno.h>
-#include <time.h>            /* For clock_gettime, CLOCK_MONOTONIC */
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h> /* For X509_CHECK_FLAG_* hostname verification flags */
+#include <string.h>
+#include <time.h> /* For clock_gettime, CLOCK_MONOTONIC */
 
 #ifndef JANET_WINDOWS
-    #include <unistd.h>
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <netinet/tcp.h>  /* For TCP_NODELAY */
-    #include <netdb.h>
     #include <fcntl.h>
+    #include <netdb.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h> /* For TCP_NODELAY */
+    #include <sys/socket.h>
+    #include <unistd.h>
 #endif
 
 /* MSG_NOSIGNAL prevents SIGPIPE on write to closed socket */
@@ -116,12 +118,12 @@ typedef enum {
  *   Error                → TLS_IO_ERROR      → cancel fiber with error
  */
 typedef enum {
-    TLS_IO_INIT,        /* Operation not started */
-    TLS_IO_WANT_READ,   /* Waiting for socket to be readable */
-    TLS_IO_WANT_WRITE,  /* Waiting for socket to be writable */
-    TLS_IO_WANT_BOTH,   /* Waiting for either (rare, for syscall errors) */
-    TLS_IO_COMPLETE,    /* Operation completed successfully */
-    TLS_IO_ERROR        /* Operation failed */
+    TLS_IO_INIT,       /* Operation not started */
+    TLS_IO_WANT_READ,  /* Waiting for socket to be readable */
+    TLS_IO_WANT_WRITE, /* Waiting for socket to be writable */
+    TLS_IO_WANT_BOTH,  /* Waiting for either (rare, for syscall errors) */
+    TLS_IO_COMPLETE,   /* Operation completed successfully */
+    TLS_IO_ERROR       /* Operation failed */
 } TLSIOState;
 
 /*============================================================================
@@ -131,12 +133,12 @@ typedef enum {
  * completion criteria and result handling.
  */
 typedef enum {
-    TLS_OP_HANDSHAKE,   /* SSL_connect or SSL_accept */
-    TLS_OP_READ,        /* SSL_read - read application data (may return early) */
-    TLS_OP_CHUNK,       /* SSL_read - read until n bytes or EOF (like ev/chunk) */
-    TLS_OP_WRITE,       /* SSL_write - write application data */
-    TLS_OP_SHUTDOWN,    /* SSL_shutdown - close TLS, keep socket open */
-    TLS_OP_CLOSE        /* SSL_shutdown + close socket */
+    TLS_OP_HANDSHAKE, /* SSL_connect or SSL_accept */
+    TLS_OP_READ,      /* SSL_read - read application data (may return early) */
+    TLS_OP_CHUNK,     /* SSL_read - read until n bytes or EOF (like ev/chunk) */
+    TLS_OP_WRITE,     /* SSL_write - write application data */
+    TLS_OP_SHUTDOWN,  /* SSL_shutdown - close TLS, keep socket open */
+    TLS_OP_CLOSE      /* SSL_shutdown + close socket */
 } TLSOpType;
 
 /*============================================================================
@@ -169,15 +171,15 @@ typedef struct ServerCTXCache ServerCTXCache;
  * 3. Reset when operation completes
  */
 struct TLSState {
-    TLSStream *tls;              /* The TLS stream */
-    TLSOpType op;                /* Operation type */
-    TLSIOState io_state;         /* Current I/O state */
-    JanetBuffer *user_buf;       /* Buffer for read operations */
-    const uint8_t *write_data;   /* Data for write operations */
-    int32_t write_len;           /* Total bytes to write */
-    int32_t write_offset;        /* Bytes already written */
-    int32_t bytes_requested;     /* Bytes requested for read (-1 for any) */
-    char error_msg[256];         /* Error message buffer */
+    TLSStream *tls;            /* The TLS stream */
+    TLSOpType op;              /* Operation type */
+    TLSIOState io_state;       /* Current I/O state */
+    JanetBuffer *user_buf;     /* Buffer for read operations */
+    const uint8_t *write_data; /* Data for write operations */
+    int32_t write_len;         /* Total bytes to write */
+    int32_t write_offset;      /* Bytes already written */
+    int32_t bytes_requested;   /* Bytes requested for read (-1 for any) */
+    char error_msg[256];       /* Error message buffer */
 };
 
 /*============================================================================
@@ -203,32 +205,32 @@ struct TLSState {
  * This eliminates malloc/free for every I/O operation.
  */
 struct TLSStream {
-    JanetStream stream;          /* Embedded stream for method dispatch */
-    SSL *ssl;                    /* OpenSSL SSL object */
-    SSL_CTX *ctx;                /* SSL context */
-    BIO *bio;                    /* Custom BIO for socket I/O */
-    JanetStream *transport;      /* Underlying TCP/Unix stream */
+    JanetStream stream;     /* Embedded stream for method dispatch */
+    SSL *ssl;               /* OpenSSL SSL object */
+    SSL_CTX *ctx;           /* SSL context */
+    BIO *bio;               /* Custom BIO for socket I/O */
+    JanetStream *transport; /* Underlying TCP/Unix stream */
     TLSConnectionState conn_state;
     int is_server;
     int owns_ctx;
     int32_t buffer_size;
     /* Track pending operations for cooperative mode switching */
-    JanetFiber *pending_read;    /* Fiber waiting on read */
-    JanetFiber *pending_write;   /* Fiber waiting on write */
+    JanetFiber *pending_read;  /* Fiber waiting on read */
+    JanetFiber *pending_write; /* Fiber waiting on write */
     /* Embedded operation states - eliminates malloc per I/O operation */
-    TLSState read_state;         /* State for read/chunk operations */
-    TLSState write_state;        /* State for write/shutdown/close operations */
+    TLSState read_state;  /* State for read/chunk operations */
+    TLSState write_state; /* State for write/shutdown/close operations */
     /* BIO read-ahead buffer for reducing syscalls */
     struct {
-        unsigned char *data;     /* Buffer storage */
-        unsigned char *p;        /* Current read position */
-        unsigned char *pe;       /* End of valid data */
-        size_t capacity;         /* Total buffer capacity */
+        unsigned char *data; /* Buffer storage */
+        unsigned char *p;    /* Current read position */
+        unsigned char *pe;   /* End of valid data */
+        size_t capacity;     /* Total buffer capacity */
     } bio_ahead;
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
-    int track_handshake_time;       /* Whether to record handshake timing */
-    struct timespec ts_connect;     /* Time when stream was created */
-    struct timespec ts_handshake;   /* Time when handshake completed */
+    int track_handshake_time;     /* Whether to record handshake timing */
+    struct timespec ts_connect;   /* Time when stream was created */
+    struct timespec ts_handshake; /* Time when handshake completed */
 };
 
 /*============================================================================
@@ -294,9 +296,9 @@ struct ServerCTXCache {
 /*============================================================================
  * GLOBAL STATE (defined in types.c)
  *============================================================================*/
-extern int sni_idx;              /* SSL_CTX ex_data index for SNI */
-extern int ocsp_idx;             /* SSL_CTX ex_data index for OCSP */
-extern int alpn_idx;             /* SSL_CTX ex_data index for ALPN */
+extern int sni_idx;  /* SSL_CTX ex_data index for SNI */
+extern int ocsp_idx; /* SSL_CTX ex_data index for OCSP */
+extern int alpn_idx; /* SSL_CTX ex_data index for ALPN */
 extern ServerCTXCache server_ctx_cache;
 extern JanetOSMutex *ctx_cache_lock;
 extern FILE *keylog_file;
@@ -329,8 +331,8 @@ TLSIOState jtls_process_operation(TLSState *state);
 int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async);
 
 /* Schedule async operation with specified event mode */
-void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls,
-                         TLSState *state, JanetAsyncMode mode, int is_async);
+void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
+                         JanetAsyncMode mode, int is_async);
 
 /* Async callback for all TLS operations */
 void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
@@ -366,12 +368,12 @@ int jtls_sni_callback(SSL *ssl, int *ad, void *arg);
 int jtls_ocsp_status_cb(SSL *ssl, void *arg);
 
 /* Free callbacks for ex_data */
-void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                       int idx, long argl, void *argp);
-void jtls_sni_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                      int idx, long argl, void *argp);
-void jtls_ocsp_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                       int idx, long argl, void *argp);
+void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                       long argl, void *argp);
+void jtls_sni_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                      long argl, void *argp);
+void jtls_ocsp_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                       long argl, void *argp);
 
 /*============================================================================
  * STREAM FUNCTIONS (stream.c)

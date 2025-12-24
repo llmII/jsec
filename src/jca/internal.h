@@ -1,5 +1,6 @@
 /*
- * internal.h - Internal definitions for CA (Certificate Authority) implementation
+ * internal.h - Internal definitions for CA (Certificate Authority)
+ * implementation
  *
  * Architecture Overview:
  * ======================
@@ -46,13 +47,13 @@
 #define JCA_INTERNAL_H
 
 #include "../jutils.h"
-#include "../jutils/internal.h"  /* For standardized error macros */
+/* Error macros now in jutils.h */
+#include <openssl/bn.h>
+#include <openssl/evp.h>
+#include <openssl/ocsp.h>
+#include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <openssl/pem.h>
-#include <openssl/evp.h>
-#include <openssl/bn.h>
-#include <openssl/ocsp.h>
 
 /*
  * =============================================================================
@@ -61,12 +62,12 @@
  */
 
 typedef struct {
-    X509 *cert;                     /* CA certificate */
-    EVP_PKEY *key;                  /* CA private key */
-    int64_t serial;                 /* Next serial number */
-    int track_issued;               /* Whether to track issued certs (default: 0) */
-    STACK_OF(X509) *issued;         /* Issued certs (only if track_issued) */
-    STACK_OF(X509_REVOKED) *revoked;/* Revoked certs (for CRL generation) */
+    X509 *cert;              /* CA certificate */
+    EVP_PKEY *key;           /* CA private key */
+    int64_t serial;          /* Next serial number */
+    int track_issued;        /* Whether to track issued certs (default: 0) */
+    STACK_OF(X509) * issued; /* Issued certs (only if track_issued) */
+    STACK_OF(X509_REVOKED) * revoked; /* Revoked certs (for CRL generation) */
 } JanetCA;
 
 /* Abstract type declaration */
@@ -188,8 +189,8 @@ Janet cfun_ca_revoke(int32_t argc, Janet *argv);
 /* Generate signed CRL
  * Options:
  *   :days-valid 30
- *   :revoked [{:serial N :date <time> :reason <kw>} ...]  (optional if tracking)
- * Returns: CRL in PEM format
+ *   :revoked [{:serial N :date <time> :reason <kw>} ...]  (optional if
+ * tracking) Returns: CRL in PEM format
  */
 Janet cfun_ca_generate_crl(int32_t argc, Janet *argv);
 

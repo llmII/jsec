@@ -11,11 +11,12 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
     JanetByteView data = janet_getbytes(argv, 1);
 
     BIO *bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
-    if (!pkey) crypto_panic_ssl("failed to load private key");
+    if (!pkey)
+        crypto_panic_ssl("failed to load private key");
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (EVP_DigestSignInit(mdctx, NULL, NULL, NULL, pkey) <= 0) {
@@ -63,12 +64,13 @@ Janet cfun_verify(int32_t argc, Janet *argv) {
     EVP_PKEY *pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
     if (!pkey) {
         /* Try reading as private key and extracting public */
-        BIO_reset(bio);
+        (void)BIO_reset(bio);
         pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     }
     BIO_free(bio);
 
-    if (!pkey) crypto_panic_ssl("failed to load key");
+    if (!pkey)
+        crypto_panic_ssl("failed to load key");
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (EVP_DigestVerifyInit(mdctx, NULL, NULL, NULL, pkey) <= 0) {

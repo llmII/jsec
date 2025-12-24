@@ -142,19 +142,20 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 | Backend  | Status  | Notes                                        |
 |----------+---------+----------------------------------------------|
 | OpenSSL  | Working | Primary backend. OpenSSL 3.0+ required.      |
-| LibreSSL | Planned | For OpenBSD/NetBSD. Requires LibreSSL 3.9+.  |
+| LibreSSL | Working | For BSD platforms. Requires LibreSSL 3.9+.   |
 | mbedTLS  | Future  | Lighter-weight alternative for embedded use. |
 
 ** Operating System Support
 
-| Platform | Status  | Backend        | Notes                                  |
-|----------+---------+----------------+----------------------------------------|
-| Linux    | Working | OpenSSL 3.0+   | Primary development platform           |
-| FreeBSD  | Working | OpenSSL 3.x    | Tested on FreeBSD 15                   |
-| macOS    | Working | OpenSSL 3.x    | Via Homebrew: ~brew install openssl@3~ |
-| OpenBSD  | Planned | LibreSSL ~3.9+ | Native LibreSSL                        |
-| NetBSD   | Planned | LibreSSL       | Native LibreSSL                        |
-| Windows  | Planned | OpenSSL        | Community help needed                  |
+| Platform     | Status  | Backend        | Notes                                  |
+|--------------+---------+----------------+----------------------------------------|
+| Linux        | Working | OpenSSL 3.0+   | Primary development platform           |
+| FreeBSD      | Working | OpenSSL 3.x    | Tested on FreeBSD 15                   |
+| macOS        | Working | OpenSSL 3.x    | Via Homebrew: ~brew install openssl@3~ |
+| NetBSD       | Working | OpenSSL 3.x    | Tested on NetBSD 10.1                  |
+| DragonflyBSD | Working | LibreSSL 3.9+  | Tested on DragonflyBSD 6.4             |
+| OpenBSD      | Testing | LibreSSL 3.9+  | TLS coverage tests hang                |
+| Windows      | Planned | OpenSSL        | Community help needed                  |
 
 ** Current Limitations
 - [ ] **DTLS Support is minimal/experimental.** It is not recommended for production use yet (mostly performance issues).

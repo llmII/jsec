@@ -5,7 +5,6 @@
  * License: ISC
  */
 #include "jutils.h"
-#include "jutils/internal.h"
 #include <openssl/bio.h>
 
 /* BIO Abstract Type */
@@ -22,25 +21,25 @@ static int jbio_gc(void *p, size_t s) {
 static int jbio_get(void *p, Janet key, Janet *out);
 
 static const JanetAbstractType jbio_type = {
-    "jsec/bio",   /* name */
-    jbio_gc,       /* gc */
-    NULL,          /* gcmark */
-    jbio_get,      /* get */
-    NULL,          /* put */
-    NULL,          /* marshal */
-    NULL,          /* unmarshal */
-    NULL,          /* tostring */
-    NULL,          /* compare */
-    NULL,          /* hash */
-    NULL,          /* next */
-    NULL,          /* call */
-    NULL,          /* length */
-    NULL,          /* bytes */
-    NULL           /* gcperthread */
+    "jsec/bio", /* name */
+    jbio_gc,    /* gc */
+    NULL,       /* gcmark */
+    jbio_get,   /* get */
+    NULL,       /* put */
+    NULL,       /* marshal */
+    NULL,       /* unmarshal */
+    NULL,       /* tostring */
+    NULL,       /* compare */
+    NULL,       /* hash */
+    NULL,       /* next */
+    NULL,       /* call */
+    NULL,       /* length */
+    NULL,       /* bytes */
+    NULL        /* gcperthread */
 };
 
 static Janet cfun_bio_new_mem(int32_t argc, Janet *argv) {
-    (void)argv;  /* Unused */
+    (void)argv; /* Unused */
     janet_fixarity(argc, 0);
     BIO *bio = BIO_new(BIO_s_mem());
     if (!bio)

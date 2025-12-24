@@ -1,33 +1,33 @@
 
 # Table of Contents
 
-1.  [Release Checklist](#org4f1f51c)
-    1.  [Pre-Release](#org0fead69)
-    2.  [Version Numbering](#orgf6f2bf6)
-    3.  [Release Steps](#org933eff3)
-    4.  [Post-Release](#org61358b7)
-    5.  [Development vs Release](#org6588796)
-    6.  [Quality Gates](#org86d50e5)
-    7.  [Emergency Releases](#org7926a16)
-2.  [Available Build Targets](#orge26c005)
-3.  [Distribution](#orgae52b9e)
-    1.  [Janet Package Manager (JPM)](#orga5373a6)
-    2.  [Manual Installation (Fossil)](#org0573c09)
-    3.  [Manual Installation (Git Mirror)](#orgbbe1767)
-    4.  [Dependencies](#orgcc8e11a)
-4.  [Testing](#orgaafd63f)
-    1.  [Running Tests](#org85784ef)
-    2.  [Performance Testing](#org9d1ad5c)
-5.  [Support Policy](#org9b1ce47)
+1.  [Release Checklist](#org22381de)
+    1.  [Pre-Release](#orgfdc6b81)
+    2.  [Version Numbering](#org2719351)
+    3.  [Release Steps](#orgbca1538)
+    4.  [Post-Release](#orgc1f9dc6)
+    5.  [Development vs Release](#org130f433)
+    6.  [Quality Gates](#orgc9b3fd4)
+    7.  [Emergency Releases](#org534d8e9)
+2.  [Available Build Targets](#org14b3c52)
+3.  [Distribution](#orgc4087a1)
+    1.  [Janet Package Manager (JPM)](#org60e90dd)
+    2.  [Manual Installation (Fossil)](#org1e568a1)
+    3.  [Manual Installation (Git Mirror)](#org2a3dd2c)
+    4.  [Dependencies](#org7205ec8)
+4.  [Testing](#org6cb2d42)
+    1.  [Running Tests](#org37e5076)
+    2.  [Performance Testing](#orgefcd07c)
+5.  [Support Policy](#orgeb3d17e)
 
 
 
-<a id="org4f1f51c"></a>
+<a id="org22381de"></a>
 
 # Release Checklist
 
 
-<a id="org0fead69"></a>
+<a id="orgfdc6b81"></a>
 
 ## Pre-Release
 
@@ -52,7 +52,7 @@
         janet test/runner.janet -f '{unit,regression,coverage}'
 
 
-<a id="orgf6f2bf6"></a>
+<a id="org2719351"></a>
 
 ## Version Numbering
 
@@ -69,7 +69,7 @@ Example: `1.2.3`
 -   Patch: 3
 
 
-<a id="org933eff3"></a>
+<a id="orgbca1538"></a>
 
 ## Release Steps
 
@@ -114,7 +114,7 @@ Example: `1.2.3`
         cd ../jsec-git && git push origin main --tags
 
 
-<a id="org61358b7"></a>
+<a id="orgc1f9dc6"></a>
 
 ## Post-Release
 
@@ -124,7 +124,7 @@ Example: `1.2.3`
 4.  Begin next development cycle
 
 
-<a id="org6588796"></a>
+<a id="org130f433"></a>
 
 ## Development vs Release
 
@@ -138,7 +138,7 @@ After a release, immediately bump to next dev version:
 -   `1.0.0` → `2.0.0-dev` (for major development)
 
 
-<a id="org86d50e5"></a>
+<a id="orgc9b3fd4"></a>
 
 ## Quality Gates
 
@@ -154,7 +154,7 @@ All of these must pass before release:
 -   [ ] Version is bumped appropriately
 
 
-<a id="org7926a16"></a>
+<a id="org534d8e9"></a>
 
 ## Emergency Releases
 
@@ -167,7 +167,7 @@ For critical security fixes:
 5.  Backport fix to development branch
 
 
-<a id="orge26c005"></a>
+<a id="org14b3c52"></a>
 
 # Available Build Targets
 
@@ -234,12 +234,12 @@ For critical security fixes:
 </table>
 
 
-<a id="orgae52b9e"></a>
+<a id="orgc4087a1"></a>
 
 # Distribution
 
 
-<a id="orga5373a6"></a>
+<a id="org60e90dd"></a>
 
 ## Janet Package Manager (JPM)
 
@@ -252,7 +252,7 @@ jsec is installed via `jpm`:
     jpm install https://fossil.example.org/jsec
 
 
-<a id="org0573c09"></a>
+<a id="org1e568a1"></a>
 
 ## Manual Installation (Fossil)
 
@@ -265,7 +265,7 @@ From source using Fossil:
     jpm install
 
 
-<a id="orgbbe1767"></a>
+<a id="org2a3dd2c"></a>
 
 ## Manual Installation (Git Mirror)
 
@@ -277,7 +277,7 @@ From the GitHub mirror:
     jpm install
 
 
-<a id="orgcc8e11a"></a>
+<a id="org7205ec8"></a>
 
 ## Dependencies
 
@@ -286,14 +286,14 @@ From the GitHub mirror:
 -   spork (Janet package)
 
 
-<a id="orgaafd63f"></a>
+<a id="org6cb2d42"></a>
 
 # Testing
 
 jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
 
 
-<a id="org85784ef"></a>
+<a id="org37e5076"></a>
 
 ## Running Tests
 
@@ -310,7 +310,7 @@ jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
     janet test/runner.janet -f '{unit,regression,coverage}' --verbosity 2
 
 
-<a id="org9d1ad5c"></a>
+<a id="orgefcd07c"></a>
 
 ## Performance Testing
 
@@ -325,7 +325,7 @@ Performance tests are separate and run for extended periods:
 See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 
 
-<a id="org9b1ce47"></a>
+<a id="orgeb3d17e"></a>
 
 # Support Policy
 

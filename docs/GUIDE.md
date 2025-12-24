@@ -1,25 +1,25 @@
 
 # Table of Contents
 
-1.  [Async Integration](#org79eeeb8)
-    1.  [Best Practices](#orgeab89ae)
-2.  [Certificate Verification](#org81af059)
-3.  [Mutual TLS (mTLS)](#orga1ad214)
-    1.  [Server Side](#orga64cf60)
-    2.  [Client Side](#orgb798789)
-4.  [DTLS (Datagram TLS)](#orgf53bcb0)
-5.  [STARTTLS](#orgf3e13bd)
-6.  [Session Resumption](#orgc8df835)
-7.  [Certificate Generation](#orgdb50921)
-8.  [Custom BIO Transport](#org081a77e)
-9.  [Cryptographic Operations](#org2e366ba)
-10. [Security Best Practices](#org3e4e0e8)
-11. [Performance Tuning](#org4bcafab)
-12. [Using Standard Janet Stream API](#org29eef92)
+1.  [Async Integration](#org3e047f8)
+    1.  [Best Practices](#org62f167b)
+2.  [Certificate Verification](#orgbf53f4b)
+3.  [Mutual TLS (mTLS)](#orgc4deb6a)
+    1.  [Server Side](#orgd12a520)
+    2.  [Client Side](#orgfd6af11)
+4.  [DTLS (Datagram TLS)](#org131e934)
+5.  [STARTTLS](#org21b35a8)
+6.  [Session Resumption](#org383dc66)
+7.  [Certificate Generation](#orgc8f4b47)
+8.  [Custom BIO Transport](#org6d9d285)
+9.  [Cryptographic Operations](#org5f66fe1)
+10. [Security Best Practices](#orgf47315d)
+11. [Performance Tuning](#orgeb0073a)
+12. [Using Standard Janet Stream API](#org0be0224)
 
 
 
-<a id="org79eeeb8"></a>
+<a id="org3e047f8"></a>
 
 # Async Integration
 
@@ -28,7 +28,7 @@ operations yield to the event loop when they would block. TLS streams work
 with standard Janet stream functions (`ev/read`, `ev/write`, `ev/close`).
 
 
-<a id="orgeab89ae"></a>
+<a id="org62f167b"></a>
 
 ## Best Practices
 
@@ -43,7 +43,7 @@ with standard Janet stream functions (`ev/read`, `ev/write`, `ev/close`).
 **Example**: See [echo<sub>server.janet</sub>](../examples/echo_server.janet) for proper fiber-based connection handling.
 
 
-<a id="org81af059"></a>
+<a id="orgbf53f4b"></a>
 
 # Certificate Verification
 
@@ -57,14 +57,14 @@ system's CA store.
 **Example**: See [simple<sub>https</sub><sub>client.janet</sub>](../examples/simple_https_client.janet) for certificate verification in practice.
 
 
-<a id="orga1ad214"></a>
+<a id="orgc4deb6a"></a>
 
 # Mutual TLS (mTLS)
 
 mTLS requires both the server and client to present certificates.
 
 
-<a id="orga64cf60"></a>
+<a id="orgd12a520"></a>
 
 ## Server Side
 
@@ -75,7 +75,7 @@ mTLS requires both the server and client to present certificates.
     })
 
 
-<a id="orgb798789"></a>
+<a id="orgfd6af11"></a>
 
 ## Client Side
 
@@ -87,7 +87,7 @@ mTLS requires both the server and client to present certificates.
 **Example**: See [mtls<sub>client</sub><sub>server.janet</sub>](../examples/mtls_client_server.janet) for complete mTLS implementation.
 
 
-<a id="orgf53bcb0"></a>
+<a id="org131e934"></a>
 
 # DTLS (Datagram TLS)
 
@@ -103,7 +103,7 @@ DTLS brings TLS security to UDP. It handles packet loss and reordering.
 **Example**: See [dtls<sub>echo.janet</sub>](../examples/dtls_echo.janet) for DTLS client and server implementation.
 
 
-<a id="orgf3e13bd"></a>
+<a id="org21b35a8"></a>
 
 # STARTTLS
 
@@ -113,7 +113,7 @@ commonly used with protocols like SMTP, IMAP, and FTP.
 **Example**: See [starttls<sub>smtp.janet</sub>](../examples/starttls_smtp.janet) for SMTP STARTTLS upgrade.
 
 
-<a id="orgc8df835"></a>
+<a id="org383dc66"></a>
 
 # Session Resumption
 
@@ -127,7 +127,7 @@ parameters.
 **Example**: See [session<sub>resumption.janet</sub>](../examples/session_resumption.janet) for session caching and reuse.
 
 
-<a id="orgdb50921"></a>
+<a id="orgc8f4b47"></a>
 
 # Certificate Generation
 
@@ -145,7 +145,7 @@ For testing or internal tools, generate self-signed certificates at runtime:
 **Example**: See [cert<sub>gen.janet</sub>](../examples/cert_gen.janet) for certificate generation.
 
 
-<a id="org081a77e"></a>
+<a id="org6d9d285"></a>
 
 # Custom BIO Transport
 
@@ -157,7 +157,7 @@ For advanced use cases, use OpenSSL BIO (Basic I/O) objects for custom transport
 -   [custom<sub>bio</sub><sub>transport.janet</sub>](../examples/custom_bio_transport.janet) - Custom transport implementation
 
 
-<a id="org2e366ba"></a>
+<a id="org5f66fe1"></a>
 
 # Cryptographic Operations
 
@@ -170,7 +170,7 @@ Jsec provides access to OpenSSL cryptographic primitives:
 **Example**: See [crypto<sub>signing.janet</sub>](../examples/crypto_signing.janet) for signing and verification.
 
 
-<a id="org3e4e0e8"></a>
+<a id="orgf47315d"></a>
 
 # Security Best Practices
 
@@ -185,7 +185,7 @@ Jsec provides access to OpenSSL cryptographic primitives:
 **Note**: All examples include appropriate security warnings and best practices comments.
 
 
-<a id="org4bcafab"></a>
+<a id="orgeb0073a"></a>
 
 # Performance Tuning
 
@@ -200,7 +200,7 @@ Jsec provides access to OpenSSL cryptographic primitives:
     multiple connections to save memory and improve performance.
 
 
-<a id="org29eef92"></a>
+<a id="org0be0224"></a>
 
 # Using Standard Janet Stream API
 

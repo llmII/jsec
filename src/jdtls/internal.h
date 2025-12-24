@@ -7,7 +7,8 @@
  * - dtls/listen    -> Creates DTLSServer (like net/listen :datagram)
  * - dtls/recv-from -> Receives from any peer, returns [data addr]
  * - dtls/send-to   -> Sends to specific peer address
- * - dtls/connect   -> Creates 1:1 client connection (like net/connect :datagram)
+ * - dtls/connect   -> Creates 1:1 client connection (like net/connect
+ * :datagram)
  *
  * Key Structures:
  * - DTLSAddress: Our address type (Janet's is internal, not exported)
@@ -61,15 +62,15 @@
 #define JDTLS_INTERNAL_H
 
 #include "../jutils.h"
-#include "../jutils/internal.h"  /* For standardized error macros */
-#include <openssl/ssl.h>
+/* Error macros now in jutils.h */
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
-#include <sys/types.h>
+#include <openssl/ssl.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <sys/types.h>
 #include <time.h>
 
 /*
@@ -92,12 +93,12 @@ static inline double get_current_time(void) {
  */
 
 typedef enum {
-    DTLS_STATE_IDLE = 0,       /* Initial state, no handshake started */
-    DTLS_STATE_HANDSHAKING,    /* Handshake in progress */
-    DTLS_STATE_ESTABLISHED,    /* Handshake complete, ready for data */
-    DTLS_STATE_SHUTDOWN,       /* Shutdown in progress */
-    DTLS_STATE_CLOSED,         /* Fully closed */
-    DTLS_STATE_ERROR           /* Error state */
+    DTLS_STATE_IDLE = 0,    /* Initial state, no handshake started */
+    DTLS_STATE_HANDSHAKING, /* Handshake in progress */
+    DTLS_STATE_ESTABLISHED, /* Handshake complete, ready for data */
+    DTLS_STATE_SHUTDOWN,    /* Shutdown in progress */
+    DTLS_STATE_CLOSED,      /* Fully closed */
+    DTLS_STATE_ERROR        /* Error state */
 } DTLSState;
 
 /*
@@ -112,9 +113,9 @@ typedef enum {
     DTLS_OP_READ,
     DTLS_OP_WRITE,
     DTLS_OP_SHUTDOWN,
-    DTLS_OP_ACCEPT,         /* Server waiting for new connection */
-    DTLS_OP_RECV_FROM,      /* Server recv-from operation */
-    DTLS_OP_SEND_TO         /* Server send-to operation */
+    DTLS_OP_ACCEPT,    /* Server waiting for new connection */
+    DTLS_OP_RECV_FROM, /* Server recv-from operation */
+    DTLS_OP_SEND_TO    /* Server send-to operation */
 } DTLSOperation;
 
 /*
@@ -155,17 +156,17 @@ void dtls_address_set_port(DTLSAddress *addr, uint16_t port);
  */
 
 typedef struct DTLSSession {
-    SSL *ssl;                   /* OpenSSL SSL object */
-    BIO *rbio;                  /* Read BIO (memory BIO for incoming data) */
-    BIO *wbio;                  /* Write BIO (memory BIO for outgoing data) */
-    DTLSAddress peer_addr;      /* Peer's address */
-    DTLSState state;            /* Session state */
-    double last_activity;       /* Time of last activity (for timeout) */
-    int cookie_verified;        /* Has client passed cookie exchange? */
-    struct DTLSSession *next;   /* For linked list in hash bucket */
+    SSL *ssl;                 /* OpenSSL SSL object */
+    BIO *rbio;                /* Read BIO (memory BIO for incoming data) */
+    BIO *wbio;                /* Write BIO (memory BIO for outgoing data) */
+    DTLSAddress peer_addr;    /* Peer's address */
+    DTLSState state;          /* Session state */
+    double last_activity;     /* Time of last activity (for timeout) */
+    int cookie_verified;      /* Has client passed cookie exchange? */
+    struct DTLSSession *next; /* For linked list in hash bucket */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
-    int track_handshake_time;   /* Whether to record handshake timing */
-    struct timespec ts_connect; /* Time when session was created */
+    int track_handshake_time;     /* Whether to record handshake timing */
+    struct timespec ts_connect;   /* Time when session was created */
     struct timespec ts_handshake; /* Time when handshake completed */
 } DTLSSession;
 
@@ -181,18 +182,18 @@ typedef struct DTLSSession {
  */
 
 typedef struct {
-    JanetStream stream;         /* Embedded stream for method dispatch */
-    JanetStream *transport;     /* Underlying UDP socket (connected) */
-    SSL *ssl;                   /* OpenSSL SSL object */
-    SSL_CTX *ctx;               /* Client SSL context */
-    DTLSState state;            /* Connection state */
-    DTLSAddress peer_addr;      /* Server address (for reference) */
-    int closed;                 /* Client has been closed */
-    int owns_ctx;               /* Whether we own ctx (should free on GC) */
-    int is_server;              /* Whether acting as server (for upgrade) */
+    JanetStream stream;     /* Embedded stream for method dispatch */
+    JanetStream *transport; /* Underlying UDP socket (connected) */
+    SSL *ssl;               /* OpenSSL SSL object */
+    SSL_CTX *ctx;           /* Client SSL context */
+    DTLSState state;        /* Connection state */
+    DTLSAddress peer_addr;  /* Server address (for reference) */
+    int closed;             /* Client has been closed */
+    int owns_ctx;           /* Whether we own ctx (should free on GC) */
+    int is_server;          /* Whether acting as server (for upgrade) */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
-    int track_handshake_time;   /* Whether to record handshake timing */
-    struct timespec ts_connect; /* Time when client was created */
+    int track_handshake_time;     /* Whether to record handshake timing */
+    struct timespec ts_connect;   /* Time when client was created */
     struct timespec ts_handshake; /* Time when handshake completed */
 } DTLSClient;
 
@@ -207,17 +208,17 @@ typedef struct {
  * Methods like :recv-from, :send-to, :close work through method dispatch.
  */
 
-#define DTLS_SESSION_TABLE_SIZE 256  /* Hash table buckets */
-#define DTLS_SESSION_TIMEOUT 300.0   /* 5 minutes default timeout */
+#define DTLS_SESSION_TABLE_SIZE 256 /* Hash table buckets */
+#define DTLS_SESSION_TIMEOUT 300.0  /* 5 minutes default timeout */
 
 typedef struct {
-    JanetStream stream;         /* Embedded stream for method dispatch */
-    JanetStream *transport;     /* Underlying UDP socket */
-    SSL_CTX *ctx;               /* Server SSL context */
+    JanetStream stream;     /* Embedded stream for method dispatch */
+    JanetStream *transport; /* Underlying UDP socket */
+    SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
-    int session_count;          /* Number of active sessions */
-    double session_timeout;     /* Session timeout in seconds */
-    int closed;                 /* Server has been closed */
+    int session_count;      /* Number of active sessions */
+    double session_timeout; /* Session timeout in seconds */
+    int closed;             /* Server has been closed */
 } DTLSServer;
 
 /* Session lifecycle */
@@ -239,13 +240,13 @@ void dtls_server_cleanup_expired(DTLSServer *server, double now);
  */
 
 typedef struct {
-    DTLSOperation op;           /* Current operation */
-    JanetBuffer *buffer;        /* Buffer for read operations */
-    JanetByteView write_data;   /* Data for write operations */
-    int32_t nbytes;             /* Requested bytes for read */
-    double timeout;             /* Operation timeout */
-    int flags;                  /* Operation flags */
-    DTLSAddress *out_addr;      /* Output address for recv-from */
+    DTLSOperation op;         /* Current operation */
+    JanetBuffer *buffer;      /* Buffer for read operations */
+    JanetByteView write_data; /* Data for write operations */
+    int32_t nbytes;           /* Requested bytes for read */
+    double timeout;           /* Operation timeout */
+    int flags;                /* Operation flags */
+    DTLSAddress *out_addr;    /* Output address for recv-from */
 } DTLSAsyncState;
 
 /*
@@ -271,11 +272,11 @@ int dtls_verify_cookie(SSL *ssl, const unsigned char *cookie,
 
 /* Drive SSL operation, return want-read/want-write/done/error */
 typedef enum {
-    DTLS_RESULT_OK = 0,         /* Operation complete */
-    DTLS_RESULT_WANT_READ,      /* Need to wait for readable */
-    DTLS_RESULT_WANT_WRITE,     /* Need to wait for writable */
-    DTLS_RESULT_EOF,            /* Peer closed */
-    DTLS_RESULT_ERROR           /* Error occurred */
+    DTLS_RESULT_OK = 0,     /* Operation complete */
+    DTLS_RESULT_WANT_READ,  /* Need to wait for readable */
+    DTLS_RESULT_WANT_WRITE, /* Need to wait for writable */
+    DTLS_RESULT_EOF,        /* Peer closed */
+    DTLS_RESULT_ERROR       /* Error occurred */
 } DTLSResult;
 
 /* Convert SSL_get_error to DTLSResult */
@@ -301,16 +302,19 @@ void dtls_async_handshake(JanetStream *transport, SSL *ssl,
 void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
                      double timeout, void *owner);
 void dtls_async_write(JanetStream *transport, SSL *ssl,
-                      JanetByteView data_view, double timeout, void *owner);
+                      JanetByteView data_view,
+                      double timeout, void *owner);
 void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
-                         DTLSState *state_ptr, void *owner);
+                         DTLSState *state_ptr,
+                         void *owner);
 
 /*
  * =============================================================================
  * DTLSContext - Reusable SSL_CTX wrapper (like TLS's TLSContext)
  * =============================================================================
  * Now uses the unified SSLContext type from jshared.h.
- * Note: is_server was removed - that's a connection-level property, not context.
+ * Note: is_server was removed - that's a connection-level property, not
+ * context.
  */
 
 typedef SSLContext DTLSContext;

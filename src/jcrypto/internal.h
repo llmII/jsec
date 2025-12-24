@@ -8,20 +8,23 @@
 #ifndef JCRYPTO_INTERNAL_H
 #define JCRYPTO_INTERNAL_H
 
+#include "../compat.h" /* For LibreSSL/OpenSSL detection */
 #include "../jutils.h"
-#include "../jutils/internal.h"  /* For standardized error macros */
+/* Error macros now in jutils.h */
+#include <openssl/bn.h>
+#include <openssl/cms.h>
+#include <openssl/ec.h>
 #include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
+#include <openssl/pem.h>
+#include <openssl/pkcs7.h>
+#include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <openssl/ec.h>
-#include <openssl/bn.h>
-#include <openssl/pkcs7.h>
-#include <openssl/cms.h>
-#include <openssl/core_names.h>  /* For OSSL_PKEY_PARAM_* */
+#if JSEC_HAS_OSSL_PARAM
+    #include <openssl/core_names.h> /* For OSSL_PKEY_PARAM_* (OpenSSL 3.0+) */
+#endif
 
 /*============================================================================
  * Function declarations for separate compilation units
