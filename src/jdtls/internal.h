@@ -19,7 +19,8 @@
  * State Machine:
  * ==============
  * DTLS uses a state machine for async I/O similar to TLS but with datagram
- * semantics. The key difference is that UDP is message-based, not stream-based.
+ * semantics. The key difference is that UDP is message-based, not
+ * stream-based.
  *
  *   IDLE ──────> HANDSHAKING ──────> ESTABLISHED ──────> SHUTDOWN
  *     │              │                    │                  │
@@ -164,7 +165,8 @@ typedef struct DTLSSession {
     double last_activity;     /* Time of last activity (for timeout) */
     int cookie_verified;      /* Has client passed cookie exchange? */
     struct DTLSSession *next; /* For linked list in hash bucket */
-    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
+    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
+     * enabled */
     int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when session was created */
     struct timespec ts_handshake; /* Time when handshake completed */
@@ -191,7 +193,8 @@ typedef struct {
     int closed;             /* Client has been closed */
     int owns_ctx;           /* Whether we own ctx (should free on GC) */
     int is_server;          /* Whether acting as server (for upgrade) */
-    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
+    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
+     * enabled */
     int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when client was created */
     struct timespec ts_handshake; /* Time when handshake completed */
@@ -302,11 +305,9 @@ void dtls_async_handshake(JanetStream *transport, SSL *ssl,
 void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
                      double timeout, void *owner);
 void dtls_async_write(JanetStream *transport, SSL *ssl,
-                      JanetByteView data_view,
-                      double timeout, void *owner);
+                      JanetByteView data_view, double timeout, void *owner);
 void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
-                         DTLSState *state_ptr,
-                         void *owner);
+                         DTLSState *state_ptr, void *owner);
 
 /*
  * =============================================================================
@@ -331,7 +332,8 @@ typedef SSLContext DTLSContext;
 extern const JanetAbstractType dtls_address_type;
 extern const JanetAbstractType dtls_server_type;
 extern const JanetAbstractType dtls_client_type;
-/* dtls_context_type is now a macro aliasing ssl_context_type from jshared.h */
+/* dtls_context_type is now a macro aliasing ssl_context_type from jshared.h
+ */
 
 /* Method tables for stream-like behavior */
 extern const JanetMethod dtls_client_methods[];

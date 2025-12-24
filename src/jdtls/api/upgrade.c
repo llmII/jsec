@@ -64,7 +64,8 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             is_server = 1;
         }
 
-        /* :verify-hostname option allows verifying cert against a different hostname than SNI */
+        /* :verify-hostname option allows verifying cert against a different
+         * hostname than SNI */
         Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
         if (janet_checktype(vh, JANET_STRING)) {
             verify_hostname = (const char *)janet_unwrap_string(vh);
@@ -87,11 +88,13 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     struct sockaddr_storage peer_addr;
     socklen_t peer_len = sizeof(peer_addr);
     if (getpeername(fd, (struct sockaddr *)&peer_addr, &peer_len) < 0) {
-        dtls_panic_socket("failed to get peer address (socket may not be connected)");
+        dtls_panic_socket(
+            "failed to get peer address (socket may not be connected)");
     }
 
     /* Create DTLS client */
-    DTLSClient *client = janet_abstract(&dtls_client_type, sizeof(DTLSClient));
+    DTLSClient *client =
+        janet_abstract(&dtls_client_type, sizeof(DTLSClient));
     memset(client, 0, sizeof(DTLSClient));
 
     /* Initialize embedded JanetStream for method dispatch */
@@ -101,7 +104,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     client->transport = transport;
     client->state = DTLS_STATE_IDLE;
-    client->is_server = is_server;  /* Set based on :server option */
+    client->is_server = is_server; /* Set based on :server option */
 
     /* Initialize handshake timing if enabled */
     client->track_handshake_time = track_handshake_time;
@@ -177,8 +180,10 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     if (!is_server && sni) {
         SSL_set_tlsext_host_name(client->ssl, sni);
         if (verify) {
-            const char *host_to_verify = verify_hostname ? verify_hostname : sni;
-            SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+            const char *host_to_verify =
+                verify_hostname ? verify_hostname : sni;
+            SSL_set_hostflags(client->ssl,
+                              X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
             SSL_set1_host(client->ssl, host_to_verify);
         }
     } else if (!is_server && verify_hostname && verify) {

@@ -25,8 +25,8 @@ static void check_handshake(TLSStream *tls) {
     if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
         SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time &&
-            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
+        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
+            tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }
@@ -115,7 +115,8 @@ Janet cfun_get_connection_info(int32_t argc, Janet *argv) {
     if (cipher) {
         const char *cipher_name = SSL_CIPHER_get_name(cipher);
         if (cipher_name) {
-            janet_struct_put(st, janet_ckeywordv("cipher"), janet_cstringv(cipher_name));
+            janet_struct_put(st, janet_ckeywordv("cipher"),
+                             janet_cstringv(cipher_name));
         }
 
         int bits = SSL_CIPHER_get_bits(cipher, NULL);
@@ -141,13 +142,14 @@ Janet cfun_get_connection_info(int32_t argc, Janet *argv) {
     unsigned int alpn_len = 0;
     SSL_get0_alpn_selected(tls->ssl, &alpn, &alpn_len);
     if (alpn && alpn_len > 0) {
-        janet_struct_put(st, janet_ckeywordv("alpn"),
-                         janet_wrap_string(janet_string(alpn, (int32_t)alpn_len)));
+        janet_struct_put(
+            st, janet_ckeywordv("alpn"),
+            janet_wrap_string(janet_string(alpn, (int32_t)alpn_len)));
     }
 
     /* SNI */
-    const char *servername = SSL_get_servername(tls->ssl,
-                             TLSEXT_NAMETYPE_host_name);
+    const char *servername =
+        SSL_get_servername(tls->ssl, TLSEXT_NAMETYPE_host_name);
     if (servername) {
         janet_struct_put(st, janet_ckeywordv("server-name"),
                          janet_cstringv(servername));
@@ -180,9 +182,10 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
     }
 
     /* Calculate duration: handshake_time - connect_time */
-    double duration = (double)(tls->ts_handshake.tv_sec - tls->ts_connect.tv_sec);
-    duration += (double)(tls->ts_handshake.tv_nsec - tls->ts_connect.tv_nsec) /
-                1e9;
+    double duration =
+        (double)(tls->ts_handshake.tv_sec - tls->ts_connect.tv_sec);
+    duration +=
+        (double)(tls->ts_handshake.tv_nsec - tls->ts_connect.tv_nsec) / 1e9;
 
     return janet_wrap_number(duration);
 }
@@ -191,42 +194,47 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
  * HELPER: Convert sockaddr to Janet tuple
  *============================================================================
  * Returns (host port) for IPv4/IPv6 or (path) for Unix sockets.
- * Based on pattern from Janet's net.c (Copyright Calvin Rose & contributors, MIT License)
+ * Based on pattern from Janet's net.c (Copyright Calvin Rose & contributors,
+ * MIT License)
  */
 static Janet sockaddr_to_tuple(const struct sockaddr_storage *ss) {
     char buffer[INET6_ADDRSTRLEN + 1];
 
     switch (ss->ss_family) {
         case AF_INET: {
-                const struct sockaddr_in *sai = (const struct sockaddr_in *)ss;
-                if (!inet_ntop(AF_INET, &(sai->sin_addr), buffer, sizeof(buffer))) {
-                    tls_panic_io("unable to decode ipv4 host address");
-                }
-                Janet pair[2] = {janet_cstringv(buffer), janet_wrap_integer(ntohs(sai->sin_port))};
-                return janet_wrap_tuple(janet_tuple_n(pair, 2));
+            const struct sockaddr_in *sai = (const struct sockaddr_in *)ss;
+            if (!inet_ntop(AF_INET, &(sai->sin_addr), buffer,
+                           sizeof(buffer))) {
+                tls_panic_io("unable to decode ipv4 host address");
             }
+            Janet pair[2] = {janet_cstringv(buffer),
+                             janet_wrap_integer(ntohs(sai->sin_port))};
+            return janet_wrap_tuple(janet_tuple_n(pair, 2));
+        }
         case AF_INET6: {
-                const struct sockaddr_in6 *sai6 = (const struct sockaddr_in6 *)ss;
-                if (!inet_ntop(AF_INET6, &(sai6->sin6_addr), buffer, sizeof(buffer))) {
-                    tls_panic_io("unable to decode ipv6 host address");
-                }
-                Janet pair[2] = {janet_cstringv(buffer), janet_wrap_integer(ntohs(sai6->sin6_port))};
-                return janet_wrap_tuple(janet_tuple_n(pair, 2));
+            const struct sockaddr_in6 *sai6 = (const struct sockaddr_in6 *)ss;
+            if (!inet_ntop(AF_INET6, &(sai6->sin6_addr), buffer,
+                           sizeof(buffer))) {
+                tls_panic_io("unable to decode ipv6 host address");
             }
+            Janet pair[2] = {janet_cstringv(buffer),
+                             janet_wrap_integer(ntohs(sai6->sin6_port))};
+            return janet_wrap_tuple(janet_tuple_n(pair, 2));
+        }
         case AF_UNIX: {
-                const struct sockaddr_un *sun = (const struct sockaddr_un *)ss;
-                Janet pathname;
-                if (sun->sun_path[0] == '\0') {
-                    /* Abstract socket - replace null with @ */
-                    char abuf[sizeof(sun->sun_path) + 1];
-                    memcpy(abuf, sun->sun_path, sizeof(sun->sun_path));
-                    abuf[0] = '@';
-                    pathname = janet_cstringv(abuf);
-                } else {
-                    pathname = janet_cstringv(sun->sun_path);
-                }
-                return janet_wrap_tuple(janet_tuple_n(&pathname, 1));
+            const struct sockaddr_un *sun = (const struct sockaddr_un *)ss;
+            Janet pathname;
+            if (sun->sun_path[0] == '\0') {
+                /* Abstract socket - replace null with @ */
+                char abuf[sizeof(sun->sun_path) + 1];
+                memcpy(abuf, sun->sun_path, sizeof(sun->sun_path));
+                abuf[0] = '@';
+                pathname = janet_cstringv(abuf);
+            } else {
+                pathname = janet_cstringv(sun->sun_path);
             }
+            return janet_wrap_tuple(janet_tuple_n(&pathname, 1));
+        }
         default:
             tls_panic_param("unknown address family");
     }

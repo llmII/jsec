@@ -121,7 +121,8 @@ Janet cfun_dtls_session_reused(int32_t argc, Janet *argv) {
  * (dtls/get-session client)
  *
  * Get the session data for resumption.
- * Returns a buffer containing the serialized session, or nil if not available.
+ * Returns a buffer containing the serialized session, or nil if not
+ * available.
  */
 Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
@@ -297,14 +298,16 @@ Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv) {
     }
 
     /* Return nil if handshake not complete */
-    if (client->ts_handshake.tv_sec == 0 && client->ts_handshake.tv_nsec == 0) {
+    if (client->ts_handshake.tv_sec == 0 &&
+        client->ts_handshake.tv_nsec == 0) {
         return janet_wrap_nil();
     }
 
     /* Calculate duration: handshake_time - connect_time */
-    double duration = (double)(client->ts_handshake.tv_sec -
-                               client->ts_connect.tv_sec) +
-                      (double)(client->ts_handshake.tv_nsec - client->ts_connect.tv_nsec) / 1e9;
+    double duration =
+        (double)(client->ts_handshake.tv_sec - client->ts_connect.tv_sec) +
+        (double)(client->ts_handshake.tv_nsec - client->ts_connect.tv_nsec) /
+            1e9;
 
     return janet_wrap_number(duration);
 }

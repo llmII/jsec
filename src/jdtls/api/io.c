@@ -7,9 +7,9 @@
 
 /* External declarations */
 extern void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-        int32_t nbytes, int mode);
+                                         int32_t nbytes, int mode);
 extern void dtls_client_start_async_write(DTLSClient *client,
-        JanetByteView data, int mode);
+                                          JanetByteView data, int mode);
 
 /*
  * (dtls/read client n &opt buf timeout)
@@ -42,8 +42,8 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
 
     /* Try initial read */
     int32_t nread = 0;
-    DTLSResult result = dtls_do_read(client->ssl, buf->data + buf->count, n,
-                                     &nread);
+    DTLSResult result =
+        dtls_do_read(client->ssl, buf->data + buf->count, n, &nread);
 
     if (nread > 0) {
         buf->count += nread;
@@ -55,11 +55,10 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     }
 
     /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_WRITE)
-               ? JANET_ASYNC_LISTEN_WRITE
-               : JANET_ASYNC_LISTEN_READ;
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
     dtls_client_start_async_read(client, buf, n, mode);
-    return janet_wrap_nil();  /* Will be replaced by async result */
+    return janet_wrap_nil(); /* Will be replaced by async result */
 }
 
 /*
@@ -84,19 +83,18 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
 
     /* Try initial write */
     int32_t nwritten = 0;
-    DTLSResult result = dtls_do_write(client->ssl, data.bytes, data.len,
-                                      &nwritten);
+    DTLSResult result =
+        dtls_do_write(client->ssl, data.bytes, data.len, &nwritten);
 
     if (result == DTLS_RESULT_OK) {
         return janet_wrap_integer(nwritten);
     }
 
     /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_READ)
-               ? JANET_ASYNC_LISTEN_READ
-               : JANET_ASYNC_LISTEN_WRITE;
+    int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
+                                                 : JANET_ASYNC_LISTEN_WRITE;
     dtls_client_start_async_write(client, data, mode);
-    return janet_wrap_nil();  /* Will be replaced by async result */
+    return janet_wrap_nil(); /* Will be replaced by async result */
 }
 
 /*

@@ -155,14 +155,14 @@ typedef enum {
 
 When OpenSSL returns an error, check ~SSL_get_error()~:
 
-| SSL_ERROR              | Action                                      |
-|------------------------+---------------------------------------------|
-| SSL_ERROR_NONE         | Operation completed successfully            |
-| SSL_ERROR_WANT_READ    | Register for read event, retry when ready   |
-| SSL_ERROR_WANT_WRITE   | Register for write event, retry when ready  |
-| SSL_ERROR_ZERO_RETURN  | Clean shutdown received (EOF)               |
-| SSL_ERROR_SYSCALL      | Check errno; usually connection reset       |
-| SSL_ERROR_SSL          | Protocol error; check ERR_get_error()       |
+| SSL_ERROR             | Action                                     |
+|-----------------------+--------------------------------------------|
+| SSL_ERROR_NONE        | Operation completed successfully           |
+| SSL_ERROR_WANT_READ   | Register for read event, retry when ready  |
+| SSL_ERROR_WANT_WRITE  | Register for write event, retry when ready |
+| SSL_ERROR_ZERO_RETURN | Clean shutdown received (EOF)              |
+| SSL_ERROR_SYSCALL     | Check errno; usually connection reset      |
+| SSL_ERROR_SSL         | Protocol error; check ERR_get_error()      |
 
 * Event Loop Integration
 

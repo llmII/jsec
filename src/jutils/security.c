@@ -24,7 +24,7 @@ static int parse_tls_version(const char *ver_str) {
         return TLS1_2_VERSION;
     if (strcmp(ver_str, "TLS1.3") == 0 || strcmp(ver_str, "TLS1_3") == 0)
         return TLS1_3_VERSION;
-    return 0;  /* Invalid */
+    return 0; /* Invalid */
 }
 
 /* Parse DTLS version string to OpenSSL constant */
@@ -33,7 +33,7 @@ static int parse_dtls_version(const char *ver_str) {
         return DTLS1_VERSION;
     if (strcmp(ver_str, "DTLS1.2") == 0 || strcmp(ver_str, "DTLS1_2") == 0)
         return DTLS1_2_VERSION;
-    return 0;  /* Invalid */
+    return 0; /* Invalid */
 }
 
 /*============================================================================
@@ -67,15 +67,17 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls) {
     if (!janet_checktype(min_ver, JANET_NIL)) {
         const char *ver_str = janet_to_string_or_keyword(min_ver);
         if (!ver_str) {
-            janet_panicf("[TLS:CFG] :min-version must be a string or keyword");
+            janet_panicf(
+                "[TLS:CFG] :min-version must be a string or keyword");
         }
 
-        int version = is_dtls ? parse_dtls_version(ver_str) :
-                      parse_tls_version(ver_str);
+        int version = is_dtls ? parse_dtls_version(ver_str)
+                              : parse_tls_version(ver_str);
         if (version == 0) {
             if (is_dtls) {
                 janet_panicf("[TLS:CFG] invalid :min-version '%s', "
-                             "expected DTLS1.0 or DTLS1.2", ver_str);
+                             "expected DTLS1.0 or DTLS1.2",
+                             ver_str);
             } else {
                 janet_panicf("[TLS:CFG] invalid :min-version '%s', "
                              "expected TLS1.0, TLS1.1, TLS1.2, or TLS1.3",
@@ -93,15 +95,17 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls) {
     if (!janet_checktype(max_ver, JANET_NIL)) {
         const char *ver_str = janet_to_string_or_keyword(max_ver);
         if (!ver_str) {
-            janet_panicf("[TLS:CFG] :max-version must be a string or keyword");
+            janet_panicf(
+                "[TLS:CFG] :max-version must be a string or keyword");
         }
 
-        int version = is_dtls ? parse_dtls_version(ver_str) :
-                      parse_tls_version(ver_str);
+        int version = is_dtls ? parse_dtls_version(ver_str)
+                              : parse_tls_version(ver_str);
         if (version == 0) {
             if (is_dtls) {
                 janet_panicf("[TLS:CFG] invalid :max-version '%s', "
-                             "expected DTLS1.0 or DTLS1.2", ver_str);
+                             "expected DTLS1.0 or DTLS1.2",
+                             ver_str);
             } else {
                 janet_panicf("[TLS:CFG] invalid :max-version '%s', "
                              "expected TLS1.0, TLS1.1, TLS1.2, or TLS1.3",

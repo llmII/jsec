@@ -83,9 +83,8 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
     }
 
     /* Need to wait for peer's close_notify */
-    int mode = (result == DTLS_RESULT_WANT_WRITE)
-               ? JANET_ASYNC_LISTEN_WRITE
-               : JANET_ASYNC_LISTEN_READ;
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
     dtls_client_start_async_close(client, mode);
-    return janet_wrap_nil();  /* Will complete async */
+    return janet_wrap_nil(); /* Will complete async */
 }

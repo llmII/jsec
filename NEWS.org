@@ -4,6 +4,29 @@
 
 * News
 
+** 2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements
+
+OpenBSD is now fully supported with all tests passing:
+
+*** OpenBSD (LibreSSL 3.9+)
+- Fixed TLS hang in ~accept-loop~ test caused by premature WANT_READ returns
+- Added do-while loop in ~jtls_attempt_io~ to retry operations when BIO buffer has unread data
+- Prevents yielding to event loop when local buffered data can satisfy reads
+- All 1934 tests now pass on OpenBSD 7.6
+
+*** Code Quality Improvements
+- Migrated from astyle to clang-format for C code formatting
+- Consistent K&R style with 4-space indentation, 78/80 column limits
+- Improved buffer allocation code clarity with better variable naming
+- Added ~check-format-c~ task to verify formatting compliance
+- Updated CONTRIBUTING documentation
+
+*** Buffer Management
+- Clarified ~janet_buffer_ensure~ usage in TLS read operations
+- Renamed confusing ~capacity~ variables to ~read_size~ for clarity
+- Added comments explaining buffer allocation logic
+- No functional changes - existing code was correct
+
 ** 2025-12-24 - NetBSD & DragonflyBSD Support
 
 NetBSD and DragonflyBSD are now fully supported with all tests passing:

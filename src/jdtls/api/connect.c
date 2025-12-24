@@ -45,12 +45,13 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Parse options */
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
-    int verify = 1;  /* Default: verify server */
+    int verify = 1; /* Default: verify server */
     const char *sni = host;
     const char *verify_hostname =
-        NULL;  /* Hostname for certificate verification (can differ from SNI) */
+        NULL; /* Hostname for certificate verification (can differ from SNI)
+               */
     int track_handshake_time = 0;
-    DTLSContext *shared_ctx = NULL;  /* Shared context from :context option */
+    DTLSContext *shared_ctx = NULL; /* Shared context from :context option */
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
@@ -64,7 +65,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             sni = (const char *)janet_unwrap_string(s);
         }
 
-        /* :verify-hostname option allows verifying cert against a different hostname than SNI */
+        /* :verify-hostname option allows verifying cert against a different
+         * hostname than SNI */
         Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
         if (janet_checktype(vh, JANET_STRING)) {
             verify_hostname = (const char *)janet_unwrap_string(vh);
@@ -82,7 +84,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             shared_ctx = janet_getabstract(&ctx_opt, 0, &dtls_context_type);
             /* Verify it's a DTLS context, not TLS */
             if (!shared_ctx->is_dtls) {
-                dtls_panic_config("cannot use TLS context for DTLS connection");
+                dtls_panic_config(
+                    "cannot use TLS context for DTLS connection");
             }
         }
     }
@@ -115,22 +118,23 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport = janet_stream(fd,
-                                          JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport =
+        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS client */
-    DTLSClient *client = janet_abstract(&dtls_client_type, sizeof(DTLSClient));
+    DTLSClient *client =
+        janet_abstract(&dtls_client_type, sizeof(DTLSClient));
     memset(client, 0, sizeof(DTLSClient));
 
     /* Initialize embedded JanetStream for method dispatch */
     client->stream.handle =
-        JANET_HANDLE_NONE;  /* We don't own the handle directly */
+        JANET_HANDLE_NONE; /* We don't own the handle directly */
     client->stream.flags = JANET_STREAM_READABLE | JANET_STREAM_WRITABLE;
     client->stream.methods = dtls_client_methods;
 
     client->transport = transport;
     client->state = DTLS_STATE_IDLE;
-    client->is_server = 0;  /* dtls/connect is always client */
+    client->is_server = 0; /* dtls/connect is always client */
 
     /* Initialize handshake timing if enabled */
     client->track_handshake_time = track_handshake_time;
@@ -162,7 +166,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             janet_checktype(opts, JANET_STRUCT)) {
             security = janet_get(opts, janet_ckeywordv("security"));
         }
-        apply_security_options(client->ctx, security, 1);  /* 1 = is_dtls */
+        apply_security_options(client->ctx, security, 1); /* 1 = is_dtls */
 
         /* Load certificates if provided */
         if (janet_checktype(opts, JANET_TABLE) ||
@@ -186,10 +190,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         /* Set verification mode */
         if (verify) {
             SSL_CTX_set_verify(client->ctx, SSL_VERIFY_PEER, NULL);
-            /* Only load default verify paths if no trusted cert was provided */
+            /* Only load default verify paths if no trusted cert was provided
+             */
             if (janet_checktype(opts, JANET_TABLE) ||
                 janet_checktype(opts, JANET_STRUCT)) {
-                Janet trusted = janet_get(opts, janet_ckeywordv("trusted-cert"));
+                Janet trusted =
+                    janet_get(opts, janet_ckeywordv("trusted-cert"));
                 if (janet_checktype(trusted, JANET_NIL)) {
                     SSL_CTX_set_default_verify_paths(client->ctx);
                 }

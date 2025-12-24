@@ -272,10 +272,15 @@
        (os/shell "rm -f valgrind-output.txt")
        (os/shell "rm -f debug.log"))
 
-# Format C code with astyle
+# Format C code with clang-format
 (phony "format-c" []
-       (print "Formatting C source files with astyle...")
-       (os/shell "astyle --options=.astylerc src/*.c src/**/*.c src/*.h src/**/*.h"))
+       (print "Formatting C source files with clang-format...")
+       (os/shell "find src -name '*.c' -o -name '*.h' | xargs clang-format -i"))
+
+# Check C code formatting
+(phony "check-format-c" []
+       (print "Checking C code formatting...")
+       (os/shell "find src -name '*.c' -o -name '*.h' | xargs clang-format --dry-run --Werror"))
 
 # Format Janet code with janet-format
 (phony "format-janet" []
@@ -285,8 +290,13 @@
                          "-not -path './build/*' "
                          "| xargs janet-format -f")))
 
+# Format org files - align tables
+(phony "format-org" []
+       (print "Aligning tables in org files...")
+       (os/shell "find . -type f -name '*.org' -not -path '*/.*' -not -path './jpm_tree/*' -exec emacs --batch {} --eval \"(org-table-map-tables #'org-table-align t)\" -f save-buffer \\;"))
+
 # Format all code
-(phony "format" ["format-c" "format-janet"]
+(phony "format" ["format-c" "format-janet" "format-org"]
        (print "All code formatted"))
 
 # Release task - generate markdown from org files

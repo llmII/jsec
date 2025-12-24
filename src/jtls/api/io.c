@@ -207,7 +207,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     state->op = TLS_OP_WRITE;
     state->write_data = bytes.bytes;
     state->write_len = bytes.len;
-    state->write_offset = 0;  /* Only write field that must be explicitly set */
+    state->write_offset =
+        0; /* Only write field that must be explicitly set */
     /* user_buf, bytes_requested unused for writes - not zeroed */
 
     /* Add timeout before starting async operation */
@@ -229,7 +230,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
  *
  * Closes TLS stream, sending close_notify unless forced.
  * Uses async state machine to properly handle I/O events during shutdown,
- * which is critical for FreeBSD unix sockets where synchronous shutdown hangs.
+ * which is critical for FreeBSD unix sockets where synchronous shutdown
+ * hangs.
  */
 Janet cfun_close(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
@@ -250,14 +252,16 @@ Janet cfun_close(int32_t argc, Janet *argv) {
         tls->stream.read_fiber = NULL;
     }
     if (tls->stream.write_fiber) {
-        janet_cancel(tls->stream.write_fiber, janet_cstringv("stream closed"));
+        janet_cancel(tls->stream.write_fiber,
+                     janet_cstringv("stream closed"));
         tls->stream.write_fiber = NULL;
     }
 
     /* Force close: skip TLS shutdown, just close transport */
     if (force || !tls->ssl || tls->conn_state != TLS_CONN_READY) {
         tls->stream.flags |= JANET_STREAM_CLOSED;
-        if (tls->transport && !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+        if (tls->transport &&
+            !(tls->transport->flags & JANET_STREAM_CLOSED)) {
             janet_stream_close(tls->transport);
         }
         return janet_wrap_nil();

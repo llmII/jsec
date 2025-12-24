@@ -18,8 +18,8 @@ Janet cfun_hmac(int32_t argc, Janet *argv) {
     unsigned char result[EVP_MAX_MD_SIZE];
     unsigned int result_len;
 
-    if (!HMAC(md, key.bytes, (int)key.len, data.bytes, (size_t)data.len, result,
-              &result_len)) {
+    if (!HMAC(md, key.bytes, (int)key.len, data.bytes, (size_t)data.len,
+              result, &result_len)) {
         crypto_panic_ssl("HMAC computation failed");
     }
 

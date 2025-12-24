@@ -35,7 +35,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
         /* Validate: cert and key must be provided together */
         if (has_cert != has_key) {
-            janet_panicf("[TLS:CFG] :cert and :key must be provided together");
+            janet_panicf(
+                "[TLS:CFG] :cert and :key must be provided together");
         }
 
         if (has_cert && has_key) {
@@ -52,7 +53,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
         int use_cache = janet_checktype(sni_opt, JANET_NIL);
 
-        ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt, use_cache);
+        ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt,
+                                     use_cache);
         if (!ctx) {
             tls_panic_ssl("failed to create server context");
         }
@@ -73,22 +75,27 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             SNIData *data = malloc(sizeof(SNIData));
             memset(data, 0, sizeof(SNIData));
             data->count = len;
-            data->hostnames = malloc(sizeof(char*) * (size_t)len);
-            data->contexts = malloc(sizeof(SSL_CTX*) * (size_t)len);
+            data->hostnames = malloc(sizeof(char *) * (size_t)len);
+            data->contexts = malloc(sizeof(SSL_CTX *) * (size_t)len);
 
             int idx = 0;
             for (int32_t i = 0; i < cap; i++) {
                 if (!janet_checktype(kvs[i].key, JANET_NIL)) {
-                    const char *hostname = (const char *)janet_unwrap_string(kvs[i].key);
+                    const char *hostname =
+                        (const char *)janet_unwrap_string(kvs[i].key);
                     Janet sub_opts = kvs[i].value;
 
-                    Janet sub_cert = janet_get(sub_opts, janet_ckeywordv("cert"));
-                    Janet sub_key = janet_get(sub_opts, janet_ckeywordv("key"));
-                    Janet sub_sec = janet_get(sub_opts, janet_ckeywordv("security"));
-                    Janet sub_alpn = janet_get(sub_opts, janet_ckeywordv("alpn"));
+                    Janet sub_cert =
+                        janet_get(sub_opts, janet_ckeywordv("cert"));
+                    Janet sub_key =
+                        janet_get(sub_opts, janet_ckeywordv("key"));
+                    Janet sub_sec =
+                        janet_get(sub_opts, janet_ckeywordv("security"));
+                    Janet sub_alpn =
+                        janet_get(sub_opts, janet_ckeywordv("alpn"));
 
-                    SSL_CTX *sub_ctx = jtls_create_server_ctx(sub_cert, sub_key, sub_sec,
-                                       sub_alpn, 1);
+                    SSL_CTX *sub_ctx = jtls_create_server_ctx(
+                        sub_cert, sub_key, sub_sec, sub_alpn, 1);
                     if (!sub_ctx) {
                         for (int j = 0; j < idx; j++) {
                             free(data->hostnames[j]);
@@ -98,7 +105,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                         free(data->contexts);
                         free(data);
                         SSL_CTX_free(ctx);
-                        tls_panic_config("failed to create SNI context for %s", hostname);
+                        tls_panic_config(
+                            "failed to create SNI context for %s", hostname);
                     }
 
                     data->hostnames[idx] = strdup(hostname);
@@ -135,10 +143,10 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         }
     }
 
-    TLSContext *tls_ctx = (TLSContext *)janet_abstract(&tls_context_type,
-                          sizeof(TLSContext));
+    TLSContext *tls_ctx =
+        (TLSContext *)janet_abstract(&tls_context_type, sizeof(TLSContext));
     tls_ctx->ctx = ctx;
-    tls_ctx->is_dtls = 0;  /* This is a TLS context */
+    tls_ctx->is_dtls = 0; /* This is a TLS context */
     return janet_wrap_abstract(tls_ctx);
 }
 
@@ -183,8 +191,8 @@ Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
  * (trust-cert context cert-pem)
  *
  * Add a certificate to the context's trusted store for verification.
- * This allows verifying against specific certificates without a full CA chain.
- * Useful for certificate pinning or self-signed cert verification.
+ * This allows verifying against specific certificates without a full CA
+ * chain. Useful for certificate pinning or self-signed cert verification.
  *
  * Example:
  *   (def ctx (tls/new-context {:verify true}))

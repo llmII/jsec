@@ -16,7 +16,8 @@
 int jtls_sni_callback(SSL *ssl, int *ad, void *arg) {
     (void)ad;
     SNIData *data = (SNIData *)arg;
-    const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    const char *servername =
+        SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 
     if (!servername) return SSL_TLSEXT_ERR_NOACK;
 
@@ -30,9 +31,13 @@ int jtls_sni_callback(SSL *ssl, int *ad, void *arg) {
 }
 
 /* Free callback for SNI ex_data */
-void jtls_sni_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                      int idx, long argl, void *argp) {
-    (void)parent; (void)ad; (void)idx; (void)argl; (void)argp;
+void jtls_sni_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                      long argl, void *argp) {
+    (void)parent;
+    (void)ad;
+    (void)idx;
+    (void)argl;
+    (void)argp;
     if (ptr) {
         SNIData *data = (SNIData *)ptr;
         for (int i = 0; i < data->count; i++) {

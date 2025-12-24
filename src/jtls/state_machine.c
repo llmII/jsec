@@ -2,8 +2,9 @@
  * state_machine.c - Async I/O state machine for TLS operations
  *
  * This file implements the core state machine that integrates TLS operations
- * with Janet's event loop. It handles the non-blocking nature of SSL operations
- * by registering with the event loop when operations need to wait for I/O.
+ * with Janet's event loop. It handles the non-blocking nature of SSL
+ * operations by registering with the event loop when operations need to wait
+ * for I/O.
  *
  * STATE MACHINE OVERVIEW
  * ======================
@@ -98,7 +99,8 @@ void jtls_keylog_callback(const SSL *ssl, const char *line) {
  * HELPER: Record handshake completion time if just finished
  *============================================================================
  * OpenSSL can complete the handshake implicitly during SSL_read/SSL_write.
- * This helper checks if the handshake just completed and records the timestamp.
+ * This helper checks if the handshake just completed and records the
+ * timestamp.
  */
 static inline void check_record_handshake_time(TLSStream *tls) {
     if (tls->track_handshake_time && tls->conn_state != TLS_CONN_READY &&
@@ -119,8 +121,8 @@ static inline void check_record_handshake_time(TLSStream *tls) {
  *   ssl_err      - Result from SSL_get_error()
  *   ret          - Return value from the SSL operation
  *   state        - Operation state for error message storage
- *   op_name      - Name of operation for error messages (e.g., "Read", "Write")
- *   has_data     - True if we have partial data that can be returned
+ *   op_name      - Name of operation for error messages (e.g., "Read",
+ * "Write") has_data     - True if we have partial data that can be returned
  *   tls          - TLS stream (for updating conn_state on shutdown)
  *
  * Returns:
@@ -138,8 +140,7 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
 
         case SSL_ERROR_ZERO_RETURN:
             /* Clean shutdown received from peer */
-            if (tls)
-                tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
+            if (tls) tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
             return TLS_IO_COMPLETE;
 
         case SSL_ERROR_SYSCALL:
@@ -150,13 +151,13 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
                 /* EOF - not an error for read operations */
                 return TLS_IO_COMPLETE;
             }
-            snprintf(state->error_msg, sizeof(state->error_msg), "%s syscall error: %s",
-                     op_name, strerror(errno));
+            snprintf(state->error_msg, sizeof(state->error_msg),
+                     "%s syscall error: %s", op_name, strerror(errno));
             return TLS_IO_ERROR;
 
         default:
-            snprintf(state->error_msg, sizeof(state->error_msg), "%s error: %s",
-                     op_name, get_ssl_error_string());
+            snprintf(state->error_msg, sizeof(state->error_msg),
+                     "%s error: %s", op_name, get_ssl_error_string());
             return TLS_IO_ERROR;
     }
 }
@@ -166,8 +167,8 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
  *============================================================================
  * Perform a single step of the TLS operation and determine what to do next.
  *
- * This is the core of the state machine. It calls the appropriate SSL function
- * based on the operation type and interprets the result.
+ * This is the core of the state machine. It calls the appropriate SSL
+ * function based on the operation type and interprets the result.
  *
  * Parameters:
  *   state - The operation state containing TLS stream and operation info
@@ -189,27 +190,30 @@ TLSIOState jtls_process_operation(TLSState *state) {
          *====================================================================
          * Perform TLS handshake (client or server side).
          *
-         * For client: SSL_connect sends ClientHello, processes ServerHello, etc.
-         * For server: SSL_accept waits for ClientHello, sends ServerHello, etc.
+         * For client: SSL_connect sends ClientHello, processes ServerHello,
+         * etc. For server: SSL_accept waits for ClientHello, sends
+         * ServerHello, etc.
          *
          * The handshake may require multiple round-trips, each causing
          * WANT_READ or WANT_WRITE.
          */
         case TLS_OP_HANDSHAKE: {
-                ret = tls->is_server ? SSL_accept(tls->ssl) : SSL_connect(tls->ssl);
+            ret =
+                tls->is_server ? SSL_accept(tls->ssl) : SSL_connect(tls->ssl);
 
-                if (ret == 1) {
-                    /* Handshake complete - connection ready for use */
-                    tls->conn_state = TLS_CONN_READY;
-                    if (tls->track_handshake_time) {
-                        clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
-                    }
-                    return TLS_IO_COMPLETE;
+            if (ret == 1) {
+                /* Handshake complete - connection ready for use */
+                tls->conn_state = TLS_CONN_READY;
+                if (tls->track_handshake_time) {
+                    clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
                 }
-
-                ssl_err = SSL_get_error(tls->ssl, ret);
-                return handle_ssl_error(ssl_err, ret, state, "Handshake", 0, NULL);
+                return TLS_IO_COMPLETE;
             }
+
+            ssl_err = SSL_get_error(tls->ssl, ret);
+            return handle_ssl_error(ssl_err, ret, state, "Handshake", 0,
+                                    NULL);
+        }
 
         /*====================================================================
          * READ OPERATION
@@ -229,35 +233,41 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * but the socket may have more TLS records ready to read.
          */
         case TLS_OP_READ: {
-                while (1) {
-                    int capacity = state->bytes_requested - state->user_buf->count;
-                    if (capacity <= 0) {
-                        capacity = 65536; /* Read in 64KB chunks if no limit */
+            while (1) {
+                /* Calculate how many bytes we want to read this iteration */
+                int read_size =
+                    state->bytes_requested - state->user_buf->count;
+                if (read_size <= 0) {
+                    read_size = 65536; /* Read in 64KB chunks if no limit */
+                }
+
+                /* Ensure buffer has capacity for existing data + new data to
+                 * read */
+                janet_buffer_ensure(state->user_buf,
+                                    state->user_buf->count + read_size, 2);
+
+                ret = SSL_read(tls->ssl,
+                               state->user_buf->data + state->user_buf->count,
+                               read_size);
+
+                if (ret > 0) {
+                    check_record_handshake_time(tls);
+                    state->user_buf->count += ret;
+
+                    /* Check if we've read enough */
+                    if (state->bytes_requested > 0 &&
+                        state->user_buf->count >= state->bytes_requested) {
+                        return TLS_IO_COMPLETE;
                     }
-
-                    janet_buffer_ensure(state->user_buf, state->user_buf->count + capacity,
-                                        2);
-
-                    ret = SSL_read(tls->ssl, state->user_buf->data + state->user_buf->count,
-                                   capacity);
-
-                    if (ret > 0) {
-                        check_record_handshake_time(tls);
-                        state->user_buf->count += ret;
-
-                        /* Check if we've read enough */
-                        if (state->bytes_requested > 0 &&
-                            state->user_buf->count >= state->bytes_requested) {
-                            return TLS_IO_COMPLETE;
-                        }
-                        /* Keep reading until WANT_READ */
-                    } else {
-                        ssl_err = SSL_get_error(tls->ssl, ret);
-                        int has_data = (state->user_buf->count > 0);
-                        return handle_ssl_error(ssl_err, ret, state, "Read", has_data, tls);
-                    }
+                    /* Keep reading until WANT_READ */
+                } else {
+                    ssl_err = SSL_get_error(tls->ssl, ret);
+                    int has_data = (state->user_buf->count > 0);
+                    return handle_ssl_error(ssl_err, ret, state, "Read",
+                                            has_data, tls);
                 }
             }
+        }
 
         /*====================================================================
          * CHUNK OPERATION (like ev/chunk)
@@ -268,52 +278,60 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * is received or end of stream.
          */
         case TLS_OP_CHUNK: {
-                int just_read_data = 0; /* Track if we just successfully read */
-                while (1) {
-                    int remaining = state->bytes_requested - state->user_buf->count;
-                    if (remaining <= 0) {
+            int just_read_data = 0; /* Track if we just successfully read */
+            while (1) {
+                int remaining =
+                    state->bytes_requested - state->user_buf->count;
+                if (remaining <= 0) {
+                    return TLS_IO_COMPLETE;
+                }
+
+                /* Ensure buffer has capacity for existing data + remaining
+                 * bytes to read
+                 */
+                janet_buffer_ensure(state->user_buf,
+                                    state->user_buf->count + remaining, 2);
+
+                ret = SSL_read(tls->ssl,
+                               state->user_buf->data + state->user_buf->count,
+                               remaining);
+
+                if (ret > 0) {
+                    check_record_handshake_time(tls);
+                    state->user_buf->count += ret;
+                    just_read_data = 1;
+
+                    if (state->user_buf->count >= state->bytes_requested) {
                         return TLS_IO_COMPLETE;
                     }
+                    /* Continue reading - unlike READ, don't return early */
+                } else {
+                    ssl_err = SSL_get_error(tls->ssl, ret);
 
-                    janet_buffer_ensure(state->user_buf, state->user_buf->count + remaining,
-                                        2);
-
-                    ret = SSL_read(tls->ssl, state->user_buf->data + state->user_buf->count,
-                                   remaining);
-
-                    if (ret > 0) {
-                        check_record_handshake_time(tls);
-                        state->user_buf->count += ret;
-                        just_read_data = 1;
-
-                        if (state->user_buf->count >= state->bytes_requested) {
-                            return TLS_IO_COMPLETE;
+                    /* WANT_READ/WANT_BOTH: retry immediately if we just read
+                     */
+                    if (ssl_err == SSL_ERROR_WANT_READ) {
+                        if (just_read_data) {
+                            just_read_data = 0;
+                            continue;
                         }
-                        /* Continue reading - unlike READ, don't return early */
-                    } else {
-                        ssl_err = SSL_get_error(tls->ssl, ret);
-
-                        /* WANT_READ/WANT_BOTH: retry immediately if we just read */
-                        if (ssl_err == SSL_ERROR_WANT_READ) {
-                            if (just_read_data) {
-                                just_read_data = 0;
-                                continue;
-                            }
-                            return TLS_IO_WANT_READ;
-                        }
-                        if (ssl_err == SSL_ERROR_SYSCALL &&
-                            (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                            if (just_read_data) {
-                                just_read_data = 0;
-                                continue;
-                            }
-                            return TLS_IO_WANT_BOTH;
-                        }
-                        /* Other errors use standard handler (no has_data for chunk) */
-                        return handle_ssl_error(ssl_err, ret, state, "Chunk read", 0, tls);
+                        return TLS_IO_WANT_READ;
                     }
+                    if (ssl_err == SSL_ERROR_SYSCALL &&
+                        (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                        if (just_read_data) {
+                            just_read_data = 0;
+                            continue;
+                        }
+                        return TLS_IO_WANT_BOTH;
+                    }
+                    /* Other errors use standard handler (no has_data for
+                     * chunk) */
+                    return handle_ssl_error(ssl_err, ret, state, "Chunk read",
+                                            0, tls);
                 }
             }
+        }
 
         /*====================================================================
          * WRITE OPERATION
@@ -328,28 +346,30 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * the socket buffer fills up.
          */
         case TLS_OP_WRITE: {
-                while (state->write_offset < state->write_len) {
-                    int remaining = state->write_len - state->write_offset;
+            while (state->write_offset < state->write_len) {
+                int remaining = state->write_len - state->write_offset;
 
-                    ret = SSL_write(tls->ssl, state->write_data + state->write_offset,
-                                    remaining);
+                ret = SSL_write(tls->ssl,
+                                state->write_data + state->write_offset,
+                                remaining);
 
-                    if (ret > 0) {
-                        check_record_handshake_time(tls);
-                        state->write_offset += ret;
+                if (ret > 0) {
+                    check_record_handshake_time(tls);
+                    state->write_offset += ret;
 
-                        if (state->write_offset == state->write_len) {
-                            return TLS_IO_COMPLETE;
-                        }
-                        /* Continue writing more */
-                    } else {
-                        ssl_err = SSL_get_error(tls->ssl, ret);
-                        return handle_ssl_error(ssl_err, ret, state, "Write", 0, NULL);
+                    if (state->write_offset == state->write_len) {
+                        return TLS_IO_COMPLETE;
                     }
+                    /* Continue writing more */
+                } else {
+                    ssl_err = SSL_get_error(tls->ssl, ret);
+                    return handle_ssl_error(ssl_err, ret, state, "Write", 0,
+                                            NULL);
                 }
-
-                return TLS_IO_COMPLETE;
             }
+
+            return TLS_IO_COMPLETE;
+        }
 
         /*====================================================================
          * SHUTDOWN OPERATION
@@ -367,57 +387,57 @@ TLSIOState jtls_process_operation(TLSState *state) {
          */
         case TLS_OP_SHUTDOWN:
         case TLS_OP_CLOSE: {
-                ret = SSL_shutdown(tls->ssl);
+            ret = SSL_shutdown(tls->ssl);
 
-                if (ret == 1) {
-                    /* Bidirectional shutdown complete */
+            if (ret == 1) {
+                /* Bidirectional shutdown complete */
+                tls->conn_state = TLS_CONN_CLOSED;
+                return TLS_IO_COMPLETE;
+            } else if (ret == 0) {
+                /* Sent close_notify, waiting for peer's.
+                 * For TLS_OP_CLOSE: don't wait - just complete.
+                 * For TLS_OP_SHUTDOWN: wait for peer's close_notify. */
+                tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
+                if (state->op == TLS_OP_CLOSE) {
                     tls->conn_state = TLS_CONN_CLOSED;
                     return TLS_IO_COMPLETE;
-                } else if (ret == 0) {
-                    /* Sent close_notify, waiting for peer's.
-                     * For TLS_OP_CLOSE: don't wait - just complete.
-                     * For TLS_OP_SHUTDOWN: wait for peer's close_notify. */
-                    tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
+                }
+                return TLS_IO_WANT_READ;
+            } else {
+                ssl_err = SSL_get_error(tls->ssl, ret);
+
+                if (ssl_err == SSL_ERROR_WANT_READ) {
+                    /* Need to read for shutdown protocol.
+                     * For CLOSE, try once more but don't block. */
                     if (state->op == TLS_OP_CLOSE) {
                         tls->conn_state = TLS_CONN_CLOSED;
                         return TLS_IO_COMPLETE;
                     }
                     return TLS_IO_WANT_READ;
-                } else {
-                    ssl_err = SSL_get_error(tls->ssl, ret);
-
-                    if (ssl_err == SSL_ERROR_WANT_READ) {
-                        /* Need to read for shutdown protocol.
-                         * For CLOSE, try once more but don't block. */
+                } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
+                    return TLS_IO_WANT_WRITE;
+                } else if (ssl_err == SSL_ERROR_ZERO_RETURN) {
+                    /* Peer closed - that's fine during shutdown */
+                    tls->conn_state = TLS_CONN_CLOSED;
+                    return TLS_IO_COMPLETE;
+                } else if (ssl_err == SSL_ERROR_SYSCALL) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         if (state->op == TLS_OP_CLOSE) {
                             tls->conn_state = TLS_CONN_CLOSED;
                             return TLS_IO_COMPLETE;
                         }
-                        return TLS_IO_WANT_READ;
-                    } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
-                        return TLS_IO_WANT_WRITE;
-                    } else if (ssl_err == SSL_ERROR_ZERO_RETURN) {
-                        /* Peer closed - that's fine during shutdown */
-                        tls->conn_state = TLS_CONN_CLOSED;
-                        return TLS_IO_COMPLETE;
-                    } else if (ssl_err == SSL_ERROR_SYSCALL) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            if (state->op == TLS_OP_CLOSE) {
-                                tls->conn_state = TLS_CONN_CLOSED;
-                                return TLS_IO_COMPLETE;
-                            }
-                            return TLS_IO_WANT_BOTH;
-                        }
-                        /* Treat syscall errors during shutdown as complete */
-                        tls->conn_state = TLS_CONN_CLOSED;
-                        return TLS_IO_COMPLETE;
-                    } else {
-                        /* Other errors during shutdown - treat as complete */
-                        tls->conn_state = TLS_CONN_CLOSED;
-                        return TLS_IO_COMPLETE;
+                        return TLS_IO_WANT_BOTH;
                     }
+                    /* Treat syscall errors during shutdown as complete */
+                    tls->conn_state = TLS_CONN_CLOSED;
+                    return TLS_IO_COMPLETE;
+                } else {
+                    /* Other errors during shutdown - treat as complete */
+                    tls->conn_state = TLS_CONN_CLOSED;
+                    return TLS_IO_COMPLETE;
                 }
             }
+        }
 
         default:
             snprintf(state->error_msg, sizeof(state->error_msg),
@@ -440,8 +460,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
  */
 void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
                          JanetAsyncMode mode, int is_async) {
-    if (!tls->transport)
-        return;
+    if (!tls->transport) return;
 
     if (is_async) {
         /*
@@ -455,8 +474,8 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          */
         fiber->ev_state = NULL;
         janet_async_end(fiber);
-        janet_async_start_fiber(fiber, tls->transport, mode, jtls_async_callback,
-                                state);
+        janet_async_start_fiber(fiber, tls->transport, mode,
+                                jtls_async_callback, state);
     } else {
         /*
          * First time entering async mode.
@@ -504,7 +523,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
         /* Process the operation - calls SSL functions, updates state */
         io_state = jtls_process_operation(state);
 
-        if (io_state == TLS_IO_WANT_READ && tls->bio_ahead.p < tls->bio_ahead.pe) {
+        if (io_state == TLS_IO_WANT_READ &&
+            tls->bio_ahead.p < tls->bio_ahead.pe) {
             continue;
         }
         break;
@@ -512,59 +532,63 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
 
     switch (io_state) {
         case TLS_IO_COMPLETE: {
-                /*
-                 * Operation completed successfully.
-                 * Clear pending tracking and schedule result.
-                 */
-                if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
-                    tls->pending_read = NULL;
-                } else if (state->op == TLS_OP_WRITE) {
-                    tls->pending_write = NULL;
+            /*
+             * Operation completed successfully.
+             * Clear pending tracking and schedule result.
+             */
+            if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
+                tls->pending_read = NULL;
+            } else if (state->op == TLS_OP_WRITE) {
+                tls->pending_write = NULL;
+            }
+
+            /* For TLS_OP_CLOSE, close transport in both sync and async cases
+             */
+            if (state->op == TLS_OP_CLOSE) {
+                if (tls->transport &&
+                    !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+                    janet_stream_close(tls->transport);
                 }
+                tls->stream.flags |= JANET_STREAM_CLOSED;
+            }
 
-                /* For TLS_OP_CLOSE, close transport in both sync and async cases */
-                if (state->op == TLS_OP_CLOSE) {
-                    if (tls->transport && !(tls->transport->flags & JANET_STREAM_CLOSED)) {
-                        janet_stream_close(tls->transport);
-                    }
-                    tls->stream.flags |= JANET_STREAM_CLOSED;
-                }
+            if (is_async) {
+                Janet result;
 
-                if (is_async) {
-                    Janet result;
+                switch (state->op) {
+                    case TLS_OP_HANDSHAKE:
+                        result = janet_wrap_abstract(tls);
+                        break;
 
-                    switch (state->op) {
-                        case TLS_OP_HANDSHAKE:
-                            result = janet_wrap_abstract(tls);
-                            break;
-
-                        case TLS_OP_READ:
-                            result = (state->user_buf->count > 0)
+                    case TLS_OP_READ:
+                        result = (state->user_buf->count > 0)
                                      ? janet_wrap_buffer(state->user_buf)
                                      : janet_wrap_nil();
-                            break;
+                        break;
 
-                        case TLS_OP_CHUNK:
-                            /* Chunk always returns buffer (may be empty on EOF) */
-                            result = janet_wrap_buffer(state->user_buf);
-                            break;
+                    case TLS_OP_CHUNK:
+                        /* Chunk always returns buffer (may be empty on EOF)
+                         */
+                        result = janet_wrap_buffer(state->user_buf);
+                        break;
 
-                        case TLS_OP_WRITE:
-                        case TLS_OP_SHUTDOWN:
-                        case TLS_OP_CLOSE:
-                        default:
-                            result = janet_wrap_nil();
-                            break;
-                    }
-
-                    janet_schedule(fiber, result);
-                    /* Clear ev_state before janet_async_end to prevent double-free
-                     * (state is embedded in TLSStream, not heap-allocated) */
-                    fiber->ev_state = NULL;
-                    janet_async_end(fiber);
+                    case TLS_OP_WRITE:
+                    case TLS_OP_SHUTDOWN:
+                    case TLS_OP_CLOSE:
+                    default:
+                        result = janet_wrap_nil();
+                        break;
                 }
-                return 1;
+
+                janet_schedule(fiber, result);
+                /* Clear ev_state before janet_async_end to prevent
+                 * double-free (state is embedded in TLSStream, not
+                 * heap-allocated) */
+                fiber->ev_state = NULL;
+                janet_async_end(fiber);
             }
+            return 1;
+        }
 
         case TLS_IO_WANT_READ:
             /*
@@ -578,10 +602,11 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              */
             if (state->op == TLS_OP_WRITE && tls->pending_read != NULL) {
                 /* Let the read fiber handle reading, we stay on write */
-                jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_WRITE,
-                                    is_async);
+                jtls_schedule_async(fiber, tls, state,
+                                    JANET_ASYNC_LISTEN_WRITE, is_async);
             } else {
-                jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_READ, is_async);
+                jtls_schedule_async(fiber, tls, state,
+                                    JANET_ASYNC_LISTEN_READ, is_async);
             }
             return 0;
 
@@ -591,23 +616,25 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              *
              * Cooperative mode switching: If this is a READ operation that
              * needs to write (e.g., TLS renegotiation), and there's already
-             * a WRITE operation pending, just stay registered for READ events.
-             * The write operation will handle sending the protocol messages,
-             * and when it completes, our SSL_read will succeed.
+             * a WRITE operation pending, just stay registered for READ
+             * events. The write operation will handle sending the protocol
+             * messages, and when it completes, our SSL_read will succeed.
              */
             if ((state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) &&
                 tls->pending_write != NULL) {
                 /* Let the write fiber handle writing, we stay on read */
-                jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_READ, is_async);
+                jtls_schedule_async(fiber, tls, state,
+                                    JANET_ASYNC_LISTEN_READ, is_async);
             } else {
-                jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_WRITE,
-                                    is_async);
+                jtls_schedule_async(fiber, tls, state,
+                                    JANET_ASYNC_LISTEN_WRITE, is_async);
             }
             return 0;
 
         case TLS_IO_WANT_BOTH:
             /* Need to wait for either (rare case) */
-            jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_BOTH, is_async);
+            jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_BOTH,
+                                is_async);
             return 0;
 
         case TLS_IO_ERROR:
@@ -620,8 +647,9 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
 
             if (is_async) {
                 janet_cancel(fiber, janet_cstringv(state->error_msg));
-                /* Clear ev_state before janet_async_end to prevent double-free
-                 * (state is embedded in TLSStream, not heap-allocated) */
+                /* Clear ev_state before janet_async_end to prevent
+                 * double-free (state is embedded in TLSStream, not
+                 * heap-allocated) */
                 fiber->ev_state = NULL;
                 janet_async_end(fiber);
             } else {
@@ -635,8 +663,9 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                      "Unknown I/O state: %d", io_state);
             if (is_async) {
                 janet_cancel(fiber, janet_cstringv(state->error_msg));
-                /* Clear ev_state before janet_async_end to prevent double-free
-                 * (state is embedded in TLSStream, not heap-allocated) */
+                /* Clear ev_state before janet_async_end to prevent
+                 * double-free (state is embedded in TLSStream, not
+                 * heap-allocated) */
                 fiber->ev_state = NULL;
                 janet_async_end(fiber);
             } else {
@@ -692,34 +721,42 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * This is critical for FreeBSD unix sockets where HUP arrives
              * while data is still pending.
              *
-             * Do a direct SSL_read without going through the full state machine
-             * to avoid rescheduling loops. */
-            if (state && (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
+             * Do a direct SSL_read without going through the full state
+             * machine to avoid rescheduling loops. */
+            if (state &&
+                (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
                 TLSStream *tls = state->tls;
                 /* For CHUNK, only read what was requested.
                  * For READ, read up to 64KB. */
-                int capacity;
+                int read_size;
                 if (state->op == TLS_OP_CHUNK) {
-                    capacity = state->bytes_requested - state->user_buf->count;
-                    if (capacity <= 0) {
+                    read_size =
+                        state->bytes_requested - state->user_buf->count;
+                    if (read_size <= 0) {
                         /* Already have enough data */
-                        janet_schedule(fiber, janet_wrap_buffer(state->user_buf));
+                        janet_schedule(fiber,
+                                       janet_wrap_buffer(state->user_buf));
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     }
                 } else {
-                    capacity = state->bytes_requested - state->user_buf->count;
-                    if (capacity <= 0) {
-                        capacity = 65536; /* Read in 64KB chunks if no limit */
+                    read_size =
+                        state->bytes_requested - state->user_buf->count;
+                    if (read_size <= 0) {
+                        read_size =
+                            65536; /* Read in 64KB chunks if no limit */
                     }
                 }
 
-                janet_buffer_ensure(state->user_buf, state->user_buf->count + capacity,
-                                    2);
+                /* Ensure buffer has capacity for existing data + new data to
+                 * read */
+                janet_buffer_ensure(state->user_buf,
+                                    state->user_buf->count + read_size, 2);
 
                 int ret = SSL_read(
-                              tls->ssl, state->user_buf->data + state->user_buf->count, capacity);
+                    tls->ssl, state->user_buf->data + state->user_buf->count,
+                    read_size);
                 if (ret > 0) {
                     state->user_buf->count += ret;
                     /* Return successfully read data */
@@ -732,9 +769,10 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     int ssl_err = SSL_get_error(tls->ssl, ret);
                     if (ssl_err == SSL_ERROR_ZERO_RETURN) {
                         /* Clean shutdown - return what we have or nil */
-                        Janet result = (state->user_buf->count > 0)
-                                       ? janet_wrap_buffer(state->user_buf)
-                                       : janet_wrap_nil();
+                        Janet result =
+                            (state->user_buf->count > 0)
+                                ? janet_wrap_buffer(state->user_buf)
+                                : janet_wrap_nil();
                         janet_schedule(fiber, result);
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
@@ -742,27 +780,31 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     } else if (ssl_err == SSL_ERROR_SYSCALL &&
                                (errno == 0 || errno == ECONNRESET)) {
                         /* Connection reset - return what we have or nil */
-                        Janet result = (state->user_buf->count > 0)
-                                       ? janet_wrap_buffer(state->user_buf)
-                                       : janet_wrap_nil();
+                        Janet result =
+                            (state->user_buf->count > 0)
+                                ? janet_wrap_buffer(state->user_buf)
+                                : janet_wrap_nil();
                         janet_schedule(fiber, result);
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     } else if (ssl_err == SSL_ERROR_SSL) {
                         /* TLS protocol error - propagate as error */
-                        janet_cancel(fiber, janet_cstringv(get_ssl_error_string()));
+                        janet_cancel(fiber,
+                                     janet_cstringv(get_ssl_error_string()));
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     } else if (state->user_buf->count > 0) {
                         /* Some data was read before error - return it */
-                        janet_schedule(fiber, janet_wrap_buffer(state->user_buf));
+                        janet_schedule(fiber,
+                                       janet_wrap_buffer(state->user_buf));
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     }
-                    /* No data and error - fall through to connection closed */
+                    /* No data and error - fall through to connection closed
+                     */
                 }
             }
             /* Fall through for non-read operations or read failures */

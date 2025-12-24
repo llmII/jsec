@@ -15,8 +15,7 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
         PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
-    if (!pkey)
-        crypto_panic_ssl("failed to load private key");
+    if (!pkey) crypto_panic_ssl("failed to load private key");
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (EVP_DigestSignInit(mdctx, NULL, NULL, NULL, pkey) <= 0) {
@@ -26,7 +25,8 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
     }
 
     size_t siglen;
-    if (EVP_DigestSign(mdctx, NULL, &siglen, data.bytes, (size_t)data.len) <= 0) {
+    if (EVP_DigestSign(mdctx, NULL, &siglen, data.bytes, (size_t)data.len) <=
+        0) {
         EVP_PKEY_free(pkey);
         EVP_MD_CTX_free(mdctx);
         crypto_panic_ssl("failed to get signature length");
@@ -38,7 +38,8 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
         EVP_MD_CTX_free(mdctx);
         crypto_panic_resource("failed to allocate signature buffer");
     }
-    if (EVP_DigestSign(mdctx, sig, &siglen, data.bytes, (size_t)data.len) <= 0) {
+    if (EVP_DigestSign(mdctx, sig, &siglen, data.bytes, (size_t)data.len) <=
+        0) {
         janet_free(sig);
         EVP_PKEY_free(pkey);
         EVP_MD_CTX_free(mdctx);
@@ -65,12 +66,12 @@ Janet cfun_verify(int32_t argc, Janet *argv) {
     if (!pkey) {
         /* Try reading as private key and extracting public */
         (void)BIO_reset(bio);
-        pkey = PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
+        pkey =
+            PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     }
     BIO_free(bio);
 
-    if (!pkey)
-        crypto_panic_ssl("failed to load key");
+    if (!pkey) crypto_panic_ssl("failed to load key");
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (EVP_DigestVerifyInit(mdctx, NULL, NULL, NULL, pkey) <= 0) {

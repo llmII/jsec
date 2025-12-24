@@ -27,14 +27,16 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
         if (janet_checktype(argv[2], JANET_TABLE)) {
             JanetTable *opts = janet_unwrap_table(argv[2]);
-            Janet pwd_val = janet_table_get(opts, janet_ckeywordv("password"));
+            Janet pwd_val =
+                janet_table_get(opts, janet_ckeywordv("password"));
             if (!janet_checktype(pwd_val, JANET_NIL)) {
                 JanetByteView pwd = janet_getbytes(&pwd_val, 0);
                 password = (const char *)pwd.bytes;
             }
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[2]);
-            Janet pwd_val = janet_struct_get(opts, janet_ckeywordv("password"));
+            Janet pwd_val =
+                janet_struct_get(opts, janet_ckeywordv("password"));
             if (!janet_checktype(pwd_val, JANET_NIL)) {
                 JanetByteView pwd = janet_getbytes(&pwd_val, 0);
                 password = (const char *)pwd.bytes;
@@ -84,7 +86,8 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
 
     if (strcmp(format, "pem") == 0) {
         /* Output as PEM */
-        result = PEM_write_bio_PrivateKey(out, pkey, NULL, NULL, 0, NULL, NULL);
+        result =
+            PEM_write_bio_PrivateKey(out, pkey, NULL, NULL, 0, NULL, NULL);
         if (!result) {
             /* Try public key */
             result = PEM_write_bio_PUBKEY(out, pkey);
@@ -98,22 +101,24 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
     } else if (strcmp(format, "pkcs8") == 0) {
         /* Output as PKCS#8 PEM */
         if (password && strlen(password) > 0) {
-            result = PEM_write_bio_PKCS8PrivateKey(out, pkey, EVP_aes_256_cbc(),
-                                                   (char *)password, (int)strlen(password),
-                                                   NULL, NULL);
+            result = PEM_write_bio_PKCS8PrivateKey(
+                out, pkey, EVP_aes_256_cbc(), (char *)password,
+                (int)strlen(password), NULL, NULL);
         } else {
-            result = PEM_write_bio_PKCS8PrivateKey(out, pkey, NULL, NULL, 0, NULL, NULL);
+            result = PEM_write_bio_PKCS8PrivateKey(out, pkey, NULL, NULL, 0,
+                                                   NULL, NULL);
         }
     } else if (strcmp(format, "pkcs8-der") == 0) {
         /* Output as PKCS#8 DER */
         if (password && strlen(password) > 0) {
-            /* For encrypted PKCS#8 DER, we write encrypted PEM then convert */
+            /* For encrypted PKCS#8 DER, we write encrypted PEM then convert
+             */
             /* This is simpler and more portable across OpenSSL versions */
             PKCS8_PRIV_KEY_INFO *p8inf = EVP_PKEY2PKCS8(pkey);
             if (p8inf) {
-                X509_SIG *p8 = PKCS8_encrypt(-1, EVP_aes_256_cbc(), password,
-                                             (int)strlen(password),
-                                             NULL, 0, 0, p8inf);
+                X509_SIG *p8 =
+                    PKCS8_encrypt(-1, EVP_aes_256_cbc(), password,
+                                  (int)strlen(password), NULL, 0, 0, p8inf);
                 PKCS8_PRIV_KEY_INFO_free(p8inf);
                 if (p8) {
                     result = i2d_PKCS8_bio(out, p8);
@@ -130,8 +135,9 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
     } else {
         BIO_free(out);
         EVP_PKEY_free(pkey);
-        crypto_panic_param("unsupported format: %s (supported: pem, der, pkcs8, pkcs8-der)",
-                           format);
+        crypto_panic_param(
+            "unsupported format: %s (supported: pem, der, pkcs8, pkcs8-der)",
+            format);
     }
 
     if (!result) {
@@ -193,7 +199,8 @@ Janet cfun_convert_cert(int32_t argc, Janet *argv) {
     } else {
         BIO_free(out);
         X509_free(cert);
-        crypto_panic_param("unsupported format: %s (supported: pem, der)", format);
+        crypto_panic_param("unsupported format: %s (supported: pem, der)",
+                           format);
     }
 
     if (!result) {

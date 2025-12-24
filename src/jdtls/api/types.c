@@ -1,8 +1,8 @@
 /*
  * client/types.c - DTLSClient type definition and lifecycle
  *
- * Defines the DTLSClient abstract type including GC, mark, and method dispatch.
- * Function declarations are in internal.h for separate compilation.
+ * Defines the DTLSClient abstract type including GC, mark, and method
+ * dispatch. Function declarations are in internal.h for separate compilation.
  */
 
 #include "../internal.h"
@@ -55,26 +55,24 @@ const JanetMethod dtls_client_methods[] = {
     {"peername", cfun_dtls_peername},
     {"trust-cert", cfun_dtls_trust_cert},
     {"handshake-time", cfun_dtls_get_handshake_time},
-    {NULL, NULL}
-};
+    {NULL, NULL}};
 
 /* Method dispatch using janet_getmethod like TLS does */
 static int dtls_client_get(void *p, Janet key, Janet *out) {
     (void)p;
     if (!janet_checktype(key, JANET_KEYWORD)) return 0;
-    return janet_getmethod(janet_unwrap_keyword(key), dtls_client_methods, out);
+    return janet_getmethod(janet_unwrap_keyword(key), dtls_client_methods,
+                           out);
 }
 
-const JanetAbstractType dtls_client_type = {
-    "jsec/dtls-client",
-    dtls_client_gc,
-    dtls_client_mark,
-    dtls_client_get,
-    NULL,                       /* put */
-    NULL,                       /* marshal */
-    NULL,                       /* unmarshal */
-    NULL,                       /* tostring */
-    NULL,                       /* compare */
-    NULL,                       /* hash */
-    JANET_ATEND_HASH
-};
+const JanetAbstractType dtls_client_type = {"jsec/dtls-client",
+                                            dtls_client_gc,
+                                            dtls_client_mark,
+                                            dtls_client_get,
+                                            NULL, /* put */
+                                            NULL, /* marshal */
+                                            NULL, /* unmarshal */
+                                            NULL, /* tostring */
+                                            NULL, /* compare */
+                                            NULL, /* hash */
+                                            JANET_ATEND_HASH};

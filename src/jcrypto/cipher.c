@@ -18,21 +18,20 @@ typedef struct {
     const char *name;
     const EVP_CIPHER *(*get_cipher)(void);
     int key_len;
-    int nonce_len;      /* IV length for non-AEAD */
-    int tag_len;        /* 0 for non-AEAD */
+    int nonce_len; /* IV length for non-AEAD */
+    int tag_len;   /* 0 for non-AEAD */
     int is_aead;
 } CipherInfo;
 
 static const CipherInfo cipher_table[] = {
     /* AEAD ciphers - recommended */
-    {"aes-128-gcm",       EVP_aes_128_gcm,       16, 12, 16, 1},
-    {"aes-256-gcm",       EVP_aes_256_gcm,       32, 12, 16, 1},
+    {"aes-128-gcm", EVP_aes_128_gcm, 16, 12, 16, 1},
+    {"aes-256-gcm", EVP_aes_256_gcm, 32, 12, 16, 1},
     {"chacha20-poly1305", EVP_chacha20_poly1305, 32, 12, 16, 1},
     /* Traditional block ciphers - use with care */
-    {"aes-128-cbc",       EVP_aes_128_cbc,       16, 16, 0,  0},
-    {"aes-256-cbc",       EVP_aes_256_cbc,       32, 16, 0,  0},
-    {NULL, NULL, 0, 0, 0, 0}
-};
+    {"aes-128-cbc", EVP_aes_128_cbc, 16, 16, 0, 0},
+    {"aes-256-cbc", EVP_aes_256_cbc, 32, 16, 0, 0},
+    {NULL, NULL, 0, 0, 0, 0}};
 
 static const CipherInfo *get_cipher_info(Janet algo) {
     if (!janet_checktype(algo, JANET_KEYWORD)) {
@@ -57,11 +56,11 @@ static const CipherInfo *get_cipher_info(Janet algo) {
  * Encrypt data using an AEAD cipher.
  *
  * Parameters:
- *   algo      - Cipher algorithm keyword (:aes-128-gcm, :aes-256-gcm, :chacha20-poly1305)
- *   key       - Encryption key (must match algorithm requirements)
- *   nonce     - Nonce/IV (12 bytes for GCM/ChaCha20)
- *   plaintext - Data to encrypt (string or buffer)
- *   aad       - Additional authenticated data (optional, not encrypted but authenticated)
+ *   algo      - Cipher algorithm keyword (:aes-128-gcm, :aes-256-gcm,
+ * :chacha20-poly1305) key       - Encryption key (must match algorithm
+ * requirements) nonce     - Nonce/IV (12 bytes for GCM/ChaCha20) plaintext -
+ * Data to encrypt (string or buffer) aad       - Additional authenticated
+ * data (optional, not encrypted but authenticated)
  *
  * Returns struct:
  *   {:ciphertext <buffer> :tag <buffer>}
@@ -131,21 +130,23 @@ Janet cfun_encrypt(int32_t argc, Janet *argv) {
     /* Process AAD if provided (for AEAD) */
     if (info->is_aead && aad.len > 0) {
         int aad_len;
-        if (EVP_EncryptUpdate(ctx, NULL, &aad_len, aad.bytes, (int)aad.len) != 1) {
+        if (EVP_EncryptUpdate(ctx, NULL, &aad_len, aad.bytes, (int)aad.len) !=
+            1) {
             EVP_CIPHER_CTX_free(ctx);
             crypto_panic_ssl("failed to process AAD");
         }
     }
 
-    /* Allocate output buffer (ciphertext may be larger due to padding for CBC) */
+    /* Allocate output buffer (ciphertext may be larger due to padding for
+     * CBC) */
     int block_size = EVP_CIPHER_CTX_block_size(ctx);
     size_t out_len = (size_t)plaintext.len + (size_t)block_size;
     JanetBuffer *ciphertext = janet_buffer((int32_t)out_len);
 
     /* Encrypt */
     int len;
-    if (EVP_EncryptUpdate(ctx, ciphertext->data, &len,
-                          plaintext.bytes, (int)plaintext.len) != 1) {
+    if (EVP_EncryptUpdate(ctx, ciphertext->data, &len, plaintext.bytes,
+                          (int)plaintext.len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         crypto_panic_ssl("encryption failed");
     }
@@ -173,7 +174,8 @@ Janet cfun_encrypt(int32_t argc, Janet *argv) {
             EVP_CIPHER_CTX_free(ctx);
             crypto_panic_ssl("failed to get authentication tag");
         }
-        janet_struct_put(result, janet_ckeywordv("tag"), janet_wrap_buffer(tag));
+        janet_struct_put(result, janet_ckeywordv("tag"),
+                         janet_wrap_buffer(tag));
     } else {
         janet_struct_put(result, janet_ckeywordv("tag"), janet_wrap_nil());
     }
@@ -234,8 +236,8 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
     JanetByteView tag = {NULL, 0};
     if (info->is_aead) {
         if (janet_checktype(argv[4], JANET_NIL)) {
-            crypto_panic_param("authentication tag required for AEAD cipher %s",
-                               info->name);
+            crypto_panic_param(
+                "authentication tag required for AEAD cipher %s", info->name);
         }
         tag = janet_getbytes(argv, 4);
         if (tag.len != info->tag_len) {
@@ -280,7 +282,8 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
     /* Process AAD if provided (for AEAD) */
     if (info->is_aead && aad.len > 0) {
         int aad_len;
-        if (EVP_DecryptUpdate(ctx, NULL, &aad_len, aad.bytes, (int)aad.len) != 1) {
+        if (EVP_DecryptUpdate(ctx, NULL, &aad_len, aad.bytes, (int)aad.len) !=
+            1) {
             EVP_CIPHER_CTX_free(ctx);
             crypto_panic_ssl("failed to process AAD");
         }
@@ -291,8 +294,8 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
 
     /* Decrypt */
     int len;
-    if (EVP_DecryptUpdate(ctx, plaintext->data, &len,
-                          ciphertext.bytes, (int)ciphertext.len) != 1) {
+    if (EVP_DecryptUpdate(ctx, plaintext->data, &len, ciphertext.bytes,
+                          (int)ciphertext.len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         crypto_panic_ssl("decryption failed");
     }
@@ -313,7 +316,8 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
     if (EVP_DecryptFinal_ex(ctx, plaintext->data + len, &final_len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         if (info->is_aead) {
-            crypto_panic_config("decryption failed: authentication tag mismatch");
+            crypto_panic_config(
+                "decryption failed: authentication tag mismatch");
         } else {
             crypto_panic_ssl("decryption finalization failed");
         }
@@ -387,7 +391,8 @@ Janet cfun_cipher_info(int32_t argc, Janet *argv) {
     }
 
     JanetKV *result = janet_struct_begin(5);
-    janet_struct_put(result, janet_ckeywordv("name"), janet_cstringv(info->name));
+    janet_struct_put(result, janet_ckeywordv("name"),
+                     janet_cstringv(info->name));
     janet_struct_put(result, janet_ckeywordv("key-length"),
                      janet_wrap_integer(info->key_len));
     janet_struct_put(result, janet_ckeywordv("nonce-length"),

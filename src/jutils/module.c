@@ -42,7 +42,8 @@ static Janet cfun_ssl_version(int32_t argc, Janet *argv) {
     janet_table_put(info, janet_ckeywordv("backend"),
                     janet_ckeywordv("libressl"));
 #else
-    janet_table_put(info, janet_ckeywordv("backend"), janet_ckeywordv("openssl"));
+    janet_table_put(info, janet_ckeywordv("backend"),
+                    janet_ckeywordv("openssl"));
 #endif
 
     janet_table_put(info, janet_ckeywordv("version"),
@@ -54,21 +55,16 @@ static Janet cfun_ssl_version(int32_t argc, Janet *argv) {
 }
 
 static const JanetReg cfuns[] = {
-    {
-        "ssl-backend", cfun_ssl_backend,
-        "(utils/ssl-backend)\n\n"
-        "Returns the SSL backend keyword: :openssl or :libressl"
-    },
-    {
-        "ssl-version", cfun_ssl_version,
-        "(utils/ssl-version)\n\n"
-        "Returns a struct with SSL library version info:\n"
-        "  :backend - :openssl or :libressl\n"
-        "  :version - version string\n"
-        "  :number  - numeric version for comparison"
-    },
-    {NULL, NULL, NULL}
-};
+    {"ssl-backend", cfun_ssl_backend,
+     "(utils/ssl-backend)\n\n"
+     "Returns the SSL backend keyword: :openssl or :libressl"},
+    {"ssl-version", cfun_ssl_version,
+     "(utils/ssl-version)\n\n"
+     "Returns a struct with SSL library version info:\n"
+     "  :backend - :openssl or :libressl\n"
+     "  :version - version string\n"
+     "  :number  - numeric version for comparison"},
+    {NULL, NULL, NULL}};
 
 /* Module entry point */
 JANET_MODULE_ENTRY(JanetTable *env) {

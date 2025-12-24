@@ -147,15 +147,15 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 
 ** Operating System Support
 
-| Platform     | Status  | Backend        | Notes                                  |
-|--------------+---------+----------------+----------------------------------------|
-| Linux        | Working | OpenSSL 3.0+   | Primary development platform           |
-| FreeBSD      | Working | OpenSSL 3.x    | Tested on FreeBSD 15                   |
-| macOS        | Working | OpenSSL 3.x    | Via Homebrew: ~brew install openssl@3~ |
-| NetBSD       | Working | OpenSSL 3.x    | Tested on NetBSD 10.1                  |
-| DragonflyBSD | Working | LibreSSL 3.9+  | Tested on DragonflyBSD 6.4             |
-| OpenBSD      | Testing | LibreSSL 3.9+  | TLS coverage tests hang                |
-| Windows      | Planned | OpenSSL        | Community help needed                  |
+| Platform     | Status  | Backend       | Notes                                  |
+|--------------+---------+---------------+----------------------------------------|
+| Linux        | Working | OpenSSL 3.0+  | Primary development platform           |
+| FreeBSD      | Working | OpenSSL 3.x   | Tested on FreeBSD 15                   |
+| macOS        | Working | OpenSSL 3.x   | Via Homebrew: ~brew install openssl@3~ |
+| NetBSD       | Working | OpenSSL 3.x   | Tested on NetBSD 10.1                  |
+| DragonflyBSD | Working | LibreSSL 3.9+ | Tested on DragonflyBSD 6.4             |
+| OpenBSD      | Working | LibreSSL 3.9+ | All tests pass on OpenBSD 7.6          |
+| Windows      | Planned | OpenSSL       | Community help needed                  |
 
 ** Current Limitations
 - [ ] **DTLS Support is minimal/experimental.** It is not recommended for production use yet (mostly performance issues).
@@ -420,8 +420,7 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 
 *** Platform Support
 - *Windows:* Testing, debugging, and CI improvements for Windows builds
-- *OpenBSD/NetBSD:* LibreSSL compatibility testing needed
-- *DragonflyBSD:* Untested, likely works with LibreSSL
+- *Cross-platform testing:* Help test on additional BSD variants or Linux distributions
 
 *** Testing & Quality
 - *Test Suite Expansion:* Additional edge cases, protocol scenarios, error conditions

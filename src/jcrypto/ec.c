@@ -16,8 +16,8 @@
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
 #if JSEC_HAS_OSSL_PARAM
-    #include <openssl/core_names.h>
-    #include <openssl/param_build.h>
+  #include <openssl/core_names.h>
+  #include <openssl/param_build.h>
 #endif
 
 /*
@@ -70,9 +70,9 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
 
     int nid = get_curve_nid((const char *)curve_kw);
     if (nid == 0) {
-        crypto_panic_param(
-            "unsupported curve: %s (supported: p-256, p-384, p-521, secp256k1)",
-            (const char *)curve_kw);
+        crypto_panic_param("unsupported curve: %s (supported: p-256, p-384, "
+                           "p-521, secp256k1)",
+                           (const char *)curve_kw);
     }
 
     /* Create EC group */
@@ -115,12 +115,14 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
             crypto_panic_param("point must be a table with :x and :y keys");
         }
 
-        Janet x_val = point_table
-                      ? janet_table_get(point_table, janet_ckeywordv("x"))
-                      : janet_struct_get(point_struct, janet_ckeywordv("x"));
-        Janet y_val = point_table
-                      ? janet_table_get(point_table, janet_ckeywordv("y"))
-                      : janet_struct_get(point_struct, janet_ckeywordv("y"));
+        Janet x_val =
+            point_table
+                ? janet_table_get(point_table, janet_ckeywordv("x"))
+                : janet_struct_get(point_struct, janet_ckeywordv("x"));
+        Janet y_val =
+            point_table
+                ? janet_table_get(point_table, janet_ckeywordv("y"))
+                : janet_struct_get(point_struct, janet_ckeywordv("y"));
 
         if (janet_checktype(x_val, JANET_NIL) ||
             janet_checktype(y_val, JANET_NIL)) {
@@ -138,12 +140,9 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
 
         base_point = EC_POINT_new(group);
         if (!base_point || !x || !y) {
-            if (x)
-                BN_free(x);
-            if (y)
-                BN_free(y);
-            if (base_point)
-                EC_POINT_free(base_point);
+            if (x) BN_free(x);
+            if (y) BN_free(y);
+            if (base_point) EC_POINT_free(base_point);
             BN_free(scalar);
             BN_CTX_free(ctx);
             EC_GROUP_free(group);
@@ -157,7 +156,8 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
             BN_free(scalar);
             BN_CTX_free(ctx);
             EC_GROUP_free(group);
-            crypto_panic_ssl("invalid point coordinates (point not on curve?)");
+            crypto_panic_ssl(
+                "invalid point coordinates (point not on curve?)");
         }
 
         BN_free(x);
@@ -171,8 +171,7 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     /* Create result point */
     EC_POINT *result_point = EC_POINT_new(group);
     if (!result_point) {
-        if (free_base)
-            EC_POINT_free(base_point);
+        if (free_base) EC_POINT_free(base_point);
         BN_free(scalar);
         BN_CTX_free(ctx);
         EC_GROUP_free(group);
@@ -182,8 +181,7 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     /* Perform multiplication */
     if (!EC_POINT_mul(group, result_point, NULL, base_point, scalar, ctx)) {
         EC_POINT_free(result_point);
-        if (free_base)
-            EC_POINT_free(base_point);
+        if (free_base) EC_POINT_free(base_point);
         BN_free(scalar);
         BN_CTX_free(ctx);
         EC_GROUP_free(group);
@@ -195,15 +193,12 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     BIGNUM *result_y = BN_new();
 
     if (!result_x || !result_y ||
-        !EC_POINT_get_affine_coordinates(group, result_point, result_x, result_y,
-                                         ctx)) {
-        if (result_x)
-            BN_free(result_x);
-        if (result_y)
-            BN_free(result_y);
+        !EC_POINT_get_affine_coordinates(group, result_point, result_x,
+                                         result_y, ctx)) {
+        if (result_x) BN_free(result_x);
+        if (result_y) BN_free(result_y);
         EC_POINT_free(result_point);
-        if (free_base)
-            EC_POINT_free(base_point);
+        if (free_base) EC_POINT_free(base_point);
         BN_free(scalar);
         BN_CTX_free(ctx);
         EC_GROUP_free(group);
@@ -216,15 +211,12 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     uint8_t *y_bytes = janet_smalloc((size_t)field_size);
 
     if (!x_bytes || !y_bytes) {
-        if (x_bytes)
-            janet_sfree(x_bytes);
-        if (y_bytes)
-            janet_sfree(y_bytes);
+        if (x_bytes) janet_sfree(x_bytes);
+        if (y_bytes) janet_sfree(y_bytes);
         BN_free(result_x);
         BN_free(result_y);
         EC_POINT_free(result_point);
-        if (free_base)
-            EC_POINT_free(base_point);
+        if (free_base) EC_POINT_free(base_point);
         BN_free(scalar);
         BN_CTX_free(ctx);
         EC_GROUP_free(group);
@@ -252,8 +244,7 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     BN_free(result_x);
     BN_free(result_y);
     EC_POINT_free(result_point);
-    if (free_base)
-        EC_POINT_free(base_point);
+    if (free_base) EC_POINT_free(base_point);
     BN_free(scalar);
     BN_CTX_free(ctx);
     EC_GROUP_free(group);
@@ -276,8 +267,7 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
     }
 
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
-    if (!group)
-        crypto_panic_ssl("failed to create EC group");
+    if (!group) crypto_panic_ssl("failed to create EC group");
 
     BN_CTX *ctx = BN_CTX_new();
     if (!ctx) {
@@ -291,12 +281,9 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
     EC_POINT *result = EC_POINT_new(group);
 
     if (!p1 || !p2 || !result) {
-        if (p1)
-            EC_POINT_free(p1);
-        if (p2)
-            EC_POINT_free(p2);
-        if (result)
-            EC_POINT_free(result);
+        if (p1) EC_POINT_free(p1);
+        if (p2) EC_POINT_free(p2);
+        if (result) EC_POINT_free(result);
         BN_CTX_free(ctx);
         EC_GROUP_free(group);
         crypto_panic_resource("failed to allocate points");
@@ -319,13 +306,14 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
             EC_POINT_free(result);
             BN_CTX_free(ctx);
             EC_GROUP_free(group);
-            crypto_panic_param("point %d must be a table with :x and :y", i + 1);
+            crypto_panic_param("point %d must be a table with :x and :y",
+                               i + 1);
         }
 
         Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
-                      : janet_struct_get(ps, janet_ckeywordv("x"));
+                         : janet_struct_get(ps, janet_ckeywordv("x"));
         Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
-                      : janet_struct_get(ps, janet_ckeywordv("y"));
+                         : janet_struct_get(ps, janet_ckeywordv("y"));
 
         JanetByteView x_bv = janet_getbytes(&x_val, 0);
         JanetByteView y_bv = janet_getbytes(&y_val, 0);
@@ -343,7 +331,8 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
             EC_POINT_free(result);
             BN_CTX_free(ctx);
             EC_GROUP_free(group);
-            crypto_panic_param("invalid point %d coordinates (not on curve?)", i + 1);
+            crypto_panic_param("invalid point %d coordinates (not on curve?)",
+                               i + 1);
         }
     }
 
@@ -406,11 +395,13 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
         if (janet_checktype(argv[2], JANET_TABLE)) {
             JanetTable *opts = janet_unwrap_table(argv[2]);
-            Janet comp_val = janet_table_get(opts, janet_ckeywordv("compressed"));
+            Janet comp_val =
+                janet_table_get(opts, janet_ckeywordv("compressed"));
             compressed = janet_truthy(comp_val);
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[2]);
-            Janet comp_val = janet_struct_get(opts, janet_ckeywordv("compressed"));
+            Janet comp_val =
+                janet_struct_get(opts, janet_ckeywordv("compressed"));
             compressed = janet_truthy(comp_val);
         }
     }
@@ -420,17 +411,14 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported curve: %s", (const char *)curve_kw);
 
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
-    if (!group)
-        crypto_panic_ssl("failed to create EC group");
+    if (!group) crypto_panic_ssl("failed to create EC group");
 
     BN_CTX *ctx = BN_CTX_new();
     EC_POINT *point = EC_POINT_new(group);
 
     if (!ctx || !point) {
-        if (ctx)
-            BN_CTX_free(ctx);
-        if (point)
-            EC_POINT_free(point);
+        if (ctx) BN_CTX_free(ctx);
+        if (point) EC_POINT_free(point);
         EC_GROUP_free(group);
         crypto_panic_resource("out of memory");
     }
@@ -450,9 +438,9 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
     }
 
     Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
-                  : janet_struct_get(ps, janet_ckeywordv("x"));
+                     : janet_struct_get(ps, janet_ckeywordv("x"));
     Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
-                  : janet_struct_get(ps, janet_ckeywordv("y"));
+                     : janet_struct_get(ps, janet_ckeywordv("y"));
 
     JanetByteView x_bv = janet_getbytes(&x_val, 0);
     JanetByteView y_bv = janet_getbytes(&y_val, 0);
@@ -472,8 +460,8 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
     }
 
     /* Serialize */
-    point_conversion_form_t form =
-        compressed ? POINT_CONVERSION_COMPRESSED : POINT_CONVERSION_UNCOMPRESSED;
+    point_conversion_form_t form = compressed ? POINT_CONVERSION_COMPRESSED
+                                              : POINT_CONVERSION_UNCOMPRESSED;
     size_t len = EC_POINT_point2oct(group, point, form, NULL, 0, ctx);
     if (len == 0) {
         EC_POINT_free(point);
@@ -516,17 +504,14 @@ Janet cfun_ec_point_from_bytes(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported curve: %s", (const char *)curve_kw);
 
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
-    if (!group)
-        crypto_panic_ssl("failed to create EC group");
+    if (!group) crypto_panic_ssl("failed to create EC group");
 
     BN_CTX *ctx = BN_CTX_new();
     EC_POINT *point = EC_POINT_new(group);
 
     if (!ctx || !point) {
-        if (ctx)
-            BN_CTX_free(ctx);
-        if (point)
-            EC_POINT_free(point);
+        if (ctx) BN_CTX_free(ctx);
+        if (point) EC_POINT_free(point);
         EC_GROUP_free(group);
         crypto_panic_resource("out of memory");
     }
@@ -586,8 +571,7 @@ Janet cfun_ec_generate_scalar(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported curve: %s", (const char *)curve_kw);
 
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
-    if (!group)
-        crypto_panic_ssl("failed to create EC group");
+    if (!group) crypto_panic_ssl("failed to create EC group");
 
     /* Get the order of the curve */
 #if JSEC_OPENSSL

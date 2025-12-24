@@ -28,37 +28,46 @@ CARevocationReason ca_keyword_to_reason(Janet kw) {
     if (strcmp(str, "unspecified") == 0) return CA_REVOKE_UNSPECIFIED;
     if (strcmp(str, "key-compromise") == 0) return CA_REVOKE_KEY_COMPROMISE;
     if (strcmp(str, "ca-compromise") == 0) return CA_REVOKE_CA_COMPROMISE;
-    if (strcmp(str, "affiliation-changed") == 0) return
-            CA_REVOKE_AFFILIATION_CHANGED;
+    if (strcmp(str, "affiliation-changed") == 0)
+        return CA_REVOKE_AFFILIATION_CHANGED;
     if (strcmp(str, "superseded") == 0) return CA_REVOKE_SUPERSEDED;
-    if (strcmp(str, "cessation-of-operation") == 0) return
-            CA_REVOKE_CESSATION_OF_OPERATION;
-    if (strcmp(str, "certificate-hold") == 0) return CA_REVOKE_CERTIFICATE_HOLD;
+    if (strcmp(str, "cessation-of-operation") == 0)
+        return CA_REVOKE_CESSATION_OF_OPERATION;
+    if (strcmp(str, "certificate-hold") == 0)
+        return CA_REVOKE_CERTIFICATE_HOLD;
     if (strcmp(str, "remove-from-crl") == 0) return CA_REVOKE_REMOVE_FROM_CRL;
-    if (strcmp(str, "privilege-withdrawn") == 0) return
-            CA_REVOKE_PRIVILEGE_WITHDRAWN;
+    if (strcmp(str, "privilege-withdrawn") == 0)
+        return CA_REVOKE_PRIVILEGE_WITHDRAWN;
     if (strcmp(str, "aa-compromise") == 0) return CA_REVOKE_AA_COMPROMISE;
 
     ca_panic_param("unknown revocation reason: %s", str);
-    return CA_REVOKE_UNSPECIFIED;  /* unreachable */
+    return CA_REVOKE_UNSPECIFIED; /* unreachable */
 }
 
 Janet ca_reason_to_keyword(CARevocationReason reason) {
     switch (reason) {
-        case CA_REVOKE_UNSPECIFIED: return janet_ckeywordv("unspecified");
-        case CA_REVOKE_KEY_COMPROMISE: return janet_ckeywordv("key-compromise");
-        case CA_REVOKE_CA_COMPROMISE: return janet_ckeywordv("ca-compromise");
-        case CA_REVOKE_AFFILIATION_CHANGED: return
-                janet_ckeywordv("affiliation-changed");
-        case CA_REVOKE_SUPERSEDED: return janet_ckeywordv("superseded");
-        case CA_REVOKE_CESSATION_OF_OPERATION: return
-                janet_ckeywordv("cessation-of-operation");
-        case CA_REVOKE_CERTIFICATE_HOLD: return janet_ckeywordv("certificate-hold");
-        case CA_REVOKE_REMOVE_FROM_CRL: return janet_ckeywordv("remove-from-crl");
-        case CA_REVOKE_PRIVILEGE_WITHDRAWN: return
-                janet_ckeywordv("privilege-withdrawn");
-        case CA_REVOKE_AA_COMPROMISE: return janet_ckeywordv("aa-compromise");
-        default: return janet_ckeywordv("unspecified");
+        case CA_REVOKE_UNSPECIFIED:
+            return janet_ckeywordv("unspecified");
+        case CA_REVOKE_KEY_COMPROMISE:
+            return janet_ckeywordv("key-compromise");
+        case CA_REVOKE_CA_COMPROMISE:
+            return janet_ckeywordv("ca-compromise");
+        case CA_REVOKE_AFFILIATION_CHANGED:
+            return janet_ckeywordv("affiliation-changed");
+        case CA_REVOKE_SUPERSEDED:
+            return janet_ckeywordv("superseded");
+        case CA_REVOKE_CESSATION_OF_OPERATION:
+            return janet_ckeywordv("cessation-of-operation");
+        case CA_REVOKE_CERTIFICATE_HOLD:
+            return janet_ckeywordv("certificate-hold");
+        case CA_REVOKE_REMOVE_FROM_CRL:
+            return janet_ckeywordv("remove-from-crl");
+        case CA_REVOKE_PRIVILEGE_WITHDRAWN:
+            return janet_ckeywordv("privilege-withdrawn");
+        case CA_REVOKE_AA_COMPROMISE:
+            return janet_ckeywordv("aa-compromise");
+        default:
+            return janet_ckeywordv("unspecified");
     }
 }
 
@@ -139,7 +148,8 @@ static const char *cfun_ca_generate_crl_docstring =
     "Generate a Certificate Revocation List (CRL).\n\n"
     "Options:\n"
     "  :days-valid <number>   - CRL validity period (default: 30)\n"
-    "  :revoked [...]         - Additional revocations (if not using :revoke method)\n"
+    "  :revoked [...]         - Additional revocations (if not using :revoke "
+    "method)\n"
     "                           Each entry: {:serial N :reason <kw>}\n\n"
     "Returns CRL in PEM format.";
 
@@ -205,22 +215,23 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
             if (!janet_checktype(entry, JANET_TABLE) &&
                 !janet_checktype(entry, JANET_STRUCT)) {
                 X509_CRL_free(crl);
-                ca_panic_param("revoked entry must be a table with :serial and optional :reason");
+                ca_panic_param("revoked entry must be a table with :serial "
+                               "and optional :reason");
             }
 
             JanetTable *t = janet_checktype(entry, JANET_TABLE)
-                            ? janet_unwrap_table(entry)
-                            : NULL;
+                                ? janet_unwrap_table(entry)
+                                : NULL;
             const JanetKV *s = janet_checktype(entry, JANET_STRUCT)
-                               ? janet_unwrap_struct(entry)
-                               : NULL;
+                                   ? janet_unwrap_struct(entry)
+                                   : NULL;
 
-            Janet serial_v = t
-                             ? janet_table_get(t, janet_ckeywordv("serial"))
-                             : janet_struct_get(s, janet_ckeywordv("serial"));
-            Janet reason_v = t
-                             ? janet_table_get(t, janet_ckeywordv("reason"))
-                             : janet_struct_get(s, janet_ckeywordv("reason"));
+            Janet serial_v =
+                t ? janet_table_get(t, janet_ckeywordv("serial"))
+                  : janet_struct_get(s, janet_ckeywordv("serial"));
+            Janet reason_v =
+                t ? janet_table_get(t, janet_ckeywordv("reason"))
+                  : janet_struct_get(s, janet_ckeywordv("reason"));
 
             if (janet_checktype(serial_v, JANET_NIL)) {
                 X509_CRL_free(crl);
@@ -244,7 +255,8 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
             if (reason != CA_REVOKE_UNSPECIFIED) {
                 ASN1_ENUMERATED *reason_enum = ASN1_ENUMERATED_new();
                 ASN1_ENUMERATED_set(reason_enum, reason);
-                X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason, reason_enum, 0, 0);
+                X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason,
+                                          reason_enum, 0, 0);
                 ASN1_ENUMERATED_free(reason_enum);
             }
 
@@ -317,15 +329,16 @@ Janet cfun_ca_get_revoked(int32_t argc, Janet *argv) {
         /* Get reason */
         CARevocationReason reason = CA_REVOKE_UNSPECIFIED;
         int crit;
-        ASN1_ENUMERATED *reason_enum = X509_REVOKED_get_ext_d2i(rev, NID_crl_reason,
-                                       &crit, NULL);
+        ASN1_ENUMERATED *reason_enum =
+            X509_REVOKED_get_ext_d2i(rev, NID_crl_reason, &crit, NULL);
         if (reason_enum) {
             reason = (CARevocationReason)ASN1_ENUMERATED_get(reason_enum);
             ASN1_ENUMERATED_free(reason_enum);
         }
 
         JanetTable *entry = janet_table(2);
-        janet_table_put(entry, janet_ckeywordv("serial"), janet_wrap_s64(serial_val));
+        janet_table_put(entry, janet_ckeywordv("serial"),
+                        janet_wrap_s64(serial_val));
         janet_table_put(entry, janet_ckeywordv("reason"),
                         ca_reason_to_keyword(reason));
 

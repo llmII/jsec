@@ -22,7 +22,8 @@
  */
 
 static int dtls_address_gc(void *p, size_t s) {
-    (void)p; (void)s;
+    (void)p;
+    (void)s;
     /* DTLSAddress is POD - no cleanup needed */
     return 0;
 }
@@ -93,11 +94,13 @@ void dtls_address_tostring_fn(const DTLSAddress *addr, JanetBuffer *buf) {
     uint16_t port = 0;
 
     if (addr->addr.ss_family == AF_INET) {
-        const struct sockaddr_in *sin = (const struct sockaddr_in *)&addr->addr;
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
         inet_ntop(AF_INET, &sin->sin_addr, host, sizeof(host));
         port = ntohs(sin->sin_port);
     } else if (addr->addr.ss_family == AF_INET6) {
-        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)&addr->addr;
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
         inet_ntop(AF_INET6, &sin6->sin6_addr, host, sizeof(host));
         port = ntohs(sin6->sin6_port);
         janet_buffer_push_cstring(buf, "[");
@@ -127,10 +130,12 @@ void dtls_address_tostring_fn(const DTLSAddress *addr, JanetBuffer *buf) {
 
 uint16_t dtls_address_port(const DTLSAddress *addr) {
     if (addr->addr.ss_family == AF_INET) {
-        const struct sockaddr_in *sin = (const struct sockaddr_in *)&addr->addr;
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
         return ntohs(sin->sin_port);
     } else if (addr->addr.ss_family == AF_INET6) {
-        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)&addr->addr;
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
         return ntohs(sin6->sin6_port);
     }
     return 0;
@@ -155,16 +160,15 @@ void dtls_address_set_port(DTLSAddress *addr, uint16_t port) {
 const JanetAbstractType dtls_address_type = {
     "jsec/dtls-address",
     dtls_address_gc,
-    NULL,                       /* mark - no Janet values to mark */
-    NULL,                       /* get */
-    NULL,                       /* put */
-    NULL,                       /* marshal */
-    NULL,                       /* unmarshal */
+    NULL, /* mark - no Janet values to mark */
+    NULL, /* get */
+    NULL, /* put */
+    NULL, /* marshal */
+    NULL, /* unmarshal */
     dtls_address_tostring,
     dtls_address_compare,
     dtls_address_hash,
-    JANET_ATEND_HASH
-};
+    JANET_ATEND_HASH};
 
 /*
  * =============================================================================
@@ -174,8 +178,8 @@ const JanetAbstractType dtls_address_type = {
 
 Janet dtls_address_wrap(DTLSAddress *addr) {
     /* Allocate a new DTLSAddress abstract and copy the data */
-    DTLSAddress *new_addr = janet_abstract(&dtls_address_type,
-                                           sizeof(DTLSAddress));
+    DTLSAddress *new_addr =
+        janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
     memcpy(new_addr, addr, sizeof(DTLSAddress));
     return janet_wrap_abstract(new_addr);
 }
@@ -268,7 +272,8 @@ static Janet cfun_dtls_address(int32_t argc, Janet *argv) {
     const char *host = janet_getcstring(argv, 0);
     int port = janet_getinteger(argv, 1);
 
-    DTLSAddress *addr = janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
+    DTLSAddress *addr =
+        janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
     memset(addr, 0, sizeof(DTLSAddress));
 
     /* Try IPv4 first */
@@ -300,10 +305,12 @@ static Janet cfun_dtls_address_host(int32_t argc, Janet *argv) {
     char host[INET6_ADDRSTRLEN];
 
     if (addr->addr.ss_family == AF_INET) {
-        const struct sockaddr_in *sin = (const struct sockaddr_in *)&addr->addr;
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
         inet_ntop(AF_INET, &sin->sin_addr, host, sizeof(host));
     } else if (addr->addr.ss_family == AF_INET6) {
-        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)&addr->addr;
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
         inet_ntop(AF_INET6, &sin6->sin6_addr, host, sizeof(host));
     } else {
         return janet_wrap_nil();
@@ -322,7 +329,8 @@ static Janet cfun_dtls_address_port(int32_t argc, Janet *argv) {
 /* (dtls/address? x) - Check if x is a DTLS address */
 static Janet cfun_dtls_address_p(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    return janet_wrap_boolean(janet_checkabstract(argv[0], &dtls_address_type));
+    return janet_wrap_boolean(
+        janet_checkabstract(argv[0], &dtls_address_type));
 }
 
 /*
@@ -332,29 +340,20 @@ static Janet cfun_dtls_address_p(int32_t argc, Janet *argv) {
  */
 
 static const JanetReg address_cfuns[] = {
-    {
-        "address", cfun_dtls_address,
-        "(dtls/address host port)\n\n"
-        "Create a DTLS address from host string and port number.\n"
-        "Supports IPv4 and IPv6 addresses."
-    },
-    {
-        "address-host", cfun_dtls_address_host,
-        "(dtls/address-host addr)\n\n"
-        "Get the host string from a DTLS address."
-    },
-    {
-        "address-port", cfun_dtls_address_port,
-        "(dtls/address-port addr)\n\n"
-        "Get the port number from a DTLS address."
-    },
-    {
-        "address?", cfun_dtls_address_p,
-        "(dtls/address? x)\n\n"
-        "Returns true if x is a DTLS address."
-    },
-    {NULL, NULL, NULL}
-};
+    {"address", cfun_dtls_address,
+     "(dtls/address host port)\n\n"
+     "Create a DTLS address from host string and port number.\n"
+     "Supports IPv4 and IPv6 addresses."},
+    {"address-host", cfun_dtls_address_host,
+     "(dtls/address-host addr)\n\n"
+     "Get the host string from a DTLS address."},
+    {"address-port", cfun_dtls_address_port,
+     "(dtls/address-port addr)\n\n"
+     "Get the port number from a DTLS address."},
+    {"address?", cfun_dtls_address_p,
+     "(dtls/address? x)\n\n"
+     "Returns true if x is a DTLS address."},
+    {NULL, NULL, NULL}};
 
 void jdtls_register_address(JanetTable *env) {
     janet_register_abstract_type(&dtls_address_type);

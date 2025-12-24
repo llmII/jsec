@@ -10,7 +10,7 @@
 
 /* Enable POSIX features for clock_gettime, strdup, etc. */
 #ifndef _POSIX_C_SOURCE
-    #define _POSIX_C_SOURCE 200809L
+  #define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <errno.h>
@@ -28,7 +28,7 @@
  * Define to 0 if missing so we can use it unconditionally.
  */
 #ifndef SSL_OP_NO_RENEGOTIATION
-    #define SSL_OP_NO_RENEGOTIATION 0
+  #define SSL_OP_NO_RENEGOTIATION 0
 #endif
 
 /* Debug logging macro - enabled by defining JSEC_DEBUG_VERBOSE
@@ -36,11 +36,11 @@
  *       JSEC_DEBUG_VERBOSE enables verbose debug print statements
  * Uses janet_eprintf for proper integration with Janet's I/O system */
 #ifdef JSEC_DEBUG_VERBOSE
-#define DEBUG_LOG(...) janet_eprintf("[jsec] " __VA_ARGS__)
+  #define DEBUG_LOG(...) janet_eprintf("[jsec] " __VA_ARGS__)
 #else
-#define DEBUG_LOG(...)                                                         \
-    do {                                                                         \
-    } while (0)
+  #define DEBUG_LOG(...)                                                     \
+      do {                                                                   \
+      } while (0)
 #endif
 
 /*
@@ -126,11 +126,10 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /* Apply security options to SSL_CTX
  * Accepts a Janet table with the following optional keys:
- *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3, :DTLS1.2)
- *   :max-version - Maximum TLS/DTLS version
- *   :ciphers - Cipher suite string (OpenSSL format)
- *   :curves - EC curves for ECDHE (e.g., :prime256v1 or "prime256v1:secp384r1")
- *   :ca-file - CA file path or PEM string/buffer
+ *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3,
+ * :DTLS1.2) :max-version - Maximum TLS/DTLS version :ciphers - Cipher suite
+ * string (OpenSSL format) :curves - EC curves for ECDHE (e.g., :prime256v1 or
+ * "prime256v1:secp384r1") :ca-file - CA file path or PEM string/buffer
  *   :ca-path - CA directory path
  */
 int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls);
@@ -208,7 +207,8 @@ int jutils_password_cb(char *buf, int size, int rwflag, void *u);
 
 /* Error categories */
 typedef enum {
-    JSEC_ERR_CONFIG,   /* Configuration errors (bad options, invalid settings) */
+    JSEC_ERR_CONFIG,   /* Configuration errors (bad options, invalid settings)
+                        */
     JSEC_ERR_IO,       /* I/O errors (read/write failures) */
     JSEC_ERR_SSL,      /* OpenSSL operation errors */
     JSEC_ERR_SOCKET,   /* Socket operation errors */
@@ -257,12 +257,13 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
  *        jsec_panic_errno(MOD, CAT, "message") - appends strerror(errno)
  */
 
-#define jsec_panic(mod, cat, ...) janet_panicf("[" mod ":" cat "] " __VA_ARGS__)
+#define jsec_panic(mod, cat, ...)                                            \
+    janet_panicf("[" mod ":" cat "] " __VA_ARGS__)
 
-#define jsec_panic_ssl(mod, cat, msg)                                          \
+#define jsec_panic_ssl(mod, cat, msg)                                        \
     janet_panicf("[" mod ":" cat "] " msg ": %s", get_ssl_error_string())
 
-#define jsec_panic_errno(mod, cat, msg)                                        \
+#define jsec_panic_errno(mod, cat, msg)                                      \
     janet_panicf("[" mod ":" cat "] " msg ": %s", strerror(errno))
 
 /* Convenience macros for common patterns */
@@ -276,21 +277,22 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
 #define tls_panic_verify(...) jsec_panic(JSEC_MOD_TLS, "VERIFY", __VA_ARGS__)
 
 /* DTLS module */
-#define dtls_panic_config(...) jsec_panic(JSEC_MOD_DTLS, "CONFIG", __VA_ARGS__)
+#define dtls_panic_config(...)                                               \
+    jsec_panic(JSEC_MOD_DTLS, "CONFIG", __VA_ARGS__)
 #define dtls_panic_io(...) jsec_panic(JSEC_MOD_DTLS, "IO", __VA_ARGS__)
 #define dtls_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_DTLS, "SSL", msg)
 #define dtls_panic_socket(msg) jsec_panic_errno(JSEC_MOD_DTLS, "SOCKET", msg)
 #define dtls_panic_param(...) jsec_panic(JSEC_MOD_DTLS, "PARAM", __VA_ARGS__)
 
 /* CRYPTO module */
-#define crypto_panic_config(...)                                               \
+#define crypto_panic_config(...)                                             \
     jsec_panic(JSEC_MOD_CRYPTO, "CONFIG", __VA_ARGS__)
 #define crypto_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_CRYPTO, "SSL", msg)
-#define crypto_panic_param(...)                                                \
+#define crypto_panic_param(...)                                              \
     jsec_panic(JSEC_MOD_CRYPTO, "PARAM", __VA_ARGS__)
-#define crypto_panic_resource(...)                                             \
+#define crypto_panic_resource(...)                                           \
     jsec_panic(JSEC_MOD_CRYPTO, "RESOURCE", __VA_ARGS__)
-#define crypto_panic_parse(...)                                                \
+#define crypto_panic_parse(...)                                              \
     jsec_panic(JSEC_MOD_CRYPTO, "PARSE", __VA_ARGS__)
 
 /* CA module */
@@ -299,23 +301,27 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
 #define ca_panic_param(...) jsec_panic(JSEC_MOD_CA, "PARAM", __VA_ARGS__)
 #define ca_panic_parse(...) jsec_panic(JSEC_MOD_CA, "PARSE", __VA_ARGS__)
 #define ca_panic_verify(...) jsec_panic(JSEC_MOD_CA, "VERIFY", __VA_ARGS__)
-#define ca_panic_resource(...) jsec_panic(JSEC_MOD_CA, "RESOURCE", __VA_ARGS__)
+#define ca_panic_resource(...)                                               \
+    jsec_panic(JSEC_MOD_CA, "RESOURCE", __VA_ARGS__)
 
 /* CERT module */
-#define cert_panic_config(...) jsec_panic(JSEC_MOD_CERT, "CONFIG", __VA_ARGS__)
+#define cert_panic_config(...)                                               \
+    jsec_panic(JSEC_MOD_CERT, "CONFIG", __VA_ARGS__)
 #define cert_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_CERT, "SSL", msg)
 #define cert_panic_param(...) jsec_panic(JSEC_MOD_CERT, "PARAM", __VA_ARGS__)
 #define cert_panic_parse(msg) jsec_panic_ssl(JSEC_MOD_CERT, "PARSE", msg)
-#define cert_panic_resource(...)                                               \
+#define cert_panic_resource(...)                                             \
     jsec_panic(JSEC_MOD_CERT, "RESOURCE", __VA_ARGS__)
-#define cert_panic_verify(...) jsec_panic(JSEC_MOD_CERT, "VERIFY", __VA_ARGS__)
+#define cert_panic_verify(...)                                               \
+    jsec_panic(JSEC_MOD_CERT, "VERIFY", __VA_ARGS__)
 
 /* UTILS module */
-#define utils_panic_config(...)                                                \
+#define utils_panic_config(...)                                              \
     jsec_panic(JSEC_MOD_UTILS, "CONFIG", __VA_ARGS__)
 #define utils_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_UTILS, "SSL", msg)
-#define utils_panic_param(...) jsec_panic(JSEC_MOD_UTILS, "PARAM", __VA_ARGS__)
-#define utils_panic_verify(...)                                                \
+#define utils_panic_param(...)                                               \
+    jsec_panic(JSEC_MOD_UTILS, "PARAM", __VA_ARGS__)
+#define utils_panic_verify(...)                                              \
     jsec_panic(JSEC_MOD_UTILS, "VERIFY", __VA_ARGS__)
 
 #endif

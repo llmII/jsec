@@ -52,8 +52,9 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
             PEM_write_bio_X509(cert_bio, cert);
             char *data;
             long len = BIO_get_mem_data(cert_bio, &data);
-            janet_table_put(result, janet_ckeywordv("cert"),
-                            janet_stringv((const uint8_t *)data, (int32_t)len));
+            janet_table_put(
+                result, janet_ckeywordv("cert"),
+                janet_stringv((const uint8_t *)data, (int32_t)len));
             BIO_free(cert_bio);
         }
 
@@ -72,11 +73,13 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
     if (pkey) {
         BIO *key_bio = BIO_new(BIO_s_mem());
         if (key_bio) {
-            PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL, NULL);
+            PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL,
+                                     NULL);
             char *data;
             long len = BIO_get_mem_data(key_bio, &data);
-            janet_table_put(result, janet_ckeywordv("key"),
-                            janet_stringv((const uint8_t *)data, (int32_t)len));
+            janet_table_put(
+                result, janet_ckeywordv("key"),
+                janet_stringv((const uint8_t *)data, (int32_t)len));
             BIO_free(key_bio);
         }
         EVP_PKEY_free(pkey);
@@ -92,11 +95,13 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
                 PEM_write_bio_X509(ca_bio, ca_cert);
                 char *data;
                 long len = BIO_get_mem_data(ca_bio, &data);
-                janet_array_push(chain, janet_stringv((const uint8_t *)data, (int32_t)len));
+                janet_array_push(chain, janet_stringv((const uint8_t *)data,
+                                                      (int32_t)len));
                 BIO_free(ca_bio);
             }
         }
-        janet_table_put(result, janet_ckeywordv("chain"), janet_wrap_array(chain));
+        janet_table_put(result, janet_ckeywordv("chain"),
+                        janet_wrap_array(chain));
         sk_X509_pop_free(ca, X509_free);
     }
 
@@ -136,8 +141,9 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         Janet val;
 
         /* :password (required) */
-        val = opts ? janet_table_get(opts, janet_ckeywordv("password"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("password"));
+        val =
+            opts ? janet_table_get(opts, janet_ckeywordv("password"))
+                 : janet_struct_get(opts_struct, janet_ckeywordv("password"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView pwd = janet_getbytes(&val, 0);
             password = (const char *)pwd.bytes;
@@ -145,7 +151,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
 
         /* :friendly-name */
         val = opts ? janet_table_get(opts, janet_ckeywordv("friendly-name"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("friendly-name"));
+                   : janet_struct_get(opts_struct,
+                                      janet_ckeywordv("friendly-name"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView name = janet_getbytes(&val, 0);
             friendly_name = (const char *)name.bytes;
@@ -153,7 +160,7 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
 
         /* :chain */
         val = opts ? janet_table_get(opts, janet_ckeywordv("chain"))
-              : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
+                   : janet_struct_get(opts_struct, janet_ckeywordv("chain"));
         if (!janet_checktype(val, JANET_NIL)) {
             if (janet_checktype(val, JANET_ARRAY)) {
                 chain_arr = janet_unwrap_array(val);
@@ -189,8 +196,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         crypto_panic_resource("failed to create BIO");
     }
 
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
 
     if (!pkey) {
@@ -222,8 +229,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
     }
 
     /* Create PKCS#12 */
-    PKCS12 *p12 = PKCS12_create(password, friendly_name, pkey, cert, ca,
-                                0, 0, 0, 0, 0);
+    PKCS12 *p12 =
+        PKCS12_create(password, friendly_name, pkey, cert, ca, 0, 0, 0, 0, 0);
 
     /* Cleanup inputs */
     EVP_PKEY_free(pkey);

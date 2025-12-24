@@ -22,7 +22,8 @@
  * Flow:
  * 1. User calls tls/wrap, tls/connect, etc.
  * 2. We create TLSStream and initiate the operation
- * 3. If operation needs I/O, we register with event loop via janet_async_start
+ * 3. If operation needs I/O, we register with event loop via
+ * janet_async_start
  * 4. Event loop calls our callback when socket is ready
  * 5. We retry the SSL operation
  * 6. Repeat 3-5 until operation completes or errors
@@ -56,17 +57,17 @@
 #include <time.h> /* For clock_gettime, CLOCK_MONOTONIC */
 
 #ifndef JANET_WINDOWS
-    #include <fcntl.h>
-    #include <netdb.h>
-    #include <netinet/in.h>
-    #include <netinet/tcp.h> /* For TCP_NODELAY */
-    #include <sys/socket.h>
-    #include <unistd.h>
+  #include <fcntl.h>
+  #include <netdb.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h> /* For TCP_NODELAY */
+  #include <sys/socket.h>
+  #include <unistd.h>
 #endif
 
 /* MSG_NOSIGNAL prevents SIGPIPE on write to closed socket */
 #ifndef MSG_NOSIGNAL
-    #define MSG_NOSIGNAL 0
+  #define MSG_NOSIGNAL 0
 #endif
 
 /*
@@ -134,11 +135,11 @@ typedef enum {
  */
 typedef enum {
     TLS_OP_HANDSHAKE, /* SSL_connect or SSL_accept */
-    TLS_OP_READ,      /* SSL_read - read application data (may return early) */
-    TLS_OP_CHUNK,     /* SSL_read - read until n bytes or EOF (like ev/chunk) */
-    TLS_OP_WRITE,     /* SSL_write - write application data */
-    TLS_OP_SHUTDOWN,  /* SSL_shutdown - close TLS, keep socket open */
-    TLS_OP_CLOSE      /* SSL_shutdown + close socket */
+    TLS_OP_READ,  /* SSL_read - read application data (may return early) */
+    TLS_OP_CHUNK, /* SSL_read - read until n bytes or EOF (like ev/chunk) */
+    TLS_OP_WRITE, /* SSL_write - write application data */
+    TLS_OP_SHUTDOWN, /* SSL_shutdown - close TLS, keep socket open */
+    TLS_OP_CLOSE     /* SSL_shutdown + close socket */
 } TLSOpType;
 
 /*============================================================================
@@ -227,7 +228,8 @@ struct TLSStream {
         unsigned char *pe;   /* End of valid data */
         size_t capacity;     /* Total buffer capacity */
     } bio_ahead;
-    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if enabled */
+    /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
+     * enabled */
     int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when stream was created */
     struct timespec ts_handshake; /* Time when handshake completed */
@@ -237,7 +239,8 @@ struct TLSStream {
  * TLS CONTEXT WRAPPER
  *============================================================================
  * TLSContext is now an alias for the unified SSLContext type from jshared.h.
- * This provides backwards compatibility while using the shared implementation.
+ * This provides backwards compatibility while using the shared
+ * implementation.
  */
 typedef SSLContext TLSContext;
 

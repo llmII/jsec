@@ -23,24 +23,24 @@
  * LIBRESSL_VERSION_NUMBER, OpenSSL does not).
  */
 #ifdef LIBRESSL_VERSION_NUMBER
-#define OPENSSL_PREREQ(M, m, p) (0)
-#define LIBRESSL_PREREQ(M, m, p)                                               \
-    (LIBRESSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
+  #define OPENSSL_PREREQ(M, m, p) (0)
+  #define LIBRESSL_PREREQ(M, m, p)                                           \
+      (LIBRESSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
 #else
-#define OPENSSL_PREREQ(M, m, p)                                                \
-    (OPENSSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
-#define LIBRESSL_PREREQ(M, m, p) (0)
+  #define OPENSSL_PREREQ(M, m, p)                                            \
+      (OPENSSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
+  #define LIBRESSL_PREREQ(M, m, p) (0)
 #endif
 
 /*
  * Backend Detection
  */
 #ifdef LIBRESSL_VERSION_NUMBER
-    #define JSEC_LIBRESSL 1
-    #define JSEC_OPENSSL 0
+  #define JSEC_LIBRESSL 1
+  #define JSEC_OPENSSL 0
 #else
-    #define JSEC_LIBRESSL 0
-    #define JSEC_OPENSSL 1
+  #define JSEC_LIBRESSL 0
+  #define JSEC_OPENSSL 1
 #endif
 
 /*
@@ -49,12 +49,13 @@
  * Available in OpenSSL 1.1.0+ and LibreSSL 2.7.0+
  */
 #ifndef HAVE_SSL_CTX_UP_REF
-#define HAVE_SSL_CTX_UP_REF                                                    \
-    (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
+  #define HAVE_SSL_CTX_UP_REF                                                \
+      (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
 #endif
 
 #ifndef HAVE_SSL_UP_REF
-    #define HAVE_SSL_UP_REF (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
+  #define HAVE_SSL_UP_REF                                                    \
+      (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
 #endif
 
 /*
@@ -90,14 +91,14 @@
  * For older OpenSSL/LibreSSL that lack SSL_CTX_up_ref / SSL_up_ref
  */
 #if !HAVE_SSL_CTX_UP_REF
-#include <openssl/crypto.h>
-#define SSL_CTX_up_ref(ctx)                                                    \
-    CRYPTO_add(&(ctx)->references, 1, CRYPTO_LOCK_SSL_CTX)
+  #include <openssl/crypto.h>
+  #define SSL_CTX_up_ref(ctx)                                                \
+      CRYPTO_add(&(ctx)->references, 1, CRYPTO_LOCK_SSL_CTX)
 #endif
 
 #if !HAVE_SSL_UP_REF
-    #include <openssl/crypto.h>
-    #define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
+  #include <openssl/crypto.h>
+  #define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
 #endif
 
 #endif /* JSEC_COMPAT_H */

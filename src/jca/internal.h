@@ -8,7 +8,8 @@
  * - Root and intermediate CA creation
  * - CSR signing and certificate issuance
  * - CRL (Certificate Revocation List) generation
- * - OCSP request parsing and response creation (mechanics only, no networking)
+ * - OCSP request parsing and response creation (mechanics only, no
+ * networking)
  * - Serial number management with optional persistence
  * - Optional certificate tracking
  *

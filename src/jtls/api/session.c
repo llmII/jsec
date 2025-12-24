@@ -117,12 +117,10 @@ Janet cfun_renegotiate(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-    if (!tls->ssl)
-        tls_panic_io("stream not initialized");
+    if (!tls->ssl) tls_panic_io("stream not initialized");
 
     int ret = SSL_renegotiate(tls->ssl);
-    if (ret == 1)
-        return janet_ckeywordv("ok");
+    if (ret == 1) return janet_ckeywordv("ok");
 
     tls_panic_ssl("renegotiation failed");
     return janet_wrap_nil();
@@ -136,13 +134,11 @@ Janet cfun_key_update(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-    if (!tls->ssl)
-        tls_panic_io("stream not initialized");
+    if (!tls->ssl) tls_panic_io("stream not initialized");
 
 #if JSEC_HAS_KEY_UPDATE
     int ret = SSL_key_update(tls->ssl, SSL_KEY_UPDATE_REQUESTED);
-    if (ret == 1)
-        return janet_ckeywordv("ok");
+    if (ret == 1) return janet_ckeywordv("ok");
 
     tls_panic_ssl("key update failed");
 #else

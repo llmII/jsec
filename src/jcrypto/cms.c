@@ -29,8 +29,8 @@ Janet cfun_cms_sign(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
     if (!pkey) {
         X509_free(cert);
@@ -89,19 +89,20 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
         BIO *trust_bio = BIO_new_mem_buf(trust_pem.bytes, trust_pem.len);
         store = X509_STORE_new();
         X509 *trust_cert;
-        while ((trust_cert = PEM_read_bio_X509(trust_bio, NULL, NULL,
-                                               NULL)) != NULL) {
+        while ((trust_cert =
+                    PEM_read_bio_X509(trust_bio, NULL, NULL, NULL)) != NULL) {
             X509_STORE_add_cert(store, trust_cert);
             X509_free(trust_cert);
         }
         BIO_free(trust_bio);
-        flags = CMS_BINARY;  /* Enable full verification */
+        flags = CMS_BINARY; /* Enable full verification */
     }
 
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
         JanetByteView detached_data = janet_getbytes(argv, 2);
         flags |= (unsigned int)CMS_DETACHED;
-        /* Note: detached data handling would need additional implementation */
+        /* Note: detached data handling would need additional implementation
+         */
         (void)detached_data;
     }
 
@@ -127,8 +128,9 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
     if (verify_result == 1) {
         char *content_data;
         long content_len = BIO_get_mem_data(content, &content_data);
-        janet_table_put(result, janet_ckeywordv("content"),
-                        janet_stringv((const uint8_t *)content_data, content_len));
+        janet_table_put(
+            result, janet_ckeywordv("content"),
+            janet_stringv((const uint8_t *)content_data, content_len));
     }
 
     /* Extract signer certificates */
@@ -141,8 +143,9 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
             PEM_write_bio_X509(signer_bio, signer);
             char *signer_data;
             long signer_len = BIO_get_mem_data(signer_bio, &signer_data);
-            janet_array_push(signer_arr, janet_stringv((const uint8_t *)signer_data,
-                             signer_len));
+            janet_array_push(
+                signer_arr,
+                janet_stringv((const uint8_t *)signer_data, signer_len));
             BIO_free(signer_bio);
         }
         janet_table_put(result, janet_ckeywordv("signers"),
@@ -191,13 +194,15 @@ Janet cfun_cms_encrypt(int32_t argc, Janet *argv) {
             BIO_free(cert_bio);
             if (!cert) {
                 sk_X509_pop_free(recips, X509_free);
-                crypto_panic_config("failed to load recipient certificate %d", i);
+                crypto_panic_config("failed to load recipient certificate %d",
+                                    i);
             }
             sk_X509_push(recips, cert);
         }
     } else {
         sk_X509_free(recips);
-        crypto_panic_config("certificates must be string or array of strings");
+        crypto_panic_config(
+            "certificates must be string or array of strings");
     }
 
     /* Default cipher: AES-256-CBC */
@@ -208,11 +213,16 @@ Janet cfun_cms_encrypt(int32_t argc, Janet *argv) {
             janet_checktype(opts, JANET_STRUCT)) {
             Janet cipher_val = janet_get(opts, janet_ckeywordv("cipher"));
             if (janet_checktype(cipher_val, JANET_KEYWORD)) {
-                const char *cipher_name = (const char *)janet_unwrap_keyword(cipher_val);
-                if (strcmp(cipher_name, "aes-128-cbc") == 0) cipher = EVP_aes_128_cbc();
-                else if (strcmp(cipher_name, "aes-192-cbc") == 0) cipher = EVP_aes_192_cbc();
-                else if (strcmp(cipher_name, "aes-256-cbc") == 0) cipher = EVP_aes_256_cbc();
-                else if (strcmp(cipher_name, "des3") == 0 || strcmp(cipher_name, "3des") == 0)
+                const char *cipher_name =
+                    (const char *)janet_unwrap_keyword(cipher_val);
+                if (strcmp(cipher_name, "aes-128-cbc") == 0)
+                    cipher = EVP_aes_128_cbc();
+                else if (strcmp(cipher_name, "aes-192-cbc") == 0)
+                    cipher = EVP_aes_192_cbc();
+                else if (strcmp(cipher_name, "aes-256-cbc") == 0)
+                    cipher = EVP_aes_256_cbc();
+                else if (strcmp(cipher_name, "des3") == 0 ||
+                         strcmp(cipher_name, "3des") == 0)
                     cipher = EVP_des_ede3_cbc();
             }
         }
@@ -259,8 +269,8 @@ Janet cfun_cms_decrypt(int32_t argc, Janet *argv) {
 
     /* Load private key */
     BIO *key_bio = BIO_new_mem_buf(key_pem.bytes, key_pem.len);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb,
-                     NULL);
+    EVP_PKEY *pkey =
+        PEM_read_bio_PrivateKey(key_bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(key_bio);
     if (!pkey) {
         X509_free(cert);
@@ -313,7 +323,8 @@ Janet cfun_cms_certs_only(int32_t argc, Janet *argv) {
         JanetByteView cert_pem = janet_getbytes(argv, 0);
         BIO *cert_bio = BIO_new_mem_buf(cert_pem.bytes, cert_pem.len);
         X509 *cert;
-        while ((cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL)) != NULL) {
+        while ((cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL)) !=
+               NULL) {
             sk_X509_push(certs, cert);
         }
         BIO_free(cert_bio);
@@ -401,7 +412,8 @@ Janet cfun_cms_get_certs(int32_t argc, Janet *argv) {
             PEM_write_bio_X509(cert_bio, cert);
             char *cert_data;
             long cert_len = BIO_get_mem_data(cert_bio, &cert_data);
-            janet_array_push(result, janet_stringv((const uint8_t *)cert_data, cert_len));
+            janet_array_push(
+                result, janet_stringv((const uint8_t *)cert_data, cert_len));
             BIO_free(cert_bio);
         }
         sk_X509_pop_free(certs, X509_free);

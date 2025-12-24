@@ -24,7 +24,7 @@
 /* MSG_DONTWAIT may not be available on all platforms.
  * Since our sockets are already non-blocking, we can use 0 as fallback. */
 #ifndef MSG_DONTWAIT
-    #define MSG_DONTWAIT 0
+  #define MSG_DONTWAIT 0
 #endif
 
 /*
@@ -116,29 +116,27 @@ const JanetMethod dtls_server_methods[] = {
     {"send-to", cfun_dtls_send_to},
     {"close", cfun_dtls_close_server},
     {"localname", cfun_dtls_server_localname},
-    {NULL, NULL}
-};
+    {NULL, NULL}};
 
 /* Method dispatch using janet_getmethod like TLS does */
 static int dtls_server_get(void *p, Janet key, Janet *out) {
     (void)p;
     if (!janet_checktype(key, JANET_KEYWORD)) return 0;
-    return janet_getmethod(janet_unwrap_keyword(key), dtls_server_methods, out);
+    return janet_getmethod(janet_unwrap_keyword(key), dtls_server_methods,
+                           out);
 }
 
-const JanetAbstractType dtls_server_type = {
-    "jsec/dtls-server",
-    dtls_server_gc,
-    dtls_server_mark,
-    dtls_server_get,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    JANET_ATEND_HASH
-};
+const JanetAbstractType dtls_server_type = {"jsec/dtls-server",
+                                            dtls_server_gc,
+                                            dtls_server_mark,
+                                            dtls_server_get,
+                                            NULL,
+                                            NULL,
+                                            NULL,
+                                            NULL,
+                                            NULL,
+                                            NULL,
+                                            JANET_ATEND_HASH};
 
 /*
  * =============================================================================
@@ -179,8 +177,8 @@ static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
     }
 
     unsigned int len = 0;
-    HMAC(EVP_sha256(), secret, sizeof(secret),
-         (unsigned char *)&peer, peerlen, cookie, &len);
+    HMAC(EVP_sha256(), secret, sizeof(secret), (unsigned char *)&peer,
+         peerlen, cookie, &len);
     *cookie_len = len;
     return 1;
 }
@@ -273,16 +271,17 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport = janet_stream(fd,
-                                          JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport =
+        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS server */
-    DTLSServer *server = janet_abstract(&dtls_server_type, sizeof(DTLSServer));
+    DTLSServer *server =
+        janet_abstract(&dtls_server_type, sizeof(DTLSServer));
     memset(server, 0, sizeof(DTLSServer));
 
     /* Initialize embedded JanetStream for method dispatch */
     server->stream.handle =
-        JANET_HANDLE_NONE;  /* We don't own the handle directly */
+        JANET_HANDLE_NONE; /* We don't own the handle directly */
     server->stream.flags = JANET_STREAM_READABLE | JANET_STREAM_WRITABLE;
     server->stream.methods = dtls_server_methods;
 
@@ -318,7 +317,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         janet_checktype(opts, JANET_STRUCT)) {
         security = janet_get(opts, janet_ckeywordv("security"));
     }
-    apply_security_options(server->ctx, security, 1);  /* is_dtls = 1 */
+    apply_security_options(server->ctx, security, 1); /* is_dtls = 1 */
 
     /* Load certificate and key (required for server) */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -326,7 +325,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         Janet cert = janet_get(opts, janet_ckeywordv("cert"));
         Janet key = janet_get(opts, janet_ckeywordv("key"));
 
-        if (janet_checktype(cert, JANET_NIL) || janet_checktype(key, JANET_NIL)) {
+        if (janet_checktype(cert, JANET_NIL) ||
+            janet_checktype(key, JANET_NIL)) {
             dtls_panic_config("dtls/listen requires :cert and :key options");
         }
 
@@ -348,12 +348,14 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         /* Client verification */
         Janet verify = janet_get(opts, janet_ckeywordv("verify"));
         if (janet_truthy(verify)) {
-            SSL_CTX_set_verify(server->ctx,
-                               SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                               NULL);
+            SSL_CTX_set_verify(
+                server->ctx,
+                SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 
-            /* Handle :trusted-cert option for trusting specific client certs */
-            Janet trusted_cert = janet_get(opts, janet_ckeywordv("trusted-cert"));
+            /* Handle :trusted-cert option for trusting specific client certs
+             */
+            Janet trusted_cert =
+                janet_get(opts, janet_ckeywordv("trusted-cert"));
             if (!janet_checktype(trusted_cert, JANET_NIL)) {
                 if (!add_trusted_cert(server->ctx, trusted_cert)) {
                     SSL_CTX_free(server->ctx);
@@ -415,7 +417,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         /* New connection - create session */
         session = dtls_server_create_session(server, peer_addr);
         if (!session) {
-            return janet_wrap_nil();  /* Out of memory or other error */
+            return janet_wrap_nil(); /* Out of memory or other error */
         }
         /* Store peer address in SSL ex_data for cookie generation */
         SSL_set_ex_data(session->ssl, 0, &session->peer_addr);
@@ -449,7 +451,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         send_dtls_packet(server->transport, session);
 
         if (session->state != DTLS_STATE_ESTABLISHED) {
-            return janet_wrap_nil();  /* Handshake still in progress */
+            return janet_wrap_nil(); /* Handshake still in progress */
         }
         /* Fall through - handshake complete, may have application data */
     }
@@ -462,8 +464,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         if (nread > 0) {
             out_buf->count += nread;
             /* Return address (data is in buffer per Janet convention) */
-            DTLSAddress *ret_addr = janet_abstract(&dtls_address_type,
-                                                   sizeof(DTLSAddress));
+            DTLSAddress *ret_addr =
+                janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
             memcpy(ret_addr, peer_addr, sizeof(DTLSAddress));
             return janet_wrap_abstract(ret_addr);
         }
@@ -471,7 +473,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         /* Handle peer close */
         if (SSL_get_error(session->ssl, nread) == SSL_ERROR_ZERO_RETURN) {
             SSL_shutdown(session->ssl);
-            send_dtls_packet(server->transport, session);  /* Send close_notify */
+            send_dtls_packet(server->transport,
+                             session); /* Send close_notify */
             dtls_server_remove_session(server, peer_addr);
         }
     }
@@ -524,47 +527,48 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
-                DTLSServer *server = state->server;
+            DTLSServer *server = state->server;
 
-                /* Process all available datagrams */
-                while (1) {
-                    uint8_t recv_buf[65536];
-                    DTLSAddress peer_addr;
-                    peer_addr.addrlen = sizeof(peer_addr.addr);
+            /* Process all available datagrams */
+            while (1) {
+                uint8_t recv_buf[65536];
+                DTLSAddress peer_addr;
+                peer_addr.addrlen = sizeof(peer_addr.addr);
 
-                    ssize_t n = recvfrom(server->transport->handle, recv_buf, sizeof(recv_buf),
-                                         MSG_DONTWAIT,
-                                         (struct sockaddr *)&peer_addr.addr, &peer_addr.addrlen);
+                ssize_t n = recvfrom(server->transport->handle, recv_buf,
+                                     sizeof(recv_buf), MSG_DONTWAIT,
+                                     (struct sockaddr *)&peer_addr.addr,
+                                     &peer_addr.addrlen);
 
-                    if (n < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            /* No more data available - just return and wait for
-                             * the next READ event. The fiber is already registered
-                             * for JANET_ASYNC_LISTEN_READ. */
-                            break;  /* Exit loop, stay registered */
-                        }
-                        janet_cancel(fiber, janet_cstringv(strerror(errno)));
-                        janet_async_end(fiber);
-                        return;
+                if (n < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        /* No more data available - just return and wait for
+                         * the next READ event. The fiber is already
+                         * registered for JANET_ASYNC_LISTEN_READ. */
+                        break; /* Exit loop, stay registered */
                     }
-
-                    /* Cleanup expired sessions periodically */
-                    dtls_server_cleanup_expired(server, get_current_time());
-
-                    /* Process datagram - may be handshake or app data */
-                    Janet result = process_datagram(server, recv_buf, (int)n, &peer_addr,
-                                                    state->buffer);
-
-                    if (janet_checktype(result, JANET_ABSTRACT)) {
-                        /* Got application data - return to caller */
-                        janet_schedule(fiber, result);
-                        janet_async_end(fiber);
-                        return;
-                    }
-                    /* Handshake packet processed - check for more */
+                    janet_cancel(fiber, janet_cstringv(strerror(errno)));
+                    janet_async_end(fiber);
+                    return;
                 }
-                break;
+
+                /* Cleanup expired sessions periodically */
+                dtls_server_cleanup_expired(server, get_current_time());
+
+                /* Process datagram - may be handshake or app data */
+                Janet result = process_datagram(server, recv_buf, (int)n,
+                                                &peer_addr, state->buffer);
+
+                if (janet_checktype(result, JANET_ABSTRACT)) {
+                    /* Got application data - return to caller */
+                    janet_schedule(fiber, result);
+                    janet_async_end(fiber);
+                    return;
+                }
+                /* Handshake packet processed - check for more */
             }
+            break;
+        }
 
         default:
             break;
@@ -625,7 +629,7 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
     janet_async_start(server->transport, JANET_ASYNC_LISTEN_READ,
                       dtls_recv_from_callback, state);
 
-    return janet_wrap_nil();  /* Will be replaced by async result */
+    return janet_wrap_nil(); /* Will be replaced by async result */
 }
 
 /*
@@ -677,7 +681,8 @@ static Janet cfun_dtls_send_to(int32_t argc, Janet *argv) {
  *
  * Close the DTLS server and all sessions.
  * If force is true, skip sending close_notify alerts.
- * Otherwise, sends close_notify to all established sessions (best effort, non-blocking).
+ * Otherwise, sends close_notify to all established sessions (best effort,
+ * non-blocking).
  */
 static Janet cfun_dtls_close_server(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
@@ -767,48 +772,39 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
  */
 
 static const JanetReg server_cfuns[] = {
-    {
-        "listen", cfun_dtls_listen,
-        "(dtls/listen host port &opt opts)\n\n"
-        "Create a DTLS server listening on the specified address.\n"
-        "Returns a DTLSServer object.\n\n"
-        "Options:\n"
-        "  :cert - Server certificate (required)\n"
-        "  :key - Server private key (required)\n"
-        "  :verify - Require client certificates (default false)\n"
-        "  :ca - CA certificates for client verification\n"
-        "  :session-timeout - Session timeout in seconds (default 300)"
-    },
-    {
-        "recv-from", cfun_dtls_recv_from,
-        "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
-        "Receive a datagram from any peer.\n"
-        "Returns the peer address. Data is placed in buf.\n"
-        "Handles handshakes transparently - only returns when application data is ready.\n"
-        "The last arg can be a number (timeout) or table/struct with :timeout key.\n"
-        "Matches Janet's net/recv-from convention."
-    },
-    {
-        "send-to", cfun_dtls_send_to,
-        "(dtls/send-to server addr data &opt timeout)\n\n"
-        "Send a datagram to a specific peer.\n"
-        "The peer must have an established session."
-    },
-    {
-        "close-server", cfun_dtls_close_server,
-        "(dtls/close-server server &opt force)\n\n"
-        "Close the DTLS server and all sessions.\n"
-        "Sends close_notify to all established sessions unless force is true.\n"
-        "Close notifications are non-blocking (best effort)."
-    },
-    {
-        "localname", cfun_dtls_server_localname,
-        "(dtls/localname server)\n\n"
-        "Get the local address the server is bound to.\n"
-        "Returns [host port] tuple."
-    },
-    {NULL, NULL, NULL}
-};
+    {"listen", cfun_dtls_listen,
+     "(dtls/listen host port &opt opts)\n\n"
+     "Create a DTLS server listening on the specified address.\n"
+     "Returns a DTLSServer object.\n\n"
+     "Options:\n"
+     "  :cert - Server certificate (required)\n"
+     "  :key - Server private key (required)\n"
+     "  :verify - Require client certificates (default false)\n"
+     "  :ca - CA certificates for client verification\n"
+     "  :session-timeout - Session timeout in seconds (default 300)"},
+    {"recv-from", cfun_dtls_recv_from,
+     "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
+     "Receive a datagram from any peer.\n"
+     "Returns the peer address. Data is placed in buf.\n"
+     "Handles handshakes transparently - only returns when application data "
+     "is ready.\n"
+     "The last arg can be a number (timeout) or table/struct with :timeout "
+     "key.\n"
+     "Matches Janet's net/recv-from convention."},
+    {"send-to", cfun_dtls_send_to,
+     "(dtls/send-to server addr data &opt timeout)\n\n"
+     "Send a datagram to a specific peer.\n"
+     "The peer must have an established session."},
+    {"close-server", cfun_dtls_close_server,
+     "(dtls/close-server server &opt force)\n\n"
+     "Close the DTLS server and all sessions.\n"
+     "Sends close_notify to all established sessions unless force is true.\n"
+     "Close notifications are non-blocking (best effort)."},
+    {"localname", cfun_dtls_server_localname,
+     "(dtls/localname server)\n\n"
+     "Get the local address the server is bound to.\n"
+     "Returns [host port] tuple."},
+    {NULL, NULL, NULL}};
 
 void jdtls_register_server(JanetTable *env) {
     janet_register_abstract_type(&dtls_server_type);

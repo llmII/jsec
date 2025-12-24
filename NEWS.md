@@ -1,21 +1,87 @@
 
 # Table of Contents
 
--   [News](#org2e1c557)
-    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#org1d87526)
-    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#orgf5ad8a0)
-    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#orgfc2d5d9)
-    -   [2025-12-13 - Dependency Update](#orgec34966)
-    -   [2025-12-12 - Initial Release](#org43594d7)
+-   [News](#orgfc6dfbe)
+    -   [2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements](#orgf5b0049)
+    -   [2025-12-24 - NetBSD & DragonflyBSD Support](#orge4bd06f)
+    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#orgfdd09ae)
+    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org4887c3a)
+    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#org2ff7ede)
+    -   [2025-12-13 - Dependency Update](#org431fa5b)
+    -   [2025-12-12 - Initial Release](#orge2f65b9)
 
 
 
-<a id="org2e1c557"></a>
+<a id="orgfc6dfbe"></a>
 
 # News
 
 
-<a id="org1d87526"></a>
+<a id="orgf5b0049"></a>
+
+## 2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements
+
+OpenBSD is now fully supported with all tests passing:
+
+
+### OpenBSD (LibreSSL 3.9+)
+
+-   Fixed TLS hang in `accept-loop` test caused by premature WANT<sub>READ</sub> returns
+-   Added do-while loop in `jtls_attempt_io` to retry operations when BIO buffer has unread data
+-   Prevents yielding to event loop when local buffered data can satisfy reads
+-   All 1934 tests now pass on OpenBSD 7.6
+
+
+### Code Quality Improvements
+
+-   Migrated from astyle to clang-format for C code formatting
+-   Consistent K&R style with 4-space indentation, 78/80 column limits
+-   Improved buffer allocation code clarity with better variable naming
+-   Added `check-format-c` task to verify formatting compliance
+-   Updated CONTRIBUTING documentation
+
+
+### Buffer Management
+
+-   Clarified `janet_buffer_ensure` usage in TLS read operations
+-   Renamed confusing `capacity` variables to `read_size` for clarity
+-   Added comments explaining buffer allocation logic
+-   No functional changes - existing code was correct
+
+
+<a id="orge4bd06f"></a>
+
+## 2025-12-24 - NetBSD & DragonflyBSD Support
+
+NetBSD and DragonflyBSD are now fully supported with all tests passing:
+
+
+### NetBSD (OpenSSL 3.x)
+
+-   Tested on NetBSD 10.1
+-   All 1934 tests pass
+-   No platform-specific changes needed
+
+
+### DragonflyBSD (LibreSSL 3.9+)
+
+-   Tested on DragonflyBSD 6.4
+-   All 1935 tests pass
+-   Fixed `BIO_flush~/~BIO_reset` unused value warnings
+
+
+### LibreSSL Compatibility
+
+-   LibreSSL support now working across all BSD platforms excluding OpenBSD (WIP)
+-   Conditional compilation for OpenSSL 3.0 vs LibreSSL APIs
+
+
+### OpenBSD Status
+
+-   Build and most tests work with LibreSSL 3.9+
+
+
+<a id="orgfdd09ae"></a>
 
 ## 2025-12-23 - macOS Support via Homebrew OpenSSL
 
@@ -28,7 +94,7 @@ macOS is now fully supported with all tests passing:
 -   Janet and jpm
 
 
-<a id="orgf5ad8a0"></a>
+<a id="org4887c3a"></a>
 
 ## 2025-12-15 - FreeBSD Support & Performance Improvements
 
@@ -53,7 +119,7 @@ all tests passing:
 -   Some keywords cached to prevent runtime lookups in hot paths
 
 
-<a id="orgfc2d5d9"></a>
+<a id="org2ff7ede"></a>
 
 ## 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
@@ -72,7 +138,7 @@ Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
 These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
 
 
-<a id="orgec34966"></a>
+<a id="org431fa5b"></a>
 
 ## 2025-12-13 - Dependency Update
 
@@ -80,7 +146,7 @@ These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
     merged the necessary changes for spork-https compatibility
 
 
-<a id="org43594d7"></a>
+<a id="orge2f65b9"></a>
 
 ## 2025-12-12 - Initial Release
 

@@ -30,9 +30,13 @@ int jtls_ocsp_status_cb(SSL *ssl, void *arg) {
 }
 
 /* Free callback for OCSP ex_data */
-void jtls_ocsp_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                       int idx, long argl, void *argp) {
-    (void)parent; (void)ad; (void)idx; (void)argl; (void)argp;
+void jtls_ocsp_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                       long argl, void *argp) {
+    (void)parent;
+    (void)ad;
+    (void)idx;
+    (void)argl;
+    (void)argp;
     if (ptr) {
         OCSPData *data = (OCSPData *)ptr;
         if (data->data) free(data->data);
