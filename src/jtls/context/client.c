@@ -51,7 +51,8 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts) {
             session_cache = janet_truthy(cache_opt);
         }
     }
-    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_CLIENT : SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_session_cache_mode(ctx,
+                                   session_cache ? SSL_SESS_CACHE_CLIENT : SSL_SESS_CACHE_OFF);
 
     /* Handle session tickets */
     int tickets = 1;

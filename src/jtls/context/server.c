@@ -52,7 +52,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
             session_cache = janet_truthy(cache_opt);
         }
     }
-    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_SERVER : SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_session_cache_mode(ctx,
+                                   session_cache ? SSL_SESS_CACHE_SERVER : SSL_SESS_CACHE_OFF);
 
     /* Handle session tickets */
     int tickets = 1;
@@ -72,7 +73,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     int ocsp_stapling = 0;
     if (janet_checktype(security_opts, JANET_TABLE)) {
         JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ocsp_opt = janet_table_get(opts_table, janet_ckeywordv("ocsp-stapling"));
+        Janet ocsp_opt = janet_table_get(opts_table,
+                                         janet_ckeywordv("ocsp-stapling"));
         if (!janet_checktype(ocsp_opt, JANET_NIL)) {
             ocsp_stapling = janet_truthy(ocsp_opt);
         }
@@ -97,7 +99,8 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
 
     /* Set session ID context for resumption */
     const unsigned char session_id_ctx[] = "jsec_server";
-    SSL_CTX_set_session_id_context(ctx, session_id_ctx, sizeof(session_id_ctx) - 1);
+    SSL_CTX_set_session_id_context(ctx, session_id_ctx,
+                                   sizeof(session_id_ctx) - 1);
 }
 
 /*============================================================================
@@ -153,7 +156,8 @@ static int check_cache_hit(const char *cert_path, const char *key_path,
  *============================================================================
  * Store context and credentials in cache.
  */
-static void update_cache(SSL_CTX *ctx, const char *cert_path, const char *key_path,
+static void update_cache(SSL_CTX *ctx, const char *cert_path,
+                         const char *key_path,
                          const unsigned char *cert_data, int cert_len,
                          const unsigned char *key_data, int key_len) {
     /* Free old cache data */

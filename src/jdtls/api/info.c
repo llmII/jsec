@@ -17,11 +17,11 @@
 Janet cfun_dtls_get_version(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
-    
+
     const char *version = SSL_get_version(client->ssl);
     return version ? janet_cstringv(version) : janet_wrap_nil();
 }
@@ -34,11 +34,11 @@ Janet cfun_dtls_get_version(int32_t argc, Janet *argv) {
 Janet cfun_dtls_get_cipher(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
-    
+
     const char *cipher = SSL_get_cipher(client->ssl);
     return cipher ? janet_cstringv(cipher) : janet_wrap_nil();
 }
@@ -51,11 +51,11 @@ Janet cfun_dtls_get_cipher(int32_t argc, Janet *argv) {
 Janet cfun_dtls_get_cipher_bits(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
-    
+
     int bits = SSL_get_cipher_bits(client->ssl, NULL);
     return janet_wrap_integer(bits);
 }
@@ -68,24 +68,25 @@ Janet cfun_dtls_get_cipher_bits(int32_t argc, Janet *argv) {
 Janet cfun_dtls_get_connection_info(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
-    
+
     JanetKV *kv = janet_struct_begin(4);
-    
+
     const char *version = SSL_get_version(client->ssl);
     janet_struct_put(kv, janet_ckeywordv("version"),
                      version ? janet_cstringv(version) : janet_wrap_nil());
-    
+
     const char *cipher = SSL_get_cipher(client->ssl);
     janet_struct_put(kv, janet_ckeywordv("cipher"),
                      cipher ? janet_cstringv(cipher) : janet_wrap_nil());
-    
+
     int bits = SSL_get_cipher_bits(client->ssl, NULL);
-    janet_struct_put(kv, janet_ckeywordv("cipher-bits"), janet_wrap_integer(bits));
-    
+    janet_struct_put(kv, janet_ckeywordv("cipher-bits"),
+                     janet_wrap_integer(bits));
+
     /* ALPN protocol if negotiated */
     const unsigned char *alpn;
     unsigned int alpn_len;
@@ -96,7 +97,7 @@ Janet cfun_dtls_get_connection_info(int32_t argc, Janet *argv) {
     } else {
         janet_struct_put(kv, janet_ckeywordv("alpn"), janet_wrap_nil());
     }
-    
+
     return janet_wrap_struct(janet_struct_end(kv));
 }
 
@@ -108,11 +109,11 @@ Janet cfun_dtls_get_connection_info(int32_t argc, Janet *argv) {
 Janet cfun_dtls_session_reused(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl) {
         return janet_wrap_false();
     }
-    
+
     return janet_wrap_boolean(SSL_session_reused(client->ssl));
 }
 
@@ -125,28 +126,28 @@ Janet cfun_dtls_session_reused(int32_t argc, Janet *argv) {
 Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
-    
+
     SSL_SESSION *session = SSL_get1_session(client->ssl);
     if (!session) {
         return janet_wrap_nil();
     }
-    
+
     /* Serialize session to DER */
     int len = i2d_SSL_SESSION(session, NULL);
     if (len <= 0) {
         SSL_SESSION_free(session);
         return janet_wrap_nil();
     }
-    
+
     JanetBuffer *buf = janet_buffer(len);
     unsigned char *p = buf->data;
     i2d_SSL_SESSION(session, &p);
     buf->count = len;
-    
+
     SSL_SESSION_free(session);
     return janet_wrap_buffer(buf);
 }
@@ -159,24 +160,25 @@ Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
 Janet cfun_dtls_localname(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->transport) {
         return janet_wrap_nil();
     }
-    
+
     int fd = (int)client->transport->handle;
     if (fd < 0) {
         return janet_wrap_nil();
     }
-    
+
     DTLSAddress local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.addrlen = sizeof(local_addr.addr);
-    
-    if (getsockname(fd, (struct sockaddr *)&local_addr.addr, &local_addr.addrlen) < 0) {
+
+    if (getsockname(fd, (struct sockaddr *)&local_addr.addr,
+                    &local_addr.addrlen) < 0) {
         return janet_wrap_nil();
     }
-    
+
     return dtls_address_wrap(&local_addr);
 }
 
@@ -188,7 +190,7 @@ Janet cfun_dtls_localname(int32_t argc, Janet *argv) {
 Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     return dtls_address_wrap(&client->peer_addr);
 }
 
@@ -202,26 +204,26 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
 Janet cfun_dtls_set_session(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl) {
         return janet_wrap_false();
     }
-    
+
     JanetByteView bytes = janet_getbytes(argv, 1);
     if (bytes.len == 0) {
         return janet_wrap_false();
     }
-    
+
     /* Deserialize session from DER */
     const unsigned char *p = bytes.bytes;
     SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, bytes.len);
     if (!session) {
         return janet_wrap_false();
     }
-    
+
     int result = SSL_set_session(client->ssl, session);
     SSL_SESSION_free(session);
-    
+
     return janet_wrap_boolean(result == 1);
 }
 
@@ -235,37 +237,37 @@ Janet cfun_dtls_set_session(int32_t argc, Janet *argv) {
 Janet cfun_dtls_trust_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || !client->ctx) {
         dtls_panic_io("invalid DTLS client");
     }
-    
+
     JanetByteView cert_pem = janet_getbytes(argv, 1);
-    
+
     /* Create BIO from PEM data */
     BIO *bio = BIO_new_mem_buf(cert_pem.bytes, (int)cert_pem.len);
     if (!bio) {
         dtls_panic_ssl("failed to create BIO for certificate");
     }
-    
+
     /* Parse certificate */
     X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
     BIO_free(bio);
-    
+
     if (!cert) {
         dtls_panic_ssl("failed to parse PEM certificate");
     }
-    
+
     /* Get or create cert store and add the certificate */
     X509_STORE *store = SSL_CTX_get_cert_store(client->ctx);
     if (!store) {
         X509_free(cert);
         dtls_panic_ssl("failed to get certificate store");
     }
-    
+
     int result = X509_STORE_add_cert(store, cert);
     X509_free(cert);
-    
+
     if (result != 1) {
         /* Might already be in store, not necessarily an error */
         unsigned long err = ERR_peek_last_error();
@@ -274,7 +276,7 @@ Janet cfun_dtls_trust_cert(int32_t argc, Janet *argv) {
         }
         ERR_clear_error();
     }
-    
+
     return janet_wrap_nil();
 }
 
@@ -288,20 +290,21 @@ Janet cfun_dtls_trust_cert(int32_t argc, Janet *argv) {
 Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     /* Return nil if tracking not enabled */
     if (!client->track_handshake_time) {
         return janet_wrap_nil();
     }
-    
+
     /* Return nil if handshake not complete */
     if (client->ts_handshake.tv_sec == 0 && client->ts_handshake.tv_nsec == 0) {
         return janet_wrap_nil();
     }
-    
+
     /* Calculate duration: handshake_time - connect_time */
-    double duration = (double)(client->ts_handshake.tv_sec - client->ts_connect.tv_sec) +
+    double duration = (double)(client->ts_handshake.tv_sec -
+                               client->ts_connect.tv_sec) +
                       (double)(client->ts_handshake.tv_nsec - client->ts_connect.tv_nsec) / 1e9;
-    
+
     return janet_wrap_number(duration);
 }

@@ -53,15 +53,15 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
     if (argc <= idx) {
         return INFINITY;
     }
-    
+
     Janet arg = argv[idx];
-    
+
     if (janet_checktype(arg, JANET_NIL)) {
         return INFINITY;
     }
-    
+
     double timeout = INFINITY;
-    
+
     if (janet_checktype(arg, JANET_NUMBER)) {
         timeout = janet_unwrap_number(arg);
     } else if (janet_checktype(arg, JANET_TABLE) ||
@@ -72,12 +72,12 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
             timeout = janet_unwrap_number(timeout_val);
         }
     }
-    
+
     /* Validate: negative timeouts are invalid */
     if (timeout < 0) {
         tls_panic_param("timeout must be non-negative, got %f", timeout);
     }
-    
+
     return timeout;
 }
 
@@ -97,14 +97,14 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     /* Handle :all keyword or integer for n */
     int read_all = 0;
     int32_t bytes_to_read = 4096;
-    
+
     if (janet_keyeq(argv[1], "all")) {
         read_all = 1;
         bytes_to_read = INT32_MAX;
     } else {
         bytes_to_read = janet_getnat(argv, 1);
     }
-    
+
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
     double timeout = parse_timeout_opt(argc, argv, 3);
 
@@ -192,7 +192,8 @@ Janet cfun_write(int32_t argc, Janet *argv) {
         tls_panic_io("stream is closed");
     }
 
-    if (tls->conn_state == TLS_CONN_SHUTDOWN_SENT || tls->conn_state == TLS_CONN_CLOSED) {
+    if (tls->conn_state == TLS_CONN_SHUTDOWN_SENT ||
+        tls->conn_state == TLS_CONN_CLOSED) {
         tls_panic_io("connection is shutting down");
     }
 

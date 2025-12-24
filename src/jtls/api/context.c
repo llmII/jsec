@@ -25,7 +25,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
     SSL_CTX *ctx = NULL;
 
-    if (janet_checktype(opts, JANET_TABLE) || janet_checktype(opts, JANET_STRUCT)) {
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
         Janet cert = janet_get(opts, janet_ckeywordv("cert"));
         Janet key = janet_get(opts, janet_ckeywordv("key"));
 
@@ -86,7 +87,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                     Janet sub_sec = janet_get(sub_opts, janet_ckeywordv("security"));
                     Janet sub_alpn = janet_get(sub_opts, janet_ckeywordv("alpn"));
 
-                    SSL_CTX *sub_ctx = jtls_create_server_ctx(sub_cert, sub_key, sub_sec, sub_alpn, 1);
+                    SSL_CTX *sub_ctx = jtls_create_server_ctx(sub_cert, sub_key, sub_sec,
+                                       sub_alpn, 1);
                     if (!sub_ctx) {
                         for (int j = 0; j < idx; j++) {
                             free(data->hostnames[j]);
@@ -133,7 +135,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         }
     }
 
-    TLSContext *tls_ctx = (TLSContext *)janet_abstract(&tls_context_type, sizeof(TLSContext));
+    TLSContext *tls_ctx = (TLSContext *)janet_abstract(&tls_context_type,
+                          sizeof(TLSContext));
     tls_ctx->ctx = ctx;
     tls_ctx->is_dtls = 0;  /* This is a TLS context */
     return janet_wrap_abstract(tls_ctx);
@@ -191,10 +194,10 @@ Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
 Janet cfun_trust_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     TLSContext *tls_ctx = janet_getabstract(argv, 0, &tls_context_type);
-    
+
     if (!jtls_add_trusted_cert(tls_ctx->ctx, argv[1])) {
         tls_panic_ssl("failed to add trusted certificate");
     }
-    
+
     return janet_wrap_nil();
 }

@@ -18,14 +18,14 @@
  * HELPER: Check handshake completion
  *============================================================================*/
 static void check_handshake(TLSStream *tls) {
-  if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
-      SSL_is_init_finished(tls->ssl)) {
-    tls->conn_state = TLS_CONN_READY;
-    if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
-        tls->ts_handshake.tv_nsec == 0) {
-      clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
+    if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
+        SSL_is_init_finished(tls->ssl)) {
+        tls->conn_state = TLS_CONN_READY;
+        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
+            tls->ts_handshake.tv_nsec == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
+        }
     }
-  }
 }
 
 /*============================================================================
@@ -33,15 +33,15 @@ static void check_handshake(TLSStream *tls) {
  *============================================================================
  */
 Janet cfun_session_reused(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
-  TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-  check_handshake(tls);
-  if (!tls->ssl || tls->conn_state != TLS_CONN_READY) {
-    return janet_wrap_boolean(0);
-  }
+    check_handshake(tls);
+    if (!tls->ssl || tls->conn_state != TLS_CONN_READY) {
+        return janet_wrap_boolean(0);
+    }
 
-  return janet_wrap_boolean(SSL_session_reused(tls->ssl));
+    return janet_wrap_boolean(SSL_session_reused(tls->ssl));
 }
 
 /*============================================================================
@@ -49,30 +49,30 @@ Janet cfun_session_reused(int32_t argc, Janet *argv) {
  *============================================================================
  */
 Janet cfun_get_session(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
-  TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-  check_handshake(tls);
-  if (!tls->ssl || tls->conn_state != TLS_CONN_READY) {
-    return janet_wrap_nil();
-  }
+    check_handshake(tls);
+    if (!tls->ssl || tls->conn_state != TLS_CONN_READY) {
+        return janet_wrap_nil();
+    }
 
-  SSL_SESSION *session = SSL_get1_session(tls->ssl);
-  if (!session) {
-    return janet_wrap_nil();
-  }
+    SSL_SESSION *session = SSL_get1_session(tls->ssl);
+    if (!session) {
+        return janet_wrap_nil();
+    }
 
-  unsigned char *der_buf = NULL;
-  int der_len = i2d_SSL_SESSION(session, &der_buf);
-  SSL_SESSION_free(session);
+    unsigned char *der_buf = NULL;
+    int der_len = i2d_SSL_SESSION(session, &der_buf);
+    SSL_SESSION_free(session);
 
-  if (der_len <= 0 || !der_buf) {
-    return janet_wrap_nil();
-  }
+    if (der_len <= 0 || !der_buf) {
+        return janet_wrap_nil();
+    }
 
-  Janet result = janet_wrap_string(janet_string(der_buf, der_len));
-  OPENSSL_free(der_buf);
-  return result;
+    Janet result = janet_wrap_string(janet_string(der_buf, der_len));
+    OPENSSL_free(der_buf);
+    return result;
 }
 
 /*============================================================================
@@ -80,33 +80,33 @@ Janet cfun_get_session(int32_t argc, Janet *argv) {
  *============================================================================
  */
 Janet cfun_set_session(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 2);
-  TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
-  JanetByteView session_data = janet_getbytes(argv, 1);
+    janet_fixarity(argc, 2);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+    JanetByteView session_data = janet_getbytes(argv, 1);
 
-  if (!tls->ssl) {
-    tls_panic_io("stream not initialized");
-  }
+    if (!tls->ssl) {
+        tls_panic_io("stream not initialized");
+    }
 
-  if (tls->conn_state == TLS_CONN_READY) {
-    tls_panic_io("cannot set session after handshake");
-  }
+    if (tls->conn_state == TLS_CONN_READY) {
+        tls_panic_io("cannot set session after handshake");
+    }
 
-  const unsigned char *der_ptr = session_data.bytes;
-  SSL_SESSION *session = d2i_SSL_SESSION(NULL, &der_ptr, session_data.len);
+    const unsigned char *der_ptr = session_data.bytes;
+    SSL_SESSION *session = d2i_SSL_SESSION(NULL, &der_ptr, session_data.len);
 
-  if (!session) {
-    tls_panic_ssl("failed to deserialize session");
-  }
+    if (!session) {
+        tls_panic_ssl("failed to deserialize session");
+    }
 
-  int ret = SSL_set_session(tls->ssl, session);
-  SSL_SESSION_free(session);
+    int ret = SSL_set_session(tls->ssl, session);
+    SSL_SESSION_free(session);
 
-  if (ret != 1) {
-    tls_panic_ssl("failed to set session");
-  }
+    if (ret != 1) {
+        tls_panic_ssl("failed to set session");
+    }
 
-  return janet_wrap_nil();
+    return janet_wrap_nil();
 }
 
 /*============================================================================
@@ -114,18 +114,18 @@ Janet cfun_set_session(int32_t argc, Janet *argv) {
  *============================================================================
  */
 Janet cfun_renegotiate(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
-  TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-  if (!tls->ssl)
-    tls_panic_io("stream not initialized");
+    if (!tls->ssl)
+        tls_panic_io("stream not initialized");
 
-  int ret = SSL_renegotiate(tls->ssl);
-  if (ret == 1)
-    return janet_ckeywordv("ok");
+    int ret = SSL_renegotiate(tls->ssl);
+    if (ret == 1)
+        return janet_ckeywordv("ok");
 
-  tls_panic_ssl("renegotiation failed");
-  return janet_wrap_nil();
+    tls_panic_ssl("renegotiation failed");
+    return janet_wrap_nil();
 }
 
 /*============================================================================
@@ -133,22 +133,22 @@ Janet cfun_renegotiate(int32_t argc, Janet *argv) {
  *============================================================================
  */
 Janet cfun_key_update(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
-  TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-  if (!tls->ssl)
-    tls_panic_io("stream not initialized");
+    if (!tls->ssl)
+        tls_panic_io("stream not initialized");
 
 #if JSEC_HAS_KEY_UPDATE
-  int ret = SSL_key_update(tls->ssl, SSL_KEY_UPDATE_REQUESTED);
-  if (ret == 1)
-    return janet_ckeywordv("ok");
+    int ret = SSL_key_update(tls->ssl, SSL_KEY_UPDATE_REQUESTED);
+    if (ret == 1)
+        return janet_ckeywordv("ok");
 
-  tls_panic_ssl("key update failed");
+    tls_panic_ssl("key update failed");
 #else
-  /* LibreSSL does not support TLS 1.3 key update */
-  (void)tls; /* Suppress unused warning */
-  tls_panic_io("key update not supported (LibreSSL lacks SSL_key_update)");
+    /* LibreSSL does not support TLS 1.3 key update */
+    (void)tls; /* Suppress unused warning */
+    tls_panic_io("key update not supported (LibreSSL lacks SSL_key_update)");
 #endif
-  return janet_wrap_nil();
+    return janet_wrap_nil();
 }

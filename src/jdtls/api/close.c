@@ -17,13 +17,13 @@ extern void dtls_client_start_async_close(DTLSClient *client, int mode);
  */
 Janet cfun_dtls_shutdown(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
-    
+
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    
+
     if (!client->ssl || client->closed) {
         return janet_wrap_nil();
     }
-    
+
     /* Send close_notify but don't close socket */
     int ret = SSL_shutdown(client->ssl);
     if (ret < 0) {
@@ -32,10 +32,10 @@ Janet cfun_dtls_shutdown(int32_t argc, Janet *argv) {
             dtls_panic_ssl("DTLS shutdown failed");
         }
     }
-    
+
     /* Mark as shutdown but not closed - socket still usable for raw UDP */
     client->state = DTLS_STATE_SHUTDOWN;
-    
+
     return janet_wrap_nil();
 }
 
@@ -48,14 +48,14 @@ Janet cfun_dtls_shutdown(int32_t argc, Janet *argv) {
  */
 Janet cfun_dtls_close(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
-    
+
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
     int force = argc > 1 && janet_truthy(argv[1]);
-    
+
     if (client->closed) {
         return janet_wrap_nil();
     }
-    
+
     /* For force close or non-established state, skip SSL shutdown */
     if (force || client->state != DTLS_STATE_ESTABLISHED) {
         client->closed = 1;
@@ -65,13 +65,13 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
         }
         return janet_wrap_nil();
     }
-    
+
     /* RFC-compliant: Send close_notify and wait for peer's */
     client->state = DTLS_STATE_SHUTDOWN;
-    
+
     /* Try initial shutdown */
     DTLSResult result = dtls_do_shutdown(client->ssl);
-    
+
     if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF) {
         /* Shutdown complete */
         client->closed = 1;
@@ -81,7 +81,7 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
         }
         return janet_wrap_nil();
     }
-    
+
     /* Need to wait for peer's close_notify */
     int mode = (result == DTLS_RESULT_WANT_WRITE)
                ? JANET_ASYNC_LISTEN_WRITE

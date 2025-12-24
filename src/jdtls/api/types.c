@@ -11,7 +11,7 @@
 static int dtls_client_gc(void *p, size_t s) {
     (void)s;
     DTLSClient *client = (DTLSClient *)p;
-    
+
     if (client->ssl) {
         SSL_free(client->ssl);
         client->ssl = NULL;
@@ -22,18 +22,18 @@ static int dtls_client_gc(void *p, size_t s) {
         client->ctx = NULL;
     }
     /* Transport is a Janet stream - GC handles it */
-    
+
     return 0;
 }
 
 static int dtls_client_mark(void *p, size_t s) {
     (void)s;
     DTLSClient *client = (DTLSClient *)p;
-    
+
     if (client->transport) {
         janet_mark(janet_wrap_abstract(client->transport));
     }
-    
+
     return 0;
 }
 
