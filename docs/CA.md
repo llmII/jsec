@@ -1,25 +1,25 @@
 
 # Table of Contents
 
-1.  [Overview](#orgb8b97bf)
-    1.  [Design Philosophy](#org0a29331)
-2.  [Quick Start](#org0a38a0d)
-3.  [API Reference](#org895f18a)
-    1.  [Constructors](#org16764b5)
-    2.  [Certificate Issuance](#orgcbef303)
-    3.  [Accessor Methods](#org3698990)
-    4.  [Revocation and CRL](#org86ee43c)
-    5.  [OCSP Support](#org1c9c75e)
-    6.  [OCSP Responder Example](#org8d25a9a)
-4.  [Key Types](#orgc1c0f9f)
-5.  [Serial Number Persistence](#orgfb8cdcf)
-6.  [Certificate Tracking](#org3d52a35)
-7.  [Subject Alternative Names (SAN)](#orga6692a9)
-8.  [PKI Hierarchy Example](#org3835a8e)
+1.  [Overview](#orge8524d9)
+    1.  [Design Philosophy](#org2ff6dac)
+2.  [Quick Start](#org913834a)
+3.  [API Reference](#org120d1c0)
+    1.  [Constructors](#orgad4246a)
+    2.  [Certificate Issuance](#org762becf)
+    3.  [Accessor Methods](#orgbc8f8ad)
+    4.  [Revocation and CRL](#org3469f8e)
+    5.  [OCSP Support](#org6cf7491)
+    6.  [OCSP Responder Example](#org7313835)
+4.  [Key Types](#org4cc258e)
+5.  [Serial Number Persistence](#orga96c420)
+6.  [Certificate Tracking](#orgc5206c0)
+7.  [Subject Alternative Names (SAN)](#org46c291b)
+8.  [PKI Hierarchy Example](#orgdfcd2db)
 
 
 
-<a id="orgb8b97bf"></a>
+<a id="orge8524d9"></a>
 
 # Overview
 
@@ -33,7 +33,7 @@ for managing X.509 certificates. It supports:
 -   OCSP response creation (mechanics only - you provide HTTP server)
 
 
-<a id="org0a29331"></a>
+<a id="org2ff6dac"></a>
 
 ## Design Philosophy
 
@@ -44,7 +44,7 @@ for managing X.509 certificates. It supports:
 -   **Crypto only** - We handle certificates, you handle networking
 
 
-<a id="org0a38a0d"></a>
+<a id="org913834a"></a>
 
 # Quick Start
 
@@ -69,12 +69,12 @@ for managing X.509 certificates. It supports:
     (print (:get-cert root-ca))
 
 
-<a id="org895f18a"></a>
+<a id="org120d1c0"></a>
 
 # API Reference
 
 
-<a id="org16764b5"></a>
+<a id="orgad4246a"></a>
 
 ## Constructors
 
@@ -243,7 +243,7 @@ Options:
 </table>
 
 
-<a id="orgcbef303"></a>
+<a id="org762becf"></a>
 
 ## Certificate Issuance
 
@@ -410,7 +410,7 @@ Options:
 Returns: Certificate in PEM format.
 
 
-<a id="org3698990"></a>
+<a id="orgbc8f8ad"></a>
 
 ## Accessor Methods
 
@@ -457,7 +457,7 @@ Get list of issued certificates (only if tracking enabled).
 Returns: Array of PEM certificates, or nil if tracking disabled.
 
 
-<a id="org86ee43c"></a>
+<a id="org3469f8e"></a>
 
 ## Revocation and CRL
 
@@ -593,7 +593,7 @@ Get list of revoked certificate serials.
 Returns: Array of `{:serial N :reason <kw>}` tables.
 
 
-<a id="org1c9c75e"></a>
+<a id="org6cf7491"></a>
 
 ## OCSP Support
 
@@ -702,7 +702,7 @@ Options:
 Returns: DER-encoded OCSP response bytes.
 
 
-<a id="org8d25a9a"></a>
+<a id="org7313835"></a>
 
 ## OCSP Responder Example
 
@@ -728,7 +728,7 @@ Returns: DER-encoded OCSP response bytes.
        :body response})
 
 
-<a id="orgc1c0f9f"></a>
+<a id="org4cc258e"></a>
 
 # Key Types
 
@@ -810,7 +810,7 @@ EC keys are recommended for new deployments. RSA keys are available for
 compatibility with legacy systems.
 
 
-<a id="orgfb8cdcf"></a>
+<a id="orga96c420"></a>
 
 # Serial Number Persistence
 
@@ -830,7 +830,7 @@ For production CAs, serial numbers must be persisted to avoid reuse:
       (ca/create cert key {:serial serial}))
 
 
-<a id="org3d52a35"></a>
+<a id="orgc5206c0"></a>
 
 # Certificate Tracking
 
@@ -853,7 +853,7 @@ tracking when you need to:
     (print (length issued))  # => 2
 
 
-<a id="orga6692a9"></a>
+<a id="org46c291b"></a>
 
 # Subject Alternative Names (SAN)
 
@@ -906,7 +906,7 @@ Prefix types:
 </table>
 
 
-<a id="org3835a8e"></a>
+<a id="orgdfcd2db"></a>
 
 # PKI Hierarchy Example
 

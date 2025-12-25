@@ -19,7 +19,9 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#ifndef JANET_WINDOWS
+  #include <unistd.h>
+#endif
 
 /* MSG_DONTWAIT may not be available on all platforms.
  * Since our sockets are already non-blocking, we can use 0 as fallback. */
@@ -54,7 +56,8 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     ssize_t sent = 0;
 
     if (send_len > 0) {
-        sent = sendto(transport->handle, send_buf, (size_t)send_len, 0,
+        sent = sendto((jsec_socket_t)transport->handle, send_buf,
+                      (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
                       session->peer_addr.addrlen);
     }
@@ -249,8 +252,14 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
     /* Set non-blocking */
+    /* Set non-blocking */
+#ifdef JANET_WINDOWS
+    unsigned long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
     /* Bind */
     struct sockaddr_in addr;
@@ -535,8 +544,8 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                 DTLSAddress peer_addr;
                 peer_addr.addrlen = sizeof(peer_addr.addr);
 
-                ssize_t n = recvfrom(server->transport->handle, recv_buf,
-                                     sizeof(recv_buf), MSG_DONTWAIT,
+                ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
+                                     recv_buf, sizeof(recv_buf), MSG_DONTWAIT,
                                      (struct sockaddr *)&peer_addr.addr,
                                      &peer_addr.addrlen);
 
@@ -734,8 +743,8 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     struct sockaddr_storage addr;
     socklen_t addrlen = sizeof(addr);
 
-    if (getsockname(server->transport->handle, (struct sockaddr *)&addr,
-                    &addrlen) < 0) {
+    if (getsockname((jsec_socket_t)server->transport->handle,
+                    (struct sockaddr *)&addr, &addrlen) < 0) {
         dtls_panic_socket("getsockname failed");
     }
 

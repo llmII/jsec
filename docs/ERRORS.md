@@ -1,118 +1,118 @@
 
 # Table of Contents
 
-1.  [Overview](#orgf72cd3f)
-    1.  [Error Format](#org3c419b2)
-    2.  [Example Errors](#org793af63)
-2.  [TLS Module Errors](#orga9dc13e)
-    1.  [CONFIG - Configuration Errors](#org033d2a9)
-        1.  [`[TLS:CONFIG] buffer-size must be a number`](#org3528420)
-        2.  [`[TLS:CONFIG] invalid cipher suite: <suite>`](#orgc5680c2)
-        3.  [`[TLS:CONFIG] sni option must be a table or struct`](#orge32c3c2)
-        4.  [`[TLS:CONFIG] Invalid ALPN protocols`](#org71899ce)
-        5.  [`[TLS:CONFIG] handler function must take at least 1 argument`](#orgf943e00)
-    2.  [PARAM - Parameter Errors](#org0e12674)
-        1.  [`[TLS:PARAM] timeout must be non-negative, got <value>`](#orgb81e3a7)
-        2.  [`[TLS:PARAM] expected keyword or nil, got <value>`](#org7ef93a3)
-        3.  [`[TLS:PARAM] length must be non-negative`](#org465187d)
-    3.  [IO - I/O Errors](#org0ad2ba9)
-        1.  [`[TLS:IO] stream is closed`](#org809a60c)
-        2.  [`[TLS:IO] connection is shutting down`](#orgf2f32b8)
-    4.  [SSL - OpenSSL Errors](#org8784c49)
-        1.  [`[TLS:SSL] failed to create SSL context: <ssl-error>`](#org9eb457e)
-        2.  [`[TLS:SSL] failed to create SSL object: <ssl-error>`](#orgecd9a6c)
-        3.  [`[TLS:SSL] handshake failed: <ssl-error>`](#orgaaec826)
-        4.  [`[TLS:SSL] certificate verification failed: <ssl-error>`](#org674ff1b)
-        5.  [`[TLS:SSL] failed to load private key: <ssl-error>`](#org9a0c9c6)
-        6.  [`[TLS:SSL] failed to load certificate: <ssl-error>`](#org620a60c)
-        7.  [`[TLS:SSL] private key does not match certificate: <ssl-error>`](#org8e86bad)
-    5.  [SOCKET - Socket Errors](#org4965dff)
-        1.  [`[TLS:SOCKET] could not connect to <host>:<port>: <errno>`](#orgdd1c82e)
-        2.  [`[TLS:SOCKET] bind failed: <errno>`](#org02e676d)
-        3.  [`[TLS:SOCKET] listen failed: <errno>`](#org9372630)
-        4.  [`[TLS:SOCKET] getaddrinfo failed: <errno>`](#orgd315eff)
-    6.  [VERIFY - Verification Errors](#org75176d7)
-        1.  [`[TLS:VERIFY] hostname verification failed for <hostname>`](#org4a85405)
-3.  [DTLS Module Errors](#org7a53b5a)
-    1.  [CONFIG - Configuration Errors](#orgad4d29a)
-        1.  [`[DTLS:CONFIG] dtls/listen requires :cert and :key options`](#org61300ff)
-        2.  [`[DTLS:CONFIG] cannot use TLS context for DTLS connection`](#org2bf3467)
-    2.  [PARAM - Parameter Errors](#orgf0d6cdd)
-        1.  [`[DTLS:PARAM] invalid address: <address>`](#orgd1b314c)
-    3.  [IO - I/O Errors](#org481166b)
-        1.  [`[DTLS:IO] client not connected`](#orgc044b24)
-        2.  [`[DTLS:IO] client is closed`](#orgfb6235d)
-        3.  [`[DTLS:IO] server is closed`](#orgbfa68cc)
-        4.  [`[DTLS:IO] no session for peer address`](#org2133516)
-        5.  [`[DTLS:IO] session not established`](#org4700790)
-    4.  [SSL - OpenSSL Errors](#orgc888e2c)
-        1.  [`[DTLS:SSL] handshake failed: <ssl-error>`](#orgdd38cfe)
-        2.  [`[DTLS:SSL] write failed: <ssl-error>`](#org62d1cc2)
-    5.  [SOCKET - Socket Errors](#orgf221da1)
-        1.  [`[DTLS:SOCKET] bind failed: <errno>`](#orgc2b093a)
-        2.  [`[DTLS:SOCKET] connect failed: <errno>`](#orgc2df5f3)
-        3.  [`[DTLS:SOCKET] sendto failed: <errno>`](#orgba6f2bc)
-        4.  [`[DTLS:SOCKET] failed to get peer address: <errno>`](#org1a0b1e2)
-4.  [CRYPTO Module Errors](#org23449e5)
-    1.  [CONFIG - Configuration Errors](#orgd64447a)
-        1.  [`[CRYPTO:CONFIG] unknown digest algorithm: <alg>`](#org59214e9)
-        2.  [`[CRYPTO:CONFIG] unsupported key algorithm: <alg>`](#org3142fb6)
-    2.  [PARAM - Parameter Errors](#org5a5b170)
-        1.  [`[CRYPTO:PARAM] byte count must be 1-65536, got <n>`](#org7bc83f2)
-        2.  [`[CRYPTO:PARAM] challenge length must be 8-64 bytes, got <n>`](#org7bbd4fa)
-        3.  [`[CRYPTO:PARAM] output length must be 1-<max>`](#orge1141db)
-        4.  [`[CRYPTO:PARAM] output length must be 1-1024`](#orgc0374ce)
-        5.  [`[CRYPTO:PARAM] iterations must be positive`](#org42ff729)
-        6.  [`[CRYPTO:PARAM] options must be a table or struct`](#org2d8e39e)
-    3.  [SSL - OpenSSL Errors](#org8e67dba)
-        1.  [`[CRYPTO:SSL] HKDF derivation failed: <ssl-error>`](#orgfa49805)
-        2.  [`[CRYPTO:SSL] PBKDF2 derivation failed: <ssl-error>`](#orgc034c6a)
-        3.  [`[CRYPTO:SSL] HMAC computation failed: <ssl-error>`](#orgbe1ad91)
-        4.  [`[CRYPTO:SSL] signing failed: <ssl-error>`](#org8d26adb)
-        5.  [`[CRYPTO:SSL] failed to generate random bytes: <ssl-error>`](#orgcd928eb)
-    4.  [RESOURCE - Resource Errors](#orgd08775a)
-        1.  [`[CRYPTO:RESOURCE] out of memory`](#orgeb01ac9)
-        2.  [`[CRYPTO:RESOURCE] failed to create context`](#orgd412382)
-    5.  [PARSE - Parse Errors](#orgda3e0f0)
-        1.  [`[CRYPTO:PARSE] base64 decode failed`](#orgfa7c6b9)
-        2.  [`[CRYPTO:PARSE] failed to parse CSR`](#org65ae357)
-5.  [CA Module Errors](#org644b0c9)
-    1.  [CONFIG - Configuration Errors](#orgdc9b51f)
-        1.  [`[CA:CONFIG] common-name is required`](#org430898a)
-        2.  [`[CA:CONFIG] ca-cert is required`](#orgf4f75ce)
-        3.  [`[CA:CONFIG] ca-key is required`](#orgbcf1af5)
-    2.  [PARAM - Parameter Errors](#org61d8d30)
-        1.  [`[CA:PARAM] validity-days must be positive`](#orgc2196e6)
-        2.  [`[CA:PARAM] serial must be positive`](#org46c3005)
-    3.  [SSL - OpenSSL Errors](#org8f41692)
-        1.  [`[CA:SSL] failed to sign certificate: <ssl-error>`](#org9a1220b)
-        2.  [`[CA:SSL] failed to create certificate: <ssl-error>`](#orgb8c6ce1)
-    4.  [VERIFY - Verification Errors](#org41f829b)
-        1.  [`[CA:VERIFY] certificate has expired`](#org9af14d1)
-        2.  [`[CA:VERIFY] certificate not yet valid`](#org1859ffd)
-6.  [CERT Module Errors](#org1434546)
-    1.  [PARAM - Parameter Errors](#orgae8351e)
-        1.  [`[CERT:PARAM] certificates must be string or array of strings`](#org8f46178)
-    2.  [PARSE - Parse Errors](#org39fe582)
-        1.  [`[CERT:PARSE] failed to parse certificate: <ssl-error>`](#org037ae9b)
-        2.  [`[CERT:PARSE] failed to parse private key: <ssl-error>`](#org3ada31c)
-7.  [Error Handling Best Practices](#org24da325)
-    1.  [Using protect/try](#orga7f6349)
-    2.  [Checking Return Values](#org677690f)
-    3.  [Timeouts](#orgc517b60)
-8.  [Testing Error Conditions](#org2af9cb4)
-9.  [See Also](#org8e64120)
+1.  [Overview](#org75153d2)
+    1.  [Error Format](#orgbe1e086)
+    2.  [Example Errors](#org975f500)
+2.  [TLS Module Errors](#org1e71be0)
+    1.  [CONFIG - Configuration Errors](#org8af7316)
+        1.  [`[TLS:CONFIG] buffer-size must be a number`](#org71ca1af)
+        2.  [`[TLS:CONFIG] invalid cipher suite: <suite>`](#orgf22e2d7)
+        3.  [`[TLS:CONFIG] sni option must be a table or struct`](#orgb730755)
+        4.  [`[TLS:CONFIG] Invalid ALPN protocols`](#org3ca15f0)
+        5.  [`[TLS:CONFIG] handler function must take at least 1 argument`](#orgcea4f38)
+    2.  [PARAM - Parameter Errors](#orgbfa6b9e)
+        1.  [`[TLS:PARAM] timeout must be non-negative, got <value>`](#org423edb9)
+        2.  [`[TLS:PARAM] expected keyword or nil, got <value>`](#org6ff3dec)
+        3.  [`[TLS:PARAM] length must be non-negative`](#orgfe5774c)
+    3.  [IO - I/O Errors](#org8752aac)
+        1.  [`[TLS:IO] stream is closed`](#orga0ff36e)
+        2.  [`[TLS:IO] connection is shutting down`](#org9ba969e)
+    4.  [SSL - OpenSSL Errors](#orgb1ea613)
+        1.  [`[TLS:SSL] failed to create SSL context: <ssl-error>`](#orgf7232db)
+        2.  [`[TLS:SSL] failed to create SSL object: <ssl-error>`](#org7ff16ff)
+        3.  [`[TLS:SSL] handshake failed: <ssl-error>`](#org59db37a)
+        4.  [`[TLS:SSL] certificate verification failed: <ssl-error>`](#org0864140)
+        5.  [`[TLS:SSL] failed to load private key: <ssl-error>`](#org9696e45)
+        6.  [`[TLS:SSL] failed to load certificate: <ssl-error>`](#orgac84357)
+        7.  [`[TLS:SSL] private key does not match certificate: <ssl-error>`](#orga32c268)
+    5.  [SOCKET - Socket Errors](#orgd7b0c83)
+        1.  [`[TLS:SOCKET] could not connect to <host>:<port>: <errno>`](#org0b85d6d)
+        2.  [`[TLS:SOCKET] bind failed: <errno>`](#orgcbedbb8)
+        3.  [`[TLS:SOCKET] listen failed: <errno>`](#org4ee9b5c)
+        4.  [`[TLS:SOCKET] getaddrinfo failed: <errno>`](#org8defa2e)
+    6.  [VERIFY - Verification Errors](#orge91f224)
+        1.  [`[TLS:VERIFY] hostname verification failed for <hostname>`](#org81d2010)
+3.  [DTLS Module Errors](#orgae0e6a6)
+    1.  [CONFIG - Configuration Errors](#org64b4fb1)
+        1.  [`[DTLS:CONFIG] dtls/listen requires :cert and :key options`](#org30e41c8)
+        2.  [`[DTLS:CONFIG] cannot use TLS context for DTLS connection`](#org4e4802d)
+    2.  [PARAM - Parameter Errors](#orgad50cf8)
+        1.  [`[DTLS:PARAM] invalid address: <address>`](#org8cf83c0)
+    3.  [IO - I/O Errors](#org23b8d03)
+        1.  [`[DTLS:IO] client not connected`](#orgf71bab8)
+        2.  [`[DTLS:IO] client is closed`](#org01fcddf)
+        3.  [`[DTLS:IO] server is closed`](#orgec05284)
+        4.  [`[DTLS:IO] no session for peer address`](#org89f1e33)
+        5.  [`[DTLS:IO] session not established`](#org54ef70a)
+    4.  [SSL - OpenSSL Errors](#org3843795)
+        1.  [`[DTLS:SSL] handshake failed: <ssl-error>`](#orgab84c0d)
+        2.  [`[DTLS:SSL] write failed: <ssl-error>`](#org6d8f6f0)
+    5.  [SOCKET - Socket Errors](#orgd805df9)
+        1.  [`[DTLS:SOCKET] bind failed: <errno>`](#org7f1e670)
+        2.  [`[DTLS:SOCKET] connect failed: <errno>`](#orgc5d0d62)
+        3.  [`[DTLS:SOCKET] sendto failed: <errno>`](#orgfb5174d)
+        4.  [`[DTLS:SOCKET] failed to get peer address: <errno>`](#org108296f)
+4.  [CRYPTO Module Errors](#orgac4678b)
+    1.  [CONFIG - Configuration Errors](#org2b5e73e)
+        1.  [`[CRYPTO:CONFIG] unknown digest algorithm: <alg>`](#orgddeda3f)
+        2.  [`[CRYPTO:CONFIG] unsupported key algorithm: <alg>`](#org578817e)
+    2.  [PARAM - Parameter Errors](#org7a798a0)
+        1.  [`[CRYPTO:PARAM] byte count must be 1-65536, got <n>`](#orgd112aeb)
+        2.  [`[CRYPTO:PARAM] challenge length must be 8-64 bytes, got <n>`](#org7b7a736)
+        3.  [`[CRYPTO:PARAM] output length must be 1-<max>`](#orgf73e84d)
+        4.  [`[CRYPTO:PARAM] output length must be 1-1024`](#org463de2f)
+        5.  [`[CRYPTO:PARAM] iterations must be positive`](#org5bbb391)
+        6.  [`[CRYPTO:PARAM] options must be a table or struct`](#orgc9a20f7)
+    3.  [SSL - OpenSSL Errors](#orgb9da854)
+        1.  [`[CRYPTO:SSL] HKDF derivation failed: <ssl-error>`](#orge94c85a)
+        2.  [`[CRYPTO:SSL] PBKDF2 derivation failed: <ssl-error>`](#org8da2c38)
+        3.  [`[CRYPTO:SSL] HMAC computation failed: <ssl-error>`](#orgbf812b2)
+        4.  [`[CRYPTO:SSL] signing failed: <ssl-error>`](#org0b7168d)
+        5.  [`[CRYPTO:SSL] failed to generate random bytes: <ssl-error>`](#orgfb0fcca)
+    4.  [RESOURCE - Resource Errors](#orgf6fa6cd)
+        1.  [`[CRYPTO:RESOURCE] out of memory`](#orga5c56a3)
+        2.  [`[CRYPTO:RESOURCE] failed to create context`](#orgba83dcc)
+    5.  [PARSE - Parse Errors](#orgea464ea)
+        1.  [`[CRYPTO:PARSE] base64 decode failed`](#orge8e06ea)
+        2.  [`[CRYPTO:PARSE] failed to parse CSR`](#org381f2a3)
+5.  [CA Module Errors](#org6d3421e)
+    1.  [CONFIG - Configuration Errors](#org49c2ef7)
+        1.  [`[CA:CONFIG] common-name is required`](#org98c3809)
+        2.  [`[CA:CONFIG] ca-cert is required`](#org052f89c)
+        3.  [`[CA:CONFIG] ca-key is required`](#org2e7079c)
+    2.  [PARAM - Parameter Errors](#org4ac0642)
+        1.  [`[CA:PARAM] validity-days must be positive`](#org1da7ed4)
+        2.  [`[CA:PARAM] serial must be positive`](#org5df3cab)
+    3.  [SSL - OpenSSL Errors](#orgdc17bbc)
+        1.  [`[CA:SSL] failed to sign certificate: <ssl-error>`](#orgd746211)
+        2.  [`[CA:SSL] failed to create certificate: <ssl-error>`](#orga1c80fd)
+    4.  [VERIFY - Verification Errors](#org73d7d1b)
+        1.  [`[CA:VERIFY] certificate has expired`](#org389f293)
+        2.  [`[CA:VERIFY] certificate not yet valid`](#orga5dd18f)
+6.  [CERT Module Errors](#orgd21307e)
+    1.  [PARAM - Parameter Errors](#orgacf807d)
+        1.  [`[CERT:PARAM] certificates must be string or array of strings`](#org6a9cc24)
+    2.  [PARSE - Parse Errors](#orgb5c6923)
+        1.  [`[CERT:PARSE] failed to parse certificate: <ssl-error>`](#org1cd6d7f)
+        2.  [`[CERT:PARSE] failed to parse private key: <ssl-error>`](#orga00a46e)
+7.  [Error Handling Best Practices](#orga957c9a)
+    1.  [Using protect/try](#org853bbdf)
+    2.  [Checking Return Values](#orgac4fb44)
+    3.  [Timeouts](#org657b35a)
+8.  [Testing Error Conditions](#orga581082)
+9.  [See Also](#orgcbea718)
 
 
 
-<a id="orgf72cd3f"></a>
+<a id="org75153d2"></a>
 
 # Overview
 
 This document catalogs all errors that JSEC can produce, organized by module and category.
 
 
-<a id="org3c419b2"></a>
+<a id="orgbe1e086"></a>
 
 ## Error Format
 
@@ -126,7 +126,7 @@ Where:
 -   **CATEGORY**: CONFIG, IO, SSL, SOCKET, PARAM, RESOURCE, VERIFY, PARSE
 
 
-<a id="org793af63"></a>
+<a id="org975f500"></a>
 
 ## Example Errors
 
@@ -136,17 +136,17 @@ Where:
     [CA:SSL] failed to sign certificate: key mismatch
 
 
-<a id="orga9dc13e"></a>
+<a id="org1e71be0"></a>
 
 # TLS Module Errors
 
 
-<a id="org033d2a9"></a>
+<a id="org8af7316"></a>
 
 ## CONFIG - Configuration Errors
 
 
-<a id="org3528420"></a>
+<a id="org71ca1af"></a>
 
 ### `[TLS:CONFIG] buffer-size must be a number`
 
@@ -160,7 +160,7 @@ Where:
     (tls/connect "host" "443" {:buffer-size 16384})
 
 
-<a id="orgc5680c2"></a>
+<a id="orgf22e2d7"></a>
 
 ### `[TLS:CONFIG] invalid cipher suite: <suite>`
 
@@ -168,7 +168,7 @@ Where:
 **Fix**: Use valid OpenSSL cipher string
 
 
-<a id="orge32c3c2"></a>
+<a id="orgb730755"></a>
 
 ### `[TLS:CONFIG] sni option must be a table or struct`
 
@@ -179,7 +179,7 @@ Where:
            "www.example.com" {:cert www-cert :key www-key}}}
 
 
-<a id="org71899ce"></a>
+<a id="org3ca15f0"></a>
 
 ### `[TLS:CONFIG] Invalid ALPN protocols`
 
@@ -189,7 +189,7 @@ Where:
     {:alpn ["h2" "http/1.1"]}
 
 
-<a id="orgf943e00"></a>
+<a id="orgcea4f38"></a>
 
 ### `[TLS:CONFIG] handler function must take at least 1 argument`
 
@@ -203,12 +203,12 @@ Where:
     (tls/server "0.0.0.0" "8443" (fn [stream] (:close stream)) opts)
 
 
-<a id="org0e12674"></a>
+<a id="orgbfa6b9e"></a>
 
 ## PARAM - Parameter Errors
 
 
-<a id="orgb81e3a7"></a>
+<a id="org423edb9"></a>
 
 ### `[TLS:PARAM] timeout must be non-negative, got <value>`
 
@@ -222,7 +222,7 @@ Where:
     (:read stream 1024 5.0)  # 5 second timeout
 
 
-<a id="org7ef93a3"></a>
+<a id="org6ff3dec"></a>
 
 ### `[TLS:PARAM] expected keyword or nil, got <value>`
 
@@ -237,7 +237,7 @@ Where:
     (:close stream)      # Same as :rw
 
 
-<a id="org465187d"></a>
+<a id="orgfe5774c"></a>
 
 ### `[TLS:PARAM] length must be non-negative`
 
@@ -245,12 +245,12 @@ Where:
 **Fix**: Pass zero or positive length
 
 
-<a id="org0ad2ba9"></a>
+<a id="org8752aac"></a>
 
 ## IO - I/O Errors
 
 
-<a id="org809a60c"></a>
+<a id="orga0ff36e"></a>
 
 ### `[TLS:IO] stream is closed`
 
@@ -262,7 +262,7 @@ Where:
     (:read stream 1024)  # Error! Stream is closed
 
 
-<a id="orgf2f32b8"></a>
+<a id="org9ba969e"></a>
 
 ### `[TLS:IO] connection is shutting down`
 
@@ -270,12 +270,12 @@ Where:
 **Fix**: Complete shutdown before further operations
 
 
-<a id="org8784c49"></a>
+<a id="orgb1ea613"></a>
 
 ## SSL - OpenSSL Errors
 
 
-<a id="org9eb457e"></a>
+<a id="orgf7232db"></a>
 
 ### `[TLS:SSL] failed to create SSL context: <ssl-error>`
 
@@ -283,7 +283,7 @@ Where:
 **Fix**: Check OpenSSL installation, memory
 
 
-<a id="orgecd9a6c"></a>
+<a id="org7ff16ff"></a>
 
 ### `[TLS:SSL] failed to create SSL object: <ssl-error>`
 
@@ -291,7 +291,7 @@ Where:
 **Fix**: Check context validity, memory
 
 
-<a id="orgaaec826"></a>
+<a id="org59db37a"></a>
 
 ### `[TLS:SSL] handshake failed: <ssl-error>`
 
@@ -299,7 +299,7 @@ Where:
 **Fix**: Check certificates, protocol compatibility
 
 
-<a id="org674ff1b"></a>
+<a id="org0864140"></a>
 
 ### `[TLS:SSL] certificate verification failed: <ssl-error>`
 
@@ -307,7 +307,7 @@ Where:
 **Fix**: Check certificate chain, CA trust
 
 
-<a id="org9a0c9c6"></a>
+<a id="org9696e45"></a>
 
 ### `[TLS:SSL] failed to load private key: <ssl-error>`
 
@@ -315,7 +315,7 @@ Where:
 **Fix**: Verify key format, check for corruption
 
 
-<a id="org620a60c"></a>
+<a id="orgac84357"></a>
 
 ### `[TLS:SSL] failed to load certificate: <ssl-error>`
 
@@ -323,7 +323,7 @@ Where:
 **Fix**: Verify certificate format
 
 
-<a id="org8e86bad"></a>
+<a id="orga32c268"></a>
 
 ### `[TLS:SSL] private key does not match certificate: <ssl-error>`
 
@@ -331,12 +331,12 @@ Where:
 **Fix**: Ensure cert and key are a matching pair
 
 
-<a id="org4965dff"></a>
+<a id="orgd7b0c83"></a>
 
 ## SOCKET - Socket Errors
 
 
-<a id="orgdd1c82e"></a>
+<a id="org0b85d6d"></a>
 
 ### `[TLS:SOCKET] could not connect to <host>:<port>: <errno>`
 
@@ -344,7 +344,7 @@ Where:
 **Fix**: Check host/port, firewall, server status
 
 
-<a id="org02e676d"></a>
+<a id="orgcbedbb8"></a>
 
 ### `[TLS:SOCKET] bind failed: <errno>`
 
@@ -352,7 +352,7 @@ Where:
 **Fix**: Check port availability, permissions
 
 
-<a id="org9372630"></a>
+<a id="org4ee9b5c"></a>
 
 ### `[TLS:SOCKET] listen failed: <errno>`
 
@@ -360,7 +360,7 @@ Where:
 **Fix**: Check socket state
 
 
-<a id="orgd315eff"></a>
+<a id="org8defa2e"></a>
 
 ### `[TLS:SOCKET] getaddrinfo failed: <errno>`
 
@@ -368,12 +368,12 @@ Where:
 **Fix**: Check hostname, DNS configuration
 
 
-<a id="org75176d7"></a>
+<a id="orge91f224"></a>
 
 ## VERIFY - Verification Errors
 
 
-<a id="org4a85405"></a>
+<a id="org81d2010"></a>
 
 ### `[TLS:VERIFY] hostname verification failed for <hostname>`
 
@@ -381,17 +381,17 @@ Where:
 **Fix**: Check certificate SAN/CN, or disable verification if intended
 
 
-<a id="org7a53b5a"></a>
+<a id="orgae0e6a6"></a>
 
 # DTLS Module Errors
 
 
-<a id="orgad4d29a"></a>
+<a id="org64b4fb1"></a>
 
 ## CONFIG - Configuration Errors
 
 
-<a id="org61300ff"></a>
+<a id="org30e41c8"></a>
 
 ### `[DTLS:CONFIG] dtls/listen requires :cert and :key options`
 
@@ -401,7 +401,7 @@ Where:
     (dtls/listen "0.0.0.0" "5684" {:cert cert-pem :key key-pem})
 
 
-<a id="org2bf3467"></a>
+<a id="org4e4802d"></a>
 
 ### `[DTLS:CONFIG] cannot use TLS context for DTLS connection`
 
@@ -409,12 +409,12 @@ Where:
 **Fix**: Create a DTLS-specific context or use options
 
 
-<a id="orgf0d6cdd"></a>
+<a id="orgad50cf8"></a>
 
 ## PARAM - Parameter Errors
 
 
-<a id="orgd1b314c"></a>
+<a id="org8cf83c0"></a>
 
 ### `[DTLS:PARAM] invalid address: <address>`
 
@@ -422,12 +422,12 @@ Where:
 **Fix**: Use valid IPv4/IPv6 address or hostname
 
 
-<a id="org481166b"></a>
+<a id="org23b8d03"></a>
 
 ## IO - I/O Errors
 
 
-<a id="orgc044b24"></a>
+<a id="orgf71bab8"></a>
 
 ### `[DTLS:IO] client not connected`
 
@@ -435,7 +435,7 @@ Where:
 **Fix**: Complete handshake first
 
 
-<a id="orgfb6235d"></a>
+<a id="org01fcddf"></a>
 
 ### `[DTLS:IO] client is closed`
 
@@ -443,7 +443,7 @@ Where:
 **Fix**: Don't use client after closing
 
 
-<a id="orgbfa68cc"></a>
+<a id="orgec05284"></a>
 
 ### `[DTLS:IO] server is closed`
 
@@ -451,7 +451,7 @@ Where:
 **Fix**: Don't use server after closing
 
 
-<a id="org2133516"></a>
+<a id="org89f1e33"></a>
 
 ### `[DTLS:IO] no session for peer address`
 
@@ -459,7 +459,7 @@ Where:
 **Fix**: Peer must complete handshake first
 
 
-<a id="org4700790"></a>
+<a id="org54ef70a"></a>
 
 ### `[DTLS:IO] session not established`
 
@@ -467,12 +467,12 @@ Where:
 **Fix**: Wait for handshake completion
 
 
-<a id="orgc888e2c"></a>
+<a id="org3843795"></a>
 
 ## SSL - OpenSSL Errors
 
 
-<a id="orgdd38cfe"></a>
+<a id="orgab84c0d"></a>
 
 ### `[DTLS:SSL] handshake failed: <ssl-error>`
 
@@ -480,7 +480,7 @@ Where:
 **Fix**: Check certificates, network connectivity
 
 
-<a id="org62d1cc2"></a>
+<a id="org6d8f6f0"></a>
 
 ### `[DTLS:SSL] write failed: <ssl-error>`
 
@@ -488,12 +488,12 @@ Where:
 **Fix**: Check connection state
 
 
-<a id="orgf221da1"></a>
+<a id="orgd805df9"></a>
 
 ## SOCKET - Socket Errors
 
 
-<a id="orgc2b093a"></a>
+<a id="org7f1e670"></a>
 
 ### `[DTLS:SOCKET] bind failed: <errno>`
 
@@ -501,7 +501,7 @@ Where:
 **Fix**: Check address/port availability
 
 
-<a id="orgc2df5f3"></a>
+<a id="orgc5d0d62"></a>
 
 ### `[DTLS:SOCKET] connect failed: <errno>`
 
@@ -509,7 +509,7 @@ Where:
 **Fix**: Check server reachability
 
 
-<a id="orgba6f2bc"></a>
+<a id="orgfb5174d"></a>
 
 ### `[DTLS:SOCKET] sendto failed: <errno>`
 
@@ -517,7 +517,7 @@ Where:
 **Fix**: Check connection state, buffer size
 
 
-<a id="org1a0b1e2"></a>
+<a id="org108296f"></a>
 
 ### `[DTLS:SOCKET] failed to get peer address: <errno>`
 
@@ -525,17 +525,17 @@ Where:
 **Fix**: Socket must be connected before upgrade
 
 
-<a id="org23449e5"></a>
+<a id="orgac4678b"></a>
 
 # CRYPTO Module Errors
 
 
-<a id="orgd64447a"></a>
+<a id="org2b5e73e"></a>
 
 ## CONFIG - Configuration Errors
 
 
-<a id="org59214e9"></a>
+<a id="orgddeda3f"></a>
 
 ### `[CRYPTO:CONFIG] unknown digest algorithm: <alg>`
 
@@ -546,7 +546,7 @@ Where:
     (crypto/digest :md5 data)     # May fail depending on OpenSSL config
 
 
-<a id="org3142fb6"></a>
+<a id="org578817e"></a>
 
 ### `[CRYPTO:CONFIG] unsupported key algorithm: <alg>`
 
@@ -558,12 +558,12 @@ Where:
     (crypto/generate-keypair :dsa)       # Error: unsupported
 
 
-<a id="org5a5b170"></a>
+<a id="org7a798a0"></a>
 
 ## PARAM - Parameter Errors
 
 
-<a id="org7bc83f2"></a>
+<a id="orgd112aeb"></a>
 
 ### `[CRYPTO:PARAM] byte count must be 1-65536, got <n>`
 
@@ -573,7 +573,7 @@ Where:
     (crypto/random-bytes 32)  # Correct: 32 bytes
 
 
-<a id="org7bbd4fa"></a>
+<a id="org7b7a736"></a>
 
 ### `[CRYPTO:PARAM] challenge length must be 8-64 bytes, got <n>`
 
@@ -581,7 +581,7 @@ Where:
 **Fix**: Request between 8 and 64 bytes
 
 
-<a id="orge1141db"></a>
+<a id="orgf73e84d"></a>
 
 ### `[CRYPTO:PARAM] output length must be 1-<max>`
 
@@ -589,7 +589,7 @@ Where:
 **Fix**: Request smaller output
 
 
-<a id="orgc0374ce"></a>
+<a id="org463de2f"></a>
 
 ### `[CRYPTO:PARAM] output length must be 1-1024`
 
@@ -597,7 +597,7 @@ Where:
 **Fix**: Request between 1 and 1024 bytes
 
 
-<a id="org42ff729"></a>
+<a id="org5bbb391"></a>
 
 ### `[CRYPTO:PARAM] iterations must be positive`
 
@@ -605,7 +605,7 @@ Where:
 **Fix**: Use at least 1 iteration (recommend 100000+ for security)
 
 
-<a id="org2d8e39e"></a>
+<a id="orgc9a20f7"></a>
 
 ### `[CRYPTO:PARAM] options must be a table or struct`
 
@@ -613,12 +613,12 @@ Where:
 **Fix**: Pass a table `{}` or struct `@{}`
 
 
-<a id="org8e67dba"></a>
+<a id="orgb9da854"></a>
 
 ## SSL - OpenSSL Errors
 
 
-<a id="orgfa49805"></a>
+<a id="orge94c85a"></a>
 
 ### `[CRYPTO:SSL] HKDF derivation failed: <ssl-error>`
 
@@ -626,7 +626,7 @@ Where:
 **Fix**: Check input parameters
 
 
-<a id="orgc034c6a"></a>
+<a id="org8da2c38"></a>
 
 ### `[CRYPTO:SSL] PBKDF2 derivation failed: <ssl-error>`
 
@@ -634,7 +634,7 @@ Where:
 **Fix**: Check input parameters
 
 
-<a id="orgbe1ad91"></a>
+<a id="orgbf812b2"></a>
 
 ### `[CRYPTO:SSL] HMAC computation failed: <ssl-error>`
 
@@ -642,7 +642,7 @@ Where:
 **Fix**: Check algorithm and key
 
 
-<a id="org8d26adb"></a>
+<a id="org0b7168d"></a>
 
 ### `[CRYPTO:SSL] signing failed: <ssl-error>`
 
@@ -650,7 +650,7 @@ Where:
 **Fix**: Check key type supports signing
 
 
-<a id="orgcd928eb"></a>
+<a id="orgfb0fcca"></a>
 
 ### `[CRYPTO:SSL] failed to generate random bytes: <ssl-error>`
 
@@ -658,12 +658,12 @@ Where:
 **Fix**: Check system entropy (/dev/urandom)
 
 
-<a id="orgd08775a"></a>
+<a id="orgf6fa6cd"></a>
 
 ## RESOURCE - Resource Errors
 
 
-<a id="orgeb01ac9"></a>
+<a id="orga5c56a3"></a>
 
 ### `[CRYPTO:RESOURCE] out of memory`
 
@@ -671,7 +671,7 @@ Where:
 **Fix**: Check system memory, reduce allocations
 
 
-<a id="orgd412382"></a>
+<a id="orgba83dcc"></a>
 
 ### `[CRYPTO:RESOURCE] failed to create context`
 
@@ -679,12 +679,12 @@ Where:
 **Fix**: Check memory, OpenSSL state
 
 
-<a id="orgda3e0f0"></a>
+<a id="orgea464ea"></a>
 
 ## PARSE - Parse Errors
 
 
-<a id="orgfa7c6b9"></a>
+<a id="orge8e06ea"></a>
 
 ### `[CRYPTO:PARSE] base64 decode failed`
 
@@ -692,7 +692,7 @@ Where:
 **Fix**: Verify input is valid base64
 
 
-<a id="org65ae357"></a>
+<a id="org381f2a3"></a>
 
 ### `[CRYPTO:PARSE] failed to parse CSR`
 
@@ -700,17 +700,17 @@ Where:
 **Fix**: Check CSR data validity
 
 
-<a id="org644b0c9"></a>
+<a id="org6d3421e"></a>
 
 # CA Module Errors
 
 
-<a id="orgdc9b51f"></a>
+<a id="org49c2ef7"></a>
 
 ## CONFIG - Configuration Errors
 
 
-<a id="org430898a"></a>
+<a id="org98c3809"></a>
 
 ### `[CA:CONFIG] common-name is required`
 
@@ -718,7 +718,7 @@ Where:
 **Fix**: Provide :cn option
 
 
-<a id="orgf4f75ce"></a>
+<a id="org052f89c"></a>
 
 ### `[CA:CONFIG] ca-cert is required`
 
@@ -726,7 +726,7 @@ Where:
 **Fix**: Provide CA certificate PEM
 
 
-<a id="orgbcf1af5"></a>
+<a id="org2e7079c"></a>
 
 ### `[CA:CONFIG] ca-key is required`
 
@@ -734,12 +734,12 @@ Where:
 **Fix**: Provide CA private key PEM
 
 
-<a id="org61d8d30"></a>
+<a id="org4ac0642"></a>
 
 ## PARAM - Parameter Errors
 
 
-<a id="orgc2196e6"></a>
+<a id="org1da7ed4"></a>
 
 ### `[CA:PARAM] validity-days must be positive`
 
@@ -747,7 +747,7 @@ Where:
 **Fix**: Use positive number of days
 
 
-<a id="org46c3005"></a>
+<a id="org5df3cab"></a>
 
 ### `[CA:PARAM] serial must be positive`
 
@@ -755,12 +755,12 @@ Where:
 **Fix**: Use positive serial number
 
 
-<a id="org8f41692"></a>
+<a id="orgdc17bbc"></a>
 
 ## SSL - OpenSSL Errors
 
 
-<a id="org9a1220b"></a>
+<a id="orgd746211"></a>
 
 ### `[CA:SSL] failed to sign certificate: <ssl-error>`
 
@@ -768,7 +768,7 @@ Where:
 **Fix**: Check CA key compatibility
 
 
-<a id="orgb8c6ce1"></a>
+<a id="orga1c80fd"></a>
 
 ### `[CA:SSL] failed to create certificate: <ssl-error>`
 
@@ -776,12 +776,12 @@ Where:
 **Fix**: Check memory, parameters
 
 
-<a id="org41f829b"></a>
+<a id="org73d7d1b"></a>
 
 ## VERIFY - Verification Errors
 
 
-<a id="org9af14d1"></a>
+<a id="org389f293"></a>
 
 ### `[CA:VERIFY] certificate has expired`
 
@@ -789,7 +789,7 @@ Where:
 **Fix**: Renew certificate
 
 
-<a id="org1859ffd"></a>
+<a id="orga5dd18f"></a>
 
 ### `[CA:VERIFY] certificate not yet valid`
 
@@ -797,17 +797,17 @@ Where:
 **Fix**: Check system time, certificate dates
 
 
-<a id="org1434546"></a>
+<a id="orgd21307e"></a>
 
 # CERT Module Errors
 
 
-<a id="orgae8351e"></a>
+<a id="orgacf807d"></a>
 
 ## PARAM - Parameter Errors
 
 
-<a id="org8f46178"></a>
+<a id="org6a9cc24"></a>
 
 ### `[CERT:PARAM] certificates must be string or array of strings`
 
@@ -815,12 +815,12 @@ Where:
 **Fix**: Pass PEM string or array of PEM strings
 
 
-<a id="org39fe582"></a>
+<a id="orgb5c6923"></a>
 
 ## PARSE - Parse Errors
 
 
-<a id="org037ae9b"></a>
+<a id="org1cd6d7f"></a>
 
 ### `[CERT:PARSE] failed to parse certificate: <ssl-error>`
 
@@ -828,7 +828,7 @@ Where:
 **Fix**: Verify certificate format
 
 
-<a id="org3ada31c"></a>
+<a id="orga00a46e"></a>
 
 ### `[CERT:PARSE] failed to parse private key: <ssl-error>`
 
@@ -836,12 +836,12 @@ Where:
 **Fix**: Verify key format
 
 
-<a id="org24da325"></a>
+<a id="orga957c9a"></a>
 
 # Error Handling Best Practices
 
 
-<a id="orga7f6349"></a>
+<a id="org853bbdf"></a>
 
 ## Using protect/try
 
@@ -854,7 +854,7 @@ Where:
       (do-something-with result))
 
 
-<a id="org677690f"></a>
+<a id="orgac4fb44"></a>
 
 ## Checking Return Values
 
@@ -865,7 +865,7 @@ Many functions return `nil` on failure:
         (process-stream stream)))
 
 
-<a id="orgc517b60"></a>
+<a id="org657b35a"></a>
 
 ## Timeouts
 
@@ -876,7 +876,7 @@ Always use timeouts for network operations:
       (print "Read timed out or connection closed"))
 
 
-<a id="org2af9cb4"></a>
+<a id="orga581082"></a>
 
 # Testing Error Conditions
 
@@ -891,7 +891,7 @@ To test that your code handles errors correctly, use janet-assay's
         (crypto/pbkdf2 :sha256 "password" "salt" 0 32)))
 
 
-<a id="org8e64120"></a>
+<a id="orgcbea718"></a>
 
 # See Also
 

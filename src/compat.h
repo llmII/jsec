@@ -11,6 +11,7 @@
 #ifndef JSEC_COMPAT_H
 #define JSEC_COMPAT_H
 
+#include <janet.h>
 #include <openssl/opensslv.h>
 
 /*
@@ -42,6 +43,13 @@
   #define JSEC_LIBRESSL 0
   #define JSEC_OPENSSL 1
 #endif
+
+
+/*
+ * Windows Platform Compatibility - Types and Headers
+ * Moved to _WIN32 block below to strictly enforce include order
+ */
+
 
 /*
  * Feature Availability - SSL_CTX_up_ref / SSL_up_ref
@@ -99,6 +107,116 @@
 #if !HAVE_SSL_UP_REF
   #include <openssl/crypto.h>
   #define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
+#endif
+
+/*
+ * =============================================================================
+ * Windows Socket Compatibility
+ * =============================================================================
+ */
+
+#ifdef _WIN32
+  /* Winsock2 must be included before windows.h to avoid conflicts */
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <windows.h>
+
+  /* ssize_t is POSIX, not available on Windows */
+  #include <basetsd.h>
+typedef SSIZE_T ssize_t;
+
+  /* Windows uses Winsock2 instead of arpa/inet.h */
+  #define JSEC_HAS_ARPA_INET 0
+
+  /* clock_gettime is POSIX, provide Windows implementation */
+  #include <time.h>
+  #include <profileapi.h>
+
+  #ifndef CLOCK_MONOTONIC
+    #define CLOCK_MONOTONIC 1
+  #endif
+
+static inline int clock_gettime(int clk_id, struct timespec *spec) {
+    (void)clk_id; /* Only CLOCK_MONOTONIC supported */
+    LARGE_INTEGER count, freq;
+    QueryPerformanceCounter(&count);
+    QueryPerformanceFrequency(&freq);
+    spec->tv_sec = (time_t)(count.QuadPart / freq.QuadPart);
+    spec->tv_nsec = (long)((count.QuadPart % freq.QuadPart) * 1000000000LL /
+                           freq.QuadPart);
+    return 0;
+}
+
+  /* Link against Winsock library */
+  #pragma comment(lib, "ws2_32.lib")
+
+/* Socket type compatibility */
+typedef SOCKET jsec_socket_t;
+  #define JSEC_INVALID_SOCKET INVALID_SOCKET
+  #define JSEC_SOCKET_ERROR SOCKET_ERROR
+
+  /* Socket operations */
+  #define jsec_close_socket(s) closesocket(s)
+  #define jsec_socket_errno WSAGetLastError()
+
+  /* Error code mappings */
+  #define JSEC_EWOULDBLOCK WSAEWOULDBLOCK
+  #define JSEC_EINPROGRESS WSAEINPROGRESS
+  #define JSEC_EAGAIN WSAEWOULDBLOCK
+  #define JSEC_EINTR WSAEINTR
+  #define JSEC_ECONNRESET WSAECONNRESET
+  #define JSEC_EPIPE WSAECONNRESET
+
+  /* fcntl/ioctl compatibility */
+  #define F_GETFL 0
+  #define F_SETFL 1
+  #define O_NONBLOCK 1
+
+  /* Windows doesn't have MSG_NOSIGNAL */
+  #ifndef MSG_NOSIGNAL
+    #define MSG_NOSIGNAL 0
+  #endif
+
+/* Winsock initialization */
+static inline int jsec_winsock_init(void) {
+    WSADATA wsa_data;
+    return WSAStartup(MAKEWORD(2, 2), &wsa_data);
+}
+
+static inline void jsec_winsock_cleanup(void) {
+    WSACleanup();
+}
+
+#else
+  /* Unix/POSIX systems */
+  #define JSEC_HAS_ARPA_INET 1
+  #include <errno.h>
+  #include <fcntl.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
+
+typedef int jsec_socket_t;
+  #define JSEC_INVALID_SOCKET (-1)
+  #define JSEC_SOCKET_ERROR (-1)
+
+  #define jsec_close_socket(s) close(s)
+  #define jsec_socket_errno errno
+
+  #define JSEC_EWOULDBLOCK EWOULDBLOCK
+  #define JSEC_EINPROGRESS EINPROGRESS
+  #define JSEC_EAGAIN EAGAIN
+  #define JSEC_EINTR EINTR
+  #define JSEC_ECONNRESET ECONNRESET
+  #define JSEC_EPIPE EPIPE
+
+/* No-op on Unix */
+static inline int jsec_winsock_init(void) {
+    return 0;
+}
+static inline void jsec_winsock_cleanup(void) {}
 #endif
 
 #endif /* JSEC_COMPAT_H */

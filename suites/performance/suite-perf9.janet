@@ -72,6 +72,11 @@
   (let [proto (combo :protocol)
         tls-ver (combo :tls-version)]
     (cond
+      # Unix sockets not supported on Windows
+      (and (= (os/which) :windows)
+           (or (= proto :unix) (= proto :unix-tls)))
+      "Unix sockets not supported on Windows"
+
       # TLS version specified on non-TLS protocol - skip
       (and tls-ver
            (not (or (= proto :tls) (= proto :unix-tls))))

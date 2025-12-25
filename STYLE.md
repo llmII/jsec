@@ -1,33 +1,33 @@
 
 # Table of Contents
 
-1.  [Overview](#orga651421)
-2.  [C Code](#org9ebb5f4)
-    1.  [Formatting](#orgb08413c)
-    2.  [Naming](#org3dd18dd)
-    3.  [comments](#org8197b3f)
-    4.  [OpenSSL](#org800c184)
-3.  [Janet Code](#org4c18684)
-    1.  [Formatting](#org4f509b5)
-    2.  [Naming](#orgeb6d4bf)
-    3.  [Documentation](#org0277d8b)
-4.  [Testing](#org61f7788)
+1.  [Overview](#orgafac667)
+2.  [C Code](#org2642673)
+    1.  [Formatting](#org7fbd2a2)
+    2.  [Naming](#orgeb3fe4a)
+    3.  [comments](#org587aa48)
+    4.  [OpenSSL](#org713c659)
+3.  [Janet Code](#org9427aec)
+    1.  [Formatting](#org4a7878d)
+    2.  [Naming](#orgce029d3)
+    3.  [Documentation](#org92f94cd)
+4.  [Testing](#org8a5e47a)
 
 
 
-<a id="orga651421"></a>
+<a id="orgafac667"></a>
 
 # Overview
 
 This document defines the coding style for the jsec project.
 
 
-<a id="org9ebb5f4"></a>
+<a id="org2642673"></a>
 
 # C Code
 
 
-<a id="orgb08413c"></a>
+<a id="org7fbd2a2"></a>
 
 ## Formatting
 
@@ -42,7 +42,7 @@ This document defines the coding style for the jsec project.
 -   ****Line Length****: Try to keep under 80 characters, but clarity is priority.
 
 
-<a id="org3dd18dd"></a>
+<a id="orgeb3fe4a"></a>
 
 ## Naming
 
@@ -51,7 +51,7 @@ This document defines the coding style for the jsec project.
 -   ****Macros****: \`UPPER<sub>CASE</sub>\`.
 
 
-<a id="org8197b3f"></a>
+<a id="org587aa48"></a>
 
 ## comments
 
@@ -60,7 +60,7 @@ This document defines the coding style for the jsec project.
 -   Comments should explain **why**, not **what**.
 
 
-<a id="org800c184"></a>
+<a id="org713c659"></a>
 
 ## OpenSSL
 
@@ -69,12 +69,12 @@ This document defines the coding style for the jsec project.
 -   Always clear the error queue or handle errors appropriately.
 
 
-<a id="org4c18684"></a>
+<a id="org9427aec"></a>
 
 # Janet Code
 
 
-<a id="org4f509b5"></a>
+<a id="org4a7878d"></a>
 
 ## Formatting
 
@@ -82,7 +82,7 @@ This document defines the coding style for the jsec project.
 -   ****Braces/Parens****: Standard Lisp style (trailing parens on the same line).
 
 
-<a id="orgeb6d4bf"></a>
+<a id="orgce029d3"></a>
 
 ## Naming
 
@@ -90,14 +90,14 @@ This document defines the coding style for the jsec project.
 -   ****Globals/Dynamics****: \`\*kebab-case\*\`.
 
 
-<a id="org0277d8b"></a>
+<a id="org92f94cd"></a>
 
 ## Documentation
 
 -   Public functions must have docstrings.
 
 
-<a id="org61f7788"></a>
+<a id="org8a5e47a"></a>
 
 # Testing
 

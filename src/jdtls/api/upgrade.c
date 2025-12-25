@@ -6,9 +6,10 @@
 
 #include "../internal.h"
 #include <string.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#ifndef JANET_WINDOWS
+  #include <unistd.h>
+#endif
 #include <time.h>
 #include <openssl/x509v3.h>
 
@@ -79,8 +80,8 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     }
 
     /* Get the file descriptor from the stream */
-    int fd = (int)transport->handle;
-    if (fd < 0) {
+    jsec_socket_t fd = (jsec_socket_t)transport->handle;
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_io("invalid transport stream");
     }
 

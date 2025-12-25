@@ -14,7 +14,9 @@
 #endif
 
 #include "../internal.h"
-#include <sys/un.h>
+#ifndef _WIN32
+  #include <sys/un.h>
+#endif
 
 /*============================================================================
  * WRAP - Wrap an existing stream with TLS
@@ -661,6 +663,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
     int fd = -1;
     int status;
 
+#ifndef JANET_WINDOWS
     if (is_unix) {
         /* Unix socket connection */
         struct sockaddr_un addr;
@@ -669,15 +672,15 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         strncpy(addr.sun_path, unix_path, sizeof(addr.sun_path) - 1);
 
         /* Support Linux abstract namespace sockets (start with @) */
-#ifdef __linux__
+  #ifdef __linux__
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
         }
-#endif
+  #endif
 
-#ifdef __linux__
+  #ifdef __linux__
         fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-#else
+  #else
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd != -1) {
             int flags = fcntl(fd, F_GETFL, 0);
@@ -685,18 +688,18 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             flags = fcntl(fd, F_GETFD, 0);
             if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
         }
-#endif
+  #endif
         if (fd == -1) {
             tls_panic_socket("could not create unix socket");
         }
 
         socklen_t addrlen = sizeof(addr);
-#ifdef __linux__
+  #ifdef __linux__
         if (unix_path[0] == '@') {
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
                                   strlen(unix_path));
         }
-#endif
+  #endif
 
         do {
             status = connect(fd, (struct sockaddr *)&addr, addrlen);
@@ -748,7 +751,9 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                        strerror(errno));
         }
         /* else EINPROGRESS - fall through to async handling */
-    } else {
+    } else
+#endif /* !_WIN32 */
+    {
         /* TCP connection - DNS resolution (blocking, same as Janet's
          * net/connect) */
         struct addrinfo hints;
@@ -768,17 +773,22 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         struct addrinfo *rp;
         for (rp = ai; rp != NULL; rp = rp->ai_next) {
             /* Create socket with non-blocking from the start */
-#ifdef __linux__
+#ifdef JANET_LINUX
             fd = socket(rp->ai_family,
                         rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
                         rp->ai_protocol);
 #else
             fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
             if (fd != -1) {
+  #ifdef JANET_WINDOWS
+                unsigned long mode = 1;
+                ioctlsocket(fd, FIONBIO, &mode);
+  #else
                 int flags = fcntl(fd, F_GETFL, 0);
                 if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
                 flags = fcntl(fd, F_GETFD, 0);
                 if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+  #endif
             }
 #endif
             if (fd == -1) continue;
@@ -818,10 +828,13 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
     }
 
     if (fd == -1) {
+#ifndef JANET_WINDOWS
         if (is_unix) {
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
                        "could not connect to unix socket %s", unix_path);
-        } else {
+        } else
+#endif
+        {
             jsec_panic(JSEC_MOD_TLS, "SOCKET", "could not connect to %s:%s",
                        host, port);
         }

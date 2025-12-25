@@ -8,7 +8,9 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#ifndef JANET_WINDOWS
+  #include <unistd.h>
+#endif
 #include <time.h>
 #include <openssl/x509v3.h>
 
@@ -91,14 +93,20 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Create UDP socket and connect */
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
 
     /* Set non-blocking */
+    /* Set non-blocking */
+#ifdef JANET_WINDOWS
+    unsigned long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
     /* Resolve and connect */
     struct sockaddr_in addr;
@@ -107,19 +115,19 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     addr.sin_port = htons((uint16_t)port);
 
     if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_param("invalid address: %s", host);
     }
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 &&
         errno != EINPROGRESS) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_socket("connect failed");
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport =
-        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport = janet_stream(
+        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS client */
     DTLSClient *client =

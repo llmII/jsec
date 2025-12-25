@@ -80,6 +80,10 @@
                                           :tcp-nodelay [true false]
                                           :cert-type [:rsa :ec-p256]
                                           :cipher-group [:aes-gcm :chacha20]}
+                                 # Skip Unix sockets on Windows (not supported)
+                                 :skip-cases (if (= (os/which) :windows)
+                                               [{:socket-type :unix}]
+                                               [])
                                  :parallel {:fiber 6 :thread 6 :subprocess 6}
                                  :harness [:certs {:setup (fn [cfg vs]
                                                             (generate-certs-for-matrix cfg))}]

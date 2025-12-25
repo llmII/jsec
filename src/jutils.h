@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <janet.h>
+#include "compat.h"
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>

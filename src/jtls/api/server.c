@@ -16,7 +16,9 @@
 #endif
 
 #include "../internal.h"
-#include <sys/un.h>
+#ifndef JANET_WINDOWS
+  #include <sys/un.h>
+#endif
 
 /*============================================================================
  * ACCEPT-LOOP - Continuously accept TLS connections
@@ -72,7 +74,7 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             /* Try to accept connections - level triggered so we may get
              * multiple */
             while (1) {
-#ifdef __linux__
+#ifdef JANET_LINUX
                 int client_fd =
                     accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
 #else
@@ -88,11 +90,14 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                 }
 
                 /* Got a connection - set non-blocking */
+#ifdef JANET_WINDOWS
+                unsigned long mode = 1;
+                ioctlsocket(client_fd, FIONBIO, &mode);
+#else
                 int flags = fcntl(client_fd, F_GETFL, 0);
                 if (flags != -1) {
                     fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
                 }
-#ifndef __linux__
                 flags = fcntl(client_fd, F_GETFD, 0);
                 if (flags != -1) {
                     fcntl(client_fd, F_SETFD, flags | FD_CLOEXEC);
@@ -297,6 +302,7 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
 
     int fd = -1;
 
+#ifndef JANET_WINDOWS
     if (is_unix) {
         /* Unix socket listener */
         struct sockaddr_un addr;
@@ -307,13 +313,13 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         socklen_t addrlen = sizeof(addr);
 
         /* Support Linux abstract namespace sockets (start with @) */
-#ifdef __linux__
+  #ifdef __linux__
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
                                   strlen(unix_path));
         }
-#endif
+  #endif
 
         /* Remove existing socket file (if not abstract) */
         if (unix_path[0] != '@') {
@@ -331,7 +337,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
                        "could not bind to unix socket %s: %s", unix_path,
                        strerror(errno));
         }
-    } else {
+    } else
+#endif
+    {
         /* TCP listener */
         struct addrinfo hints;
         memset(&hints, 0, sizeof(hints));
@@ -377,8 +385,13 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
     }
 
     /* Set non-blocking */
+#ifdef JANET_WINDOWS
+    unsigned long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
     /* Return a Janet stream */
     return janet_wrap_abstract(janet_stream(
@@ -427,7 +440,7 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
             /* Try to accept a TCP connection */
-#ifdef __linux__
+#ifdef JANET_LINUX
             int client_fd =
                 accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
 #else
@@ -435,11 +448,14 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #endif
             if (client_fd >= 0) {
                 /* Got a connection - set non-blocking */
+#ifdef JANET_WINDOWS
+                unsigned long mode = 1;
+                ioctlsocket(client_fd, FIONBIO, &mode);
+#else
                 int flags = fcntl(client_fd, F_GETFL, 0);
                 if (flags != -1) {
                     fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
                 }
-#ifndef __linux__
                 flags = fcntl(client_fd, F_GETFD, 0);
                 if (flags != -1) {
                     fcntl(client_fd, F_SETFD, flags | FD_CLOEXEC);

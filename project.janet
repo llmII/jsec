@@ -21,11 +21,15 @@
 #                         prototypes
 #
 # Production builds use -O2 for optimization. Debug builds use -Og instead.
+(def- is-windows (= (os/which) :windows))
+
 (def standard-cflags
-  ["-std=c99" "-O2"
-   "-Wall" "-Wextra" "-Wshadow" "-fno-common"
-   "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
-   "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"])
+  (if is-windows
+    ["/O2" "/W4" "/MD"]
+    ["-std=c99" "-O2"
+     "-Wall" "-Wextra" "-Wshadow" "-fno-common"
+     "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
+     "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"]))
 
 # Debug build flags - sanitizers and debug symbols
 # 
@@ -58,32 +62,39 @@
 (def- ubsan? (os/getenv "JSEC_UBSAN"))
 (def- verbose? (os/getenv "JSEC_DEBUG_VERBOSE"))
 
-# Build sanitizer flags based on which are enabled
+# Build sanitizer flags based on which are enabled (Unix only - MSVC doesn't support)
 (defn- build-sanitizer-flags []
-  (var sanitizers @[])
-  (when asan? (array/push sanitizers "address"))
-  (when ubsan? (array/push sanitizers "undefined"))
-  (if (empty? sanitizers)
+  (if is-windows
     @[]
-    @[(string "-fsanitize=" (string/join sanitizers ","))]))
+    (let [sanitizers @[]]
+      (when asan? (array/push sanitizers "address"))
+      (when ubsan? (array/push sanitizers "undefined"))
+      (if (empty? sanitizers)
+        @[]
+        @[(string "-fsanitize=" (string/join sanitizers ","))]))))
 
 (def debug-extra-cflags
-  (let [base @["-g3" "-Og" "-fno-omit-frame-pointer"
-               "-fstack-protector-strong" "-DJSEC_DEBUG"]
-        san-flags (build-sanitizer-flags)]
-    (when (not (empty? san-flags))
-      (array/push base ;san-flags)
-      (array/push base "-fsanitize-recover=all"))
-    (when verbose?
-      (array/push base "-DJSEC_DEBUG_VERBOSE"))
-    base))
+  (if is-windows
+    @["/Zi" "/Od" "/DJSEC_DEBUG"]
+    (let [base @["-g3" "-Og" "-fno-omit-frame-pointer"
+                 "-fstack-protector-strong" "-DJSEC_DEBUG"]
+          san-flags (build-sanitizer-flags)]
+      (when (not (empty? san-flags))
+        (array/push base ;san-flags)
+        (array/push base "-fsanitize-recover=all"))
+      (when verbose?
+        (array/push base "-DJSEC_DEBUG_VERBOSE"))
+      base)))
 
 (def debug-lflags
-  (build-sanitizer-flags))
+  (if is-windows
+    @["/DEBUG"]
+    (build-sanitizer-flags)))
 
 # macOS: Use Homebrew OpenSSL instead of outdated system LibreSSL 3.3.6
 # Set OPENSSL_PREFIX env var to override the default Homebrew location
 # DragonflyBSD: LibreSSL headers in /usr/local/include
+# Windows: Use vcpkg OpenSSL (requires VCPKG_ROOT environment variable)
 (def- macos? (= (os/which) :macos))
 (def- dragonfly? (= (os/which) :dragonfly))
 (def- openssl-prefix
@@ -94,15 +105,28 @@
           "/opt/homebrew/opt/openssl@3" # ARM Mac (M1/M2/M3)
           "/usr/local/opt/openssl@3")) # Intel Mac (x86_64)
     dragonfly? "/usr/local"
+    is-windows
+    (when-let [vcpkg-root (os/getenv "VCPKG_ROOT")]
+      (string vcpkg-root "/installed/x64-windows"))
     nil))
 
 (def platform-cflags
-  (if openssl-prefix
+  (cond
+    is-windows
+    (if openssl-prefix
+      [(string "/I" openssl-prefix "/include")]
+      [])
+    openssl-prefix
     [(string "-I" openssl-prefix "/include")]
     []))
 
 (def platform-lflags
-  (if openssl-prefix
+  (cond
+    is-windows
+    (if openssl-prefix
+      [(string "/LIBPATH:" openssl-prefix "/lib") "libssl.lib" "libcrypto.lib" "ws2_32.lib"]
+      ["libssl.lib" "libcrypto.lib" "ws2_32.lib"])
+    openssl-prefix
     [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
     ["-lssl" "-lcrypto"]))
 
@@ -116,6 +140,11 @@
   (if debug?
     [;platform-lflags ;debug-lflags]
     platform-lflags))
+
+# Windows: Set jpm dynamic-cflags for proper DLL import handling
+# JANET_DLL_IMPORT makes janet.h use dllimport for Janet symbols
+(when is-windows
+  (setdyn :dynamic-cflags @["/LD" "/DJANET_DLL_IMPORT"]))
 
 # jsec/utils - Shared utilities and types (must be loaded first)
 (declare-native

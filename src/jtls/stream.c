@@ -122,8 +122,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
 #ifdef SO_NOSIGPIPE
     if (transport) {
         int enable = 1;
-        setsockopt((int)transport->handle, SOL_SOCKET, SO_NOSIGPIPE, &enable,
-                   sizeof(int));
+        setsockopt((jsec_socket_t)transport->handle, SOL_SOCKET, SO_NOSIGPIPE,
+                   &enable, sizeof(int));
     }
 #endif
 
@@ -131,8 +131,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
      * TLS already does its own buffering, so Nagle just adds delay. */
     if (transport && tcp_nodelay != 0) {
         int enable = 1;
-        setsockopt((int)transport->handle, IPPROTO_TCP, TCP_NODELAY, &enable,
-                   sizeof(int));
+        setsockopt((jsec_socket_t)transport->handle, IPPROTO_TCP, TCP_NODELAY,
+                   (const char *)&enable, sizeof(int));
     }
 
     /* Handshake timing - only record if explicitly enabled.

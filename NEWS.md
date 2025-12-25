@@ -1,23 +1,23 @@
 
 # Table of Contents
 
--   [News](#orgfc6dfbe)
-    -   [2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements](#orgf5b0049)
-    -   [2025-12-24 - NetBSD & DragonflyBSD Support](#orge4bd06f)
-    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#orgfdd09ae)
-    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org4887c3a)
-    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#org2ff7ede)
-    -   [2025-12-13 - Dependency Update](#org431fa5b)
-    -   [2025-12-12 - Initial Release](#orge2f65b9)
+-   [News](#org53b90d7)
+    -   [2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements](#org071dad8)
+    -   [2025-12-24 - NetBSD & DragonflyBSD Support](#orgd8255af)
+    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#org24674e6)
+    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#orgf68f2e8)
+    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#orgce683c0)
+    -   [2025-12-13 - Dependency Update](#orge579e0a)
+    -   [2025-12-12 - Initial Release](#orgd9239ca)
 
 
 
-<a id="orgfc6dfbe"></a>
+<a id="org53b90d7"></a>
 
 # News
 
 
-<a id="orgf5b0049"></a>
+<a id="org071dad8"></a>
 
 ## 2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements
 
@@ -49,7 +49,7 @@ OpenBSD is now fully supported with all tests passing:
 -   No functional changes - existing code was correct
 
 
-<a id="orge4bd06f"></a>
+<a id="orgd8255af"></a>
 
 ## 2025-12-24 - NetBSD & DragonflyBSD Support
 
@@ -81,7 +81,7 @@ NetBSD and DragonflyBSD are now fully supported with all tests passing:
 -   Build and most tests work with LibreSSL 3.9+
 
 
-<a id="orgfdd09ae"></a>
+<a id="org24674e6"></a>
 
 ## 2025-12-23 - macOS Support via Homebrew OpenSSL
 
@@ -94,7 +94,7 @@ macOS is now fully supported with all tests passing:
 -   Janet and jpm
 
 
-<a id="org4887c3a"></a>
+<a id="orgf68f2e8"></a>
 
 ## 2025-12-15 - FreeBSD Support & Performance Improvements
 
@@ -119,7 +119,7 @@ all tests passing:
 -   Some keywords cached to prevent runtime lookups in hot paths
 
 
-<a id="org2ff7ede"></a>
+<a id="orgce683c0"></a>
 
 ## 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
@@ -138,7 +138,7 @@ Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
 These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
 
 
-<a id="org431fa5b"></a>
+<a id="orge579e0a"></a>
 
 ## 2025-12-13 - Dependency Update
 
@@ -146,7 +146,7 @@ These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
     merged the necessary changes for spork-https compatibility
 
 
-<a id="orge2f65b9"></a>
+<a id="orgd9239ca"></a>
 
 ## 2025-12-12 - Initial Release
 
