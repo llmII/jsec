@@ -11,6 +11,11 @@
 #ifndef JSEC_COMPAT_H
 #define JSEC_COMPAT_H
 
+/* Enable POSIX features before any system includes (clock_gettime, strdup) */
+#ifndef _POSIX_C_SOURCE
+  #define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <janet.h>
 #include <openssl/opensslv.h>
 

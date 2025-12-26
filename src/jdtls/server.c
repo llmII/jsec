@@ -47,10 +47,6 @@ static ssize_t send_dtls_packet(JanetStream *transport,
         return 0;
     }
 
-    fprintf(stderr,
-            "[DTLS-Server] send_dtls_packet: %zu bytes pending in wbio\n",
-            pending);
-
     uint8_t *send_buf = janet_malloc(pending);
     if (!send_buf) {
         return -1;
@@ -64,14 +60,6 @@ static ssize_t send_dtls_packet(JanetStream *transport,
                       (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
                       session->peer_addr.addrlen);
-        fprintf(stderr, "[DTLS-Server] sendto returned %zd (send_len=%d)\n",
-                sent, send_len);
-#ifdef JANET_WINDOWS
-        if (sent < 0) {
-            fprintf(stderr, "[DTLS-Server] sendto error: %d\n",
-                    WSAGetLastError());
-        }
-#endif
     }
 
     janet_free(send_buf);
@@ -544,8 +532,6 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
                                    JanetFiber *fiber) {
     DTLSServer *server = state->server;
 
-    fprintf(stderr, "[DTLS-Server] dtls_start_wsa_recvfrom: starting\n");
-
     /* Reset overlapped struct */
     memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
     state->wsa_flags = 0;
@@ -555,9 +541,6 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
     /* Set up buffer */
     state->wsa_buf.buf = (char *)state->recv_buf;
     state->wsa_buf.len = sizeof(state->recv_buf);
-
-    fprintf(stderr, "[DTLS-Server] Calling WSARecvFrom on socket %p\n",
-            (void *)server->transport->handle);
 
     int result =
         WSARecvFrom((SOCKET)server->transport->handle, &state->wsa_buf, 1,
@@ -569,19 +552,13 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
         int err = WSAGetLastError();
         if (err == WSA_IO_PENDING) {
             /* Async recv started */
-            fprintf(stderr, "[DTLS-Server] WSARecvFrom: WSA_IO_PENDING, "
-                            "calling janet_async_in_flight\n");
             janet_async_in_flight(fiber);
             return 0;
         }
         /* Real error */
-        fprintf(stderr, "[DTLS-Server] WSARecvFrom error: %d\n", err);
         return -1;
     }
     /* Completed synchronously (rare) - will be handled in COMPLETE */
-    fprintf(stderr,
-            "[DTLS-Server] WSARecvFrom: completed synchronously, bytes=%lu\n",
-            (unsigned long)state->bytes_received);
     return 0;
 }
 #endif
@@ -627,8 +604,6 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
         case JANET_ASYNC_EVENT_COMPLETE:
         case JANET_ASYNC_EVENT_FAILED: {
-            fprintf(stderr, "[DTLS-Server] COMPLETE/FAILED: event=%d\n",
-                    event);
             DTLSServer *server = state->server;
 
             /* Get the number of bytes received from GetQueuedCompletionStatus
@@ -639,15 +614,8 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                 (SOCKET)server->transport->handle, &state->overlapped,
                 &bytes_transferred, FALSE, &flags);
 
-            fprintf(stderr,
-                    "[DTLS-Server] WSAGetOverlappedResult: success=%d "
-                    "bytes=%lu\n",
-                    success, (unsigned long)bytes_transferred);
-
             if (!success || bytes_transferred == 0) {
                 /* Try to start another receive */
-                fprintf(stderr,
-                        "[DTLS-Server] Zero bytes, restarting WSARecvFrom\n");
                 if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
                     janet_cancel(
                         fiber, janet_cstringv("WSARecvFrom restart failed"));

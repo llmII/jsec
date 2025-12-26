@@ -208,18 +208,24 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Create dgram BIO */
-    BIO *bio = BIO_new_dgram(fd, BIO_NOCLOSE);
-    if (!bio) {
-        dtls_panic_ssl("failed to create BIO");
+    /* Create memory BIOs for decoupled I/O (required for IOCP on Windows)
+     * - rbio: We write received UDP data here, SSL reads from it
+     * - wbio: SSL writes encrypted data here, we sendto() from it
+     */
+    client->rbio = BIO_new(BIO_s_mem());
+    client->wbio = BIO_new(BIO_s_mem());
+    if (!client->rbio || !client->wbio) {
+        if (client->rbio) BIO_free(client->rbio);
+        if (client->wbio) BIO_free(client->wbio);
+        dtls_panic_ssl("failed to create memory BIOs");
     }
 
-    /* Set peer address on BIO */
-    BIO_ctrl(bio, BIO_CTRL_DGRAM_SET_CONNECTED, 0, &peer_addr);
-    BIO_set_nbio(bio, 1);
+    /* Set non-blocking mode on memory BIOs */
+    BIO_set_nbio(client->rbio, 1);
+    BIO_set_nbio(client->wbio, 1);
 
-    /* Attach to SSL */
-    SSL_set_bio(client->ssl, bio, bio);
+    /* Attach BIOs to SSL - SSL takes ownership */
+    SSL_set_bio(client->ssl, client->rbio, client->wbio);
 
     /* Set mode */
     if (is_server) {
