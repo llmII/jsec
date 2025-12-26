@@ -124,8 +124,8 @@
   (cond
     is-windows
     (if openssl-prefix
-      [(string "/LIBPATH:" openssl-prefix "/lib") "libssl.lib" "libcrypto.lib" "ws2_32.lib"]
-      ["libssl.lib" "libcrypto.lib" "ws2_32.lib"])
+      [(string "/LIBPATH:" openssl-prefix "/lib") "libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"]
+      ["libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"])
     openssl-prefix
     [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
     ["-lssl" "-lcrypto"]))

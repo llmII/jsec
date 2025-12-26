@@ -232,6 +232,12 @@ int dtls_verify_cookie(SSL *ssl, const unsigned char *cookie,
  */
 
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+#endif
     DTLSAsyncState state;
     SSL *ssl;
     JanetStream *transport;
@@ -239,6 +245,7 @@ typedef struct {
     int is_server;         /* Server uses memory BIO */
     DTLSSession *session;  /* For server: the session being operated on */
     void *owner;           /* DTLSServer or DTLSClient */
+    int want_write;        /* Track if we're waiting for write vs read */
 } DTLSAsyncData;
 
 static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
@@ -246,8 +253,39 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
     switch (event) {
         case JANET_ASYNC_EVENT_INIT:
-            /* Nothing to do on init */
+#ifdef JANET_WINDOWS
+            /* Windows IOCP: Start zero-byte WSARecv/WSASend as readiness
+             * probe */
+            if (data && data->transport) {
+                memset(&data->overlapped, 0, sizeof(WSAOVERLAPPED));
+                data->wsa_buf.len = 0;
+                data->wsa_buf.buf = NULL;
+                data->wsa_flags = 0;
+
+                int status;
+                if (data->want_write) {
+                    status = WSASend((SOCKET)data->transport->handle,
+                                     &data->wsa_buf, 1, NULL, 0,
+                                     &data->overlapped, NULL);
+                } else {
+                    status = WSARecv(
+                        (SOCKET)data->transport->handle, &data->wsa_buf, 1,
+                        NULL, &data->wsa_flags, &data->overlapped, NULL);
+                }
+                if (status == SOCKET_ERROR &&
+                    WSAGetLastError() != WSA_IO_PENDING) {
+                    janet_cancel(fiber, janet_cstringv("Socket I/O error"));
+                    fiber->ev_state = NULL;
+                    janet_async_end(fiber);
+                    return;
+                }
+                janet_async_in_flight(fiber);
+            }
             break;
+#else
+            /* Unix: nothing to do, wait for READ/WRITE events */
+            break;
+#endif
 
         case JANET_ASYNC_EVENT_MARK:
             /* Mark Janet values we reference */
@@ -277,6 +315,12 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             janet_async_end(fiber);
             break;
 
+#ifdef JANET_WINDOWS
+        case JANET_ASYNC_EVENT_COMPLETE:
+        case JANET_ASYNC_EVENT_FAILED:
+            /* Windows IOCP: Zero-byte probe completed, fall through to
+             * READ/WRITE handling */
+#endif
         case JANET_ASYNC_EVENT_READ:
         case JANET_ASYNC_EVENT_WRITE: {
             DTLSResult result;
@@ -354,12 +398,14 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case DTLS_RESULT_WANT_READ:
+                    data->want_write = 0;
                     janet_async_start(data->transport,
                                       JANET_ASYNC_LISTEN_READ,
                                       dtls_async_callback, data);
                     break;
 
                 case DTLS_RESULT_WANT_WRITE:
+                    data->want_write = 1;
                     janet_async_start(data->transport,
                                       JANET_ASYNC_LISTEN_WRITE,
                                       dtls_async_callback, data);
@@ -427,6 +473,7 @@ void dtls_async_handshake(JanetStream *transport, SSL *ssl,
     /* Need to wait */
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
+    data->want_write = (result == DTLS_RESULT_WANT_WRITE) ? 1 : 0;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
@@ -461,6 +508,7 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
     /* Wait for data */
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
+    data->want_write = (result == DTLS_RESULT_WANT_WRITE) ? 1 : 0;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
@@ -489,6 +537,7 @@ void dtls_async_write(JanetStream *transport, SSL *ssl,
     /* Wait for writable */
     int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
                                                  : JANET_ASYNC_LISTEN_WRITE;
+    data->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }
 
@@ -516,5 +565,6 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
     /* Wait for peer's close_notify */
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
+    data->want_write = (result == DTLS_RESULT_WANT_WRITE) ? 1 : 0;
     janet_async_start(transport, mode, dtls_async_callback, data);
 }

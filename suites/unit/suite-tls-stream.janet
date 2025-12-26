@@ -63,6 +63,18 @@
     (merge {:verify false} ctx-opts)))
 
 # =============================================================================
+# Skip predicates for platform-specific combinations
+# =============================================================================
+
+(defn skip-unix-on-windows?
+  "Skip Unix socket tests on Windows."
+  [combo]
+  (if (and (= (os/which) :windows)
+           (= (combo :socket-type) :unix))
+    "Unix sockets not supported on Windows"
+    false))
+
+# =============================================================================
 # Suite Definition
 # =============================================================================
 
@@ -80,10 +92,7 @@
                                           :tcp-nodelay [true false]
                                           :cert-type [:rsa :ec-p256]
                                           :cipher-group [:aes-gcm :chacha20]}
-                                 # Skip Unix sockets on Windows (not supported)
-                                 :skip-cases (if (= (os/which) :windows)
-                                               [{:socket-type :unix}]
-                                               [])
+                                 :skip-cases [skip-unix-on-windows?]
                                  :parallel {:fiber 6 :thread 6 :subprocess 6}
                                  :harness [:certs {:setup (fn [cfg vs]
                                                             (generate-certs-for-matrix cfg))}]

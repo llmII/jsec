@@ -122,6 +122,7 @@
   #endif
   #include <winsock2.h>
   #include <ws2tcpip.h>
+  #include <mswsock.h> /* For WSA_FLAG_OVERLAPPED, AcceptEx, etc. */
   #include <windows.h>
 
   /* ssize_t is POSIX, not available on Windows */

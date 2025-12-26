@@ -28,10 +28,13 @@
   (default port "0")
   (case socket-type
     :tcp [(net/listen host port) nil]
-    :unix (let [socket-path (make-socket-path)]
-            # Remove any stale socket file
-            (cleanup-socket socket-path)
-            [(net/listen :unix socket-path) socket-path])
+    :unix (do
+            (when (= (os/which) :windows)
+              (error "Unix sockets not supported on Windows"))
+            (let [socket-path (make-socket-path)]
+              # Remove any stale socket file
+              (cleanup-socket socket-path)
+              [(net/listen :unix socket-path) socket-path]))
     (error (string "Unknown socket type: " socket-type))))
 
 (defn get-server-addr

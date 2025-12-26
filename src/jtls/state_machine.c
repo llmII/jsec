@@ -143,17 +143,25 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
             if (tls) tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
             return TLS_IO_COMPLETE;
 
-        case SSL_ERROR_SYSCALL:
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        case SSL_ERROR_SYSCALL: {
+            int sock_err = jsec_socket_errno;
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
                 return has_data ? TLS_IO_COMPLETE : TLS_IO_WANT_BOTH;
             }
-            if (ret == 0 || errno == 0) {
+            if (ret == 0 || sock_err == 0) {
                 /* EOF - not an error for read operations */
                 return TLS_IO_COMPLETE;
             }
+#ifdef JANET_WINDOWS
+            /* Windows: format socket error code */
             snprintf(state->error_msg, sizeof(state->error_msg),
-                     "%s syscall error: %s", op_name, strerror(errno));
+                     "%s syscall error: WSA error %d", op_name, sock_err);
+#else
+            snprintf(state->error_msg, sizeof(state->error_msg),
+                     "%s syscall error: %s", op_name, strerror(sock_err));
+#endif
             return TLS_IO_ERROR;
+        }
 
         default:
             snprintf(state->error_msg, sizeof(state->error_msg),
@@ -317,13 +325,16 @@ TLSIOState jtls_process_operation(TLSState *state) {
                         }
                         return TLS_IO_WANT_READ;
                     }
-                    if (ssl_err == SSL_ERROR_SYSCALL &&
-                        (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                        if (just_read_data) {
-                            just_read_data = 0;
-                            continue;
+                    if (ssl_err == SSL_ERROR_SYSCALL) {
+                        int sock_err = jsec_socket_errno;
+                        if (sock_err == JSEC_EAGAIN ||
+                            sock_err == JSEC_EWOULDBLOCK) {
+                            if (just_read_data) {
+                                just_read_data = 0;
+                                continue;
+                            }
+                            return TLS_IO_WANT_BOTH;
                         }
-                        return TLS_IO_WANT_BOTH;
                     }
                     /* Other errors use standard handler (no has_data for
                      * chunk) */
@@ -421,7 +432,9 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     tls->conn_state = TLS_CONN_CLOSED;
                     return TLS_IO_COMPLETE;
                 } else if (ssl_err == SSL_ERROR_SYSCALL) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    int sock_err = jsec_socket_errno;
+                    if (sock_err == JSEC_EAGAIN ||
+                        sock_err == JSEC_EWOULDBLOCK) {
                         if (state->op == TLS_OP_CLOSE) {
                             tls->conn_state = TLS_CONN_CLOSED;
                             return TLS_IO_COMPLETE;
@@ -600,6 +613,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * The read operation will handle receiving the protocol messages,
              * and when it completes, our SSL_write will succeed.
              */
+            state->io_state = io_state; /* Store for Windows IOCP probe */
             if (state->op == TLS_OP_WRITE && tls->pending_read != NULL) {
                 /* Let the read fiber handle reading, we stay on write */
                 jtls_schedule_async(fiber, tls, state,
@@ -620,6 +634,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * events. The write operation will handle sending the protocol
              * messages, and when it completes, our SSL_read will succeed.
              */
+            state->io_state = io_state; /* Store for Windows IOCP probe */
             if ((state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) &&
                 tls->pending_write != NULL) {
                 /* Let the write fiber handle writing, we stay on read */
@@ -633,6 +648,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
 
         case TLS_IO_WANT_BOTH:
             /* Need to wait for either (rare case) */
+            state->io_state = io_state; /* Store for Windows IOCP probe */
             jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_BOTH,
                                 is_async);
             return 0;
@@ -711,9 +727,57 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             break;
 
         case JANET_ASYNC_EVENT_INIT:
+#ifdef JANET_WINDOWS
+            /* Windows IOCP: Start zero-byte WSARecv/WSASend as readiness
+             * probe. These complete when socket is readable/writable, then
+             * our BIO's non-blocking recv/send will succeed. */
+            if (state) {
+                JanetStream *stream = fiber->ev_stream;
+                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+                state->wsa_buf.len = 0;
+                state->wsa_buf.buf = NULL;
+                state->wsa_flags = 0;
+
+                int status;
+                if (state->io_state == TLS_IO_WANT_READ) {
+                    status = WSARecv((SOCKET)stream->handle, &state->wsa_buf,
+                                     1, NULL, &state->wsa_flags,
+                                     &state->overlapped, NULL);
+                } else {
+                    status = WSASend((SOCKET)stream->handle, &state->wsa_buf,
+                                     1, NULL, 0, &state->overlapped, NULL);
+                }
+                if (status == SOCKET_ERROR &&
+                    WSAGetLastError() != WSA_IO_PENDING) {
+                    janet_cancel(fiber, janet_cstringv("Socket I/O error"));
+                    fiber->ev_state = NULL;
+                    janet_async_end(fiber);
+                    return;
+                }
+                janet_async_in_flight(fiber);
+            }
+            break;
+#else
+            /* Unix: return and wait for READ/WRITE events from epoll/kqueue
+             */
+            return;
+#endif
+
         case JANET_ASYNC_EVENT_DEINIT:
             /* Nothing to do */
             break;
+
+#ifdef JANET_WINDOWS
+        case JANET_ASYNC_EVENT_COMPLETE:
+        case JANET_ASYNC_EVENT_FAILED:
+            /* Windows IOCP: Zero-byte probe completed, socket is now ready.
+             * Retry the SSL operation - BIO's non-blocking recv/send will
+             * succeed. */
+            if (state) {
+                jtls_attempt_io(fiber, state, 1);
+            }
+            break;
+#endif
 
         case JANET_ASYNC_EVENT_HUP:
             /* Peer closed connection. For read operations, there may still

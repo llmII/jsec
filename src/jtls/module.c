@@ -24,6 +24,14 @@
  * We only initialize our own state (mutex, ex_data indices, keylog file).
  */
 void jtls_module_init(JanetTable *env) {
+    /* Initialize Winsock on Windows - must happen before any socket
+     * operations */
+#ifdef JANET_WINDOWS
+    if (jsec_winsock_init() != 0) {
+        tls_panic_config("failed to initialize Winsock");
+    }
+#endif
+
     /* Initialize BIO method first - must happen before any threads */
     jtls_init_bio_method();
 

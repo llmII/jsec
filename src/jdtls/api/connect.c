@@ -6,7 +6,7 @@
 
 #include "../internal.h"
 #include <string.h>
-#include <errno.h>
+
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
   #include <unistd.h>
@@ -93,12 +93,17 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Create UDP socket and connect */
+#ifdef JANET_WINDOWS
+    /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
+    jsec_socket_t fd =
+        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+#else
     jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+#endif
     if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
 
-    /* Set non-blocking */
     /* Set non-blocking */
 #ifdef JANET_WINDOWS
     unsigned long mode = 1;
@@ -120,7 +125,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 &&
-        errno != EINPROGRESS) {
+        jsec_socket_errno != JSEC_EINPROGRESS &&
+        jsec_socket_errno != JSEC_EWOULDBLOCK) {
         jsec_close_socket(fd);
         dtls_panic_socket("connect failed");
     }

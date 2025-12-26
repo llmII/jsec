@@ -445,9 +445,18 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             janet_async_end(fiber);
             return;
 
-#ifndef JANET_WINDOWS
+#ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_INIT:
-            /* On non-Windows, wait for actual event before checking */
+            /* Windows IOCP: Check connect status immediately since Windows
+             * doesn't support readiness-based async connect the same way.
+             * Fall through to WRITE case to check getsockopt for connect
+             * result. */
+  #if defined(__GNUC__) || defined(__clang__)
+            __attribute__((fallthrough));
+  #endif
+#else
+        case JANET_ASYNC_EVENT_INIT:
+            /* On non-Windows, wait for actual WRITE event before checking */
             return;
 #endif
 
@@ -703,7 +712,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
 
         do {
             status = connect(fd, (struct sockaddr *)&addr, addrlen);
-        } while (status == -1 && errno == EINTR);
+        } while (status == -1 && jsec_socket_errno == JSEC_EINTR);
 
         if (status == 0) {
             /* Connected immediately */
@@ -744,11 +753,11 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             wrap_args[2] = opts;
 
             return cfun_wrap(3, wrap_args);
-        } else if (errno != EINPROGRESS) {
-            close(fd);
+        } else if (jsec_socket_errno != JSEC_EINPROGRESS &&
+                   jsec_socket_errno != JSEC_EWOULDBLOCK) {
+            jsec_close_socket(fd);
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
-                       "could not connect to unix socket %s: %s", unix_path,
-                       strerror(errno));
+                       "could not connect to unix socket %s", unix_path);
         }
         /* else EINPROGRESS - fall through to async handling */
     } else
@@ -777,26 +786,34 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             fd = socket(rp->ai_family,
                         rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
                         rp->ai_protocol);
+#elif defined(JANET_WINDOWS)
+            /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
+            fd = WSASocketW(rp->ai_family, rp->ai_socktype, rp->ai_protocol,
+                            NULL, 0, WSA_FLAG_OVERLAPPED);
+            if (fd != INVALID_SOCKET) {
+                unsigned long mode = 1;
+                ioctlsocket(fd, FIONBIO, &mode);
+            }
 #else
             fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
             if (fd != -1) {
-  #ifdef JANET_WINDOWS
-                unsigned long mode = 1;
-                ioctlsocket(fd, FIONBIO, &mode);
-  #else
                 int flags = fcntl(fd, F_GETFL, 0);
                 if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
                 flags = fcntl(fd, F_GETFD, 0);
                 if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
-  #endif
             }
 #endif
             if (fd == -1) continue;
 
             /* Attempt non-blocking connect */
+#ifdef JANET_WINDOWS
+            status = WSAConnect(fd, rp->ai_addr, (int)rp->ai_addrlen, NULL,
+                                NULL, NULL, NULL);
+#else
             do {
                 status = connect(fd, rp->ai_addr, rp->ai_addrlen);
-            } while (status == -1 && errno == EINTR);
+            } while (status == -1 && jsec_socket_errno == JSEC_EINTR);
+#endif
 
             if (status == 0) {
                 /* Connected immediately (rare, but possible on localhost) */
@@ -815,12 +832,13 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 wrap_args[2] = opts;
 
                 return cfun_wrap(3, wrap_args);
-            } else if (errno == EINPROGRESS) {
+            } else if (jsec_socket_errno == JSEC_EINPROGRESS ||
+                       jsec_socket_errno == JSEC_EWOULDBLOCK) {
                 /* Connection in progress - normal async case */
                 break;
             } else {
                 /* This address failed immediately, try next */
-                close(fd);
+                jsec_close_socket(fd);
                 fd = -1;
             }
         }
