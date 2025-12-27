@@ -10,12 +10,12 @@
  */
 
 #ifdef __linux__
-  #define _GNU_SOURCE
+#define _GNU_SOURCE
 #endif
 
 #include "../internal.h"
 #ifndef _WIN32
-  #include <sys/un.h>
+#include <sys/un.h>
 #endif
 
 /*============================================================================
@@ -451,9 +451,9 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * doesn't support readiness-based async connect the same way.
              * Fall through to WRITE case to check getsockopt for connect
              * result. */
-  #if defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
             __attribute__((fallthrough));
-  #endif
+#endif
 #else
         case JANET_ASYNC_EVENT_INIT:
             /* On non-Windows, wait for actual WRITE event before checking */
@@ -681,15 +681,15 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         strncpy(addr.sun_path, unix_path, sizeof(addr.sun_path) - 1);
 
         /* Support Linux abstract namespace sockets (start with @) */
-  #ifdef __linux__
+#ifdef __linux__
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
         }
-  #endif
+#endif
 
-  #ifdef __linux__
+#ifdef __linux__
         fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-  #else
+#else
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd != -1) {
             int flags = fcntl(fd, F_GETFL, 0);
@@ -697,18 +697,18 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             flags = fcntl(fd, F_GETFD, 0);
             if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
         }
-  #endif
+#endif
         if (fd == -1) {
             tls_panic_socket("could not create unix socket");
         }
 
         socklen_t addrlen = sizeof(addr);
-  #ifdef __linux__
+#ifdef __linux__
         if (unix_path[0] == '@') {
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
                                   strlen(unix_path));
         }
-  #endif
+#endif
 
         do {
             status = connect(fd, (struct sockaddr *)&addr, addrlen);

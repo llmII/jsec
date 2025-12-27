@@ -16,8 +16,8 @@
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
 #if JSEC_HAS_OSSL_PARAM
-  #include <openssl/core_names.h>
-  #include <openssl/param_build.h>
+#include <openssl/core_names.h>
+#include <openssl/param_build.h>
 #endif
 
 /*

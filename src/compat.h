@@ -13,7 +13,7 @@
 
 /* Enable POSIX features before any system includes (clock_gettime, strdup) */
 #ifndef _POSIX_C_SOURCE
-  #define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <janet.h>
@@ -29,24 +29,24 @@
  * LIBRESSL_VERSION_NUMBER, OpenSSL does not).
  */
 #ifdef LIBRESSL_VERSION_NUMBER
-  #define OPENSSL_PREREQ(M, m, p) (0)
-  #define LIBRESSL_PREREQ(M, m, p)                                           \
-      (LIBRESSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
+#define OPENSSL_PREREQ(M, m, p) (0)
+#define LIBRESSL_PREREQ(M, m, p)                                             \
+    (LIBRESSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
 #else
-  #define OPENSSL_PREREQ(M, m, p)                                            \
-      (OPENSSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
-  #define LIBRESSL_PREREQ(M, m, p) (0)
+#define OPENSSL_PREREQ(M, m, p)                                              \
+    (OPENSSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
+#define LIBRESSL_PREREQ(M, m, p) (0)
 #endif
 
 /*
  * Backend Detection
  */
 #ifdef LIBRESSL_VERSION_NUMBER
-  #define JSEC_LIBRESSL 1
-  #define JSEC_OPENSSL 0
+#define JSEC_LIBRESSL 1
+#define JSEC_OPENSSL 0
 #else
-  #define JSEC_LIBRESSL 0
-  #define JSEC_OPENSSL 1
+#define JSEC_LIBRESSL 0
+#define JSEC_OPENSSL 1
 #endif
 
 
@@ -62,13 +62,12 @@
  * Available in OpenSSL 1.1.0+ and LibreSSL 2.7.0+
  */
 #ifndef HAVE_SSL_CTX_UP_REF
-  #define HAVE_SSL_CTX_UP_REF                                                \
-      (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
+#define HAVE_SSL_CTX_UP_REF                                                  \
+    (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
 #endif
 
 #ifndef HAVE_SSL_UP_REF
-  #define HAVE_SSL_UP_REF                                                    \
-      (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
+#define HAVE_SSL_UP_REF (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
 #endif
 
 /*
@@ -104,14 +103,14 @@
  * For older OpenSSL/LibreSSL that lack SSL_CTX_up_ref / SSL_up_ref
  */
 #if !HAVE_SSL_CTX_UP_REF
-  #include <openssl/crypto.h>
-  #define SSL_CTX_up_ref(ctx)                                                \
-      CRYPTO_add(&(ctx)->references, 1, CRYPTO_LOCK_SSL_CTX)
+#include <openssl/crypto.h>
+#define SSL_CTX_up_ref(ctx)                                                  \
+    CRYPTO_add(&(ctx)->references, 1, CRYPTO_LOCK_SSL_CTX)
 #endif
 
 #if !HAVE_SSL_UP_REF
-  #include <openssl/crypto.h>
-  #define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
+#include <openssl/crypto.h>
+#define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
 #endif
 
 /*
@@ -121,29 +120,29 @@
  */
 
 #ifdef _WIN32
-  /* Winsock2 must be included before windows.h to avoid conflicts */
-  #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-  #endif
-  #include <winsock2.h>
-  #include <ws2tcpip.h>
-  #include <mswsock.h> /* For WSA_FLAG_OVERLAPPED, AcceptEx, etc. */
-  #include <windows.h>
+/* Winsock2 must be included before windows.h to avoid conflicts */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mswsock.h> /* For WSA_FLAG_OVERLAPPED, AcceptEx, etc. */
+#include <windows.h>
 
-  /* ssize_t is POSIX, not available on Windows */
-  #include <basetsd.h>
+/* ssize_t is POSIX, not available on Windows */
+#include <basetsd.h>
 typedef SSIZE_T ssize_t;
 
-  /* Windows uses Winsock2 instead of arpa/inet.h */
-  #define JSEC_HAS_ARPA_INET 0
+/* Windows uses Winsock2 instead of arpa/inet.h */
+#define JSEC_HAS_ARPA_INET 0
 
-  /* clock_gettime is POSIX, provide Windows implementation */
-  #include <time.h>
-  #include <profileapi.h>
+/* clock_gettime is POSIX, provide Windows implementation */
+#include <time.h>
+#include <profileapi.h>
 
-  #ifndef CLOCK_MONOTONIC
-    #define CLOCK_MONOTONIC 1
-  #endif
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
 
 static inline int clock_gettime(int clk_id, struct timespec *spec) {
     (void)clk_id; /* Only CLOCK_MONOTONIC supported */
@@ -156,35 +155,35 @@ static inline int clock_gettime(int clk_id, struct timespec *spec) {
     return 0;
 }
 
-  /* Link against Winsock library */
-  #pragma comment(lib, "ws2_32.lib")
+/* Link against Winsock library */
+#pragma comment(lib, "ws2_32.lib")
 
 /* Socket type compatibility */
 typedef SOCKET jsec_socket_t;
-  #define JSEC_INVALID_SOCKET INVALID_SOCKET
-  #define JSEC_SOCKET_ERROR SOCKET_ERROR
+#define JSEC_INVALID_SOCKET INVALID_SOCKET
+#define JSEC_SOCKET_ERROR SOCKET_ERROR
 
-  /* Socket operations */
-  #define jsec_close_socket(s) closesocket(s)
-  #define jsec_socket_errno WSAGetLastError()
+/* Socket operations */
+#define jsec_close_socket(s) closesocket(s)
+#define jsec_socket_errno WSAGetLastError()
 
-  /* Error code mappings */
-  #define JSEC_EWOULDBLOCK WSAEWOULDBLOCK
-  #define JSEC_EINPROGRESS WSAEINPROGRESS
-  #define JSEC_EAGAIN WSAEWOULDBLOCK
-  #define JSEC_EINTR WSAEINTR
-  #define JSEC_ECONNRESET WSAECONNRESET
-  #define JSEC_EPIPE WSAECONNRESET
+/* Error code mappings */
+#define JSEC_EWOULDBLOCK WSAEWOULDBLOCK
+#define JSEC_EINPROGRESS WSAEINPROGRESS
+#define JSEC_EAGAIN WSAEWOULDBLOCK
+#define JSEC_EINTR WSAEINTR
+#define JSEC_ECONNRESET WSAECONNRESET
+#define JSEC_EPIPE WSAECONNRESET
 
-  /* fcntl/ioctl compatibility */
-  #define F_GETFL 0
-  #define F_SETFL 1
-  #define O_NONBLOCK 1
+/* fcntl/ioctl compatibility */
+#define F_GETFL 0
+#define F_SETFL 1
+#define O_NONBLOCK 1
 
-  /* Windows doesn't have MSG_NOSIGNAL */
-  #ifndef MSG_NOSIGNAL
-    #define MSG_NOSIGNAL 0
-  #endif
+/* Windows doesn't have MSG_NOSIGNAL */
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 /* Winsock initialization */
 static inline int jsec_winsock_init(void) {
@@ -197,26 +196,26 @@ static inline void jsec_winsock_cleanup(void) {
 }
 
 #else
-  /* Unix/POSIX systems */
-  #define JSEC_HAS_ARPA_INET 1
-  #include <errno.h>
-  #include <fcntl.h>
-  #include <sys/socket.h>
-  #include <unistd.h>
+/* Unix/POSIX systems */
+#define JSEC_HAS_ARPA_INET 1
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 typedef int jsec_socket_t;
-  #define JSEC_INVALID_SOCKET (-1)
-  #define JSEC_SOCKET_ERROR (-1)
+#define JSEC_INVALID_SOCKET (-1)
+#define JSEC_SOCKET_ERROR (-1)
 
-  #define jsec_close_socket(s) close(s)
-  #define jsec_socket_errno errno
+#define jsec_close_socket(s) close(s)
+#define jsec_socket_errno errno
 
-  #define JSEC_EWOULDBLOCK EWOULDBLOCK
-  #define JSEC_EINPROGRESS EINPROGRESS
-  #define JSEC_EAGAIN EAGAIN
-  #define JSEC_EINTR EINTR
-  #define JSEC_ECONNRESET ECONNRESET
-  #define JSEC_EPIPE EPIPE
+#define JSEC_EWOULDBLOCK EWOULDBLOCK
+#define JSEC_EINPROGRESS EINPROGRESS
+#define JSEC_EAGAIN EAGAIN
+#define JSEC_EINTR EINTR
+#define JSEC_ECONNRESET ECONNRESET
+#define JSEC_EPIPE EPIPE
 
 /* No-op on Unix */
 static inline int jsec_winsock_init(void) {

@@ -12,7 +12,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #if JSEC_HAS_OSSL_PARAM
-  #include <openssl/core_names.h>
+#include <openssl/core_names.h>
 #endif
 #include <string.h>
 #include <time.h>

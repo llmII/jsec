@@ -12,12 +12,12 @@
  */
 
 #ifdef __linux__
-  #define _GNU_SOURCE /* For accept4 */
+#define _GNU_SOURCE /* For accept4 */
 #endif
 
 #include "../internal.h"
 #ifndef JANET_WINDOWS
-  #include <sys/un.h>
+#include <sys/un.h>
 #endif
 
 /*============================================================================
@@ -197,12 +197,12 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             /* Try to accept connections - level triggered so we may get
              * multiple */
             while (1) {
-  #ifdef JANET_LINUX
+#ifdef JANET_LINUX
                 int client_fd =
                     accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
-  #else
+#else
                 int client_fd = accept(listener->handle, NULL, NULL);
-  #endif
+#endif
                 if (client_fd < 0) {
                     int sock_err = jsec_socket_errno;
                     if (sock_err == JSEC_EAGAIN ||
@@ -435,13 +435,13 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         socklen_t addrlen = sizeof(addr);
 
         /* Support Linux abstract namespace sockets (start with @) */
-  #ifdef __linux__
+#ifdef __linux__
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
                                   strlen(unix_path));
         }
-  #endif
+#endif
 
         /* Remove existing socket file (if not abstract) */
         if (unix_path[0] != '@') {
@@ -678,12 +678,12 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
             /* Try to accept a TCP connection */
-  #ifdef JANET_LINUX
+#ifdef JANET_LINUX
             int client_fd =
                 accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
-  #else
+#else
             int client_fd = accept(listener->handle, NULL, NULL);
-  #endif
+#endif
             if (client_fd >= 0) {
                 /* Got a connection - set non-blocking */
                 int flags = fcntl(client_fd, F_GETFL, 0);

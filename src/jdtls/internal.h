@@ -65,13 +65,13 @@
 #include "../jutils.h"
 /* Error macros now in jutils.h */
 #ifndef JANET_WINDOWS
-  #include <arpa/inet.h>
-  #include <netinet/in.h>
-  #include <sys/socket.h>
-  #include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #else
-  /* Windows uses winsock2.h (included in compat.h) */
-  #include <ws2tcpip.h>
+/* Windows uses winsock2.h (included in compat.h) */
+#include <ws2tcpip.h>
 #endif
 #include <openssl/bio.h>
 #include <openssl/err.h>

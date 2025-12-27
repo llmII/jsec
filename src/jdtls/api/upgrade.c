@@ -8,7 +8,7 @@
 #include <string.h>
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
-  #include <unistd.h>
+#include <unistd.h>
 #endif
 #include <time.h>
 #include <openssl/x509v3.h>

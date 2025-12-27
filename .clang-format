@@ -12,8 +12,8 @@ UseTab: Never
 IndentCaseLabels: true
 IndentCaseBlocks: false
 IndentGotoLabels: false
-IndentPPDirectives: BeforeHash
-PPIndentWidth: 2
+# Preprocessor directives always at column 0, guarded code keeps normal indent
+IndentPPDirectives: None
 
 # Line length - soft limit 78, hard limit 80
 ColumnLimit: 78

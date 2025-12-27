@@ -20,13 +20,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
-  #include <unistd.h>
+#include <unistd.h>
 #endif
 
 /* MSG_DONTWAIT may not be available on all platforms.
  * Since our sockets are already non-blocking, we can use 0 as fallback. */
 #ifndef MSG_DONTWAIT
-  #define MSG_DONTWAIT 0
+#define MSG_DONTWAIT 0
 #endif
 
 /*

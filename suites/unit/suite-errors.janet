@@ -120,12 +120,20 @@
                  (assay/def-test "conn error - connect to non-listening port"
                                  :expected-fail "connect should fail on refused port"
                                  :timeout 5
-                                 (tls/connect "127.0.0.1" "59999" {:timeout 1}))
+                                 # Must write after connect - Windows only detects
+                                 # connection errors on first I/O, not at connect time
+                                 (def conn (tls/connect "127.0.0.1" "59999" {:timeout 1}))
+                                 (:write conn "test")
+                                 (:close conn))
 
                  (assay/def-test "conn error - connect timeout"
                                  :expected-fail "connect should timeout on non-routable IP"
                                  :timeout 3
-                                 (tls/connect "127.0.0.1" "59998" {:timeout 0.1}))
+                                 # Must write after connect - Windows only detects
+                                 # connection errors on first I/O, not at connect time  
+                                 (def conn (tls/connect "127.0.0.1" "59998" {:timeout 0.1}))
+                                 (:write conn "test")
+                                 (:close conn))
 
                  # ==========================================================================
                  # Certificate Errors

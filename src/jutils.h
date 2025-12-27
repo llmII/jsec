@@ -10,7 +10,7 @@
 
 /* Enable POSIX features for clock_gettime, strdup, etc. */
 #ifndef _POSIX_C_SOURCE
-  #define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <errno.h>
@@ -29,7 +29,7 @@
  * Define to 0 if missing so we can use it unconditionally.
  */
 #ifndef SSL_OP_NO_RENEGOTIATION
-  #define SSL_OP_NO_RENEGOTIATION 0
+#define SSL_OP_NO_RENEGOTIATION 0
 #endif
 
 /* Debug logging macro - enabled by defining JSEC_DEBUG_VERBOSE
@@ -37,11 +37,11 @@
  *       JSEC_DEBUG_VERBOSE enables verbose debug print statements
  * Uses janet_eprintf for proper integration with Janet's I/O system */
 #ifdef JSEC_DEBUG_VERBOSE
-  #define DEBUG_LOG(...) janet_eprintf("[jsec] " __VA_ARGS__)
+#define DEBUG_LOG(...) janet_eprintf("[jsec] " __VA_ARGS__)
 #else
-  #define DEBUG_LOG(...)                                                     \
-      do {                                                                   \
-      } while (0)
+#define DEBUG_LOG(...)                                                       \
+    do {                                                                     \
+    } while (0)
 #endif
 
 /*
