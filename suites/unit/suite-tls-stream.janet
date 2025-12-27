@@ -1002,7 +1002,18 @@
                  (assay/def-test "connection refused"
                                  :expected-fail "Connection to closed port should fail"
                                  (ev/with-deadline 5
-                                   (tls/connect "127.0.0.1" "1" {:verify false})))
+                                   # Create a listener to get a valid port, then close it
+                                   # This guarantees the port exists but has nothing listening
+                                   (def server (net/listen "127.0.0.1" "0"))
+                                   (def [_ port] (net/localname server))
+                                   (:close server)
+                                   # Small delay to ensure OS releases the port
+                                   (ev/sleep 0.1)
+                                   # Connect and try to use it - on Windows, connection
+                                   # errors only appear on first I/O, not at connect time
+                                   (def conn (tls/connect "127.0.0.1" (string port) {:verify false}))
+                                   (:write conn "test")
+                                   (:close conn)))
 
                  # ---------------------------------------------------------------------------
                  # OCSP Stapling Test
