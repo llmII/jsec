@@ -166,8 +166,8 @@ Janet cfun_dtls_localname(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    int fd = (int)client->transport->handle;
-    if (fd < 0) {
+    jsec_socket_t fd = (jsec_socket_t)client->transport->handle;
+    if (fd == JSEC_INVALID_SOCKET) {
         return janet_wrap_nil();
     }
 

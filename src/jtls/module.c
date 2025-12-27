@@ -45,7 +45,13 @@ void jtls_module_init(JanetTable *env) {
     /* Check for SSLKEYLOGFILE environment variable for debugging */
     const char *keylog_path = getenv("SSLKEYLOGFILE");
     if (keylog_path && !keylog_file) {
+#ifdef JANET_WINDOWS
+        if (fopen_s(&keylog_file, keylog_path, "a") != 0) {
+            keylog_file = NULL;
+        }
+#else
         keylog_file = fopen(keylog_path, "a");
+#endif
         if (!keylog_file) {
             janet_eprintf("Warning: Could not open SSLKEYLOGFILE: %s\n",
                           keylog_path);

@@ -17,7 +17,6 @@
 
 #include "internal.h"
 #include <string.h>
-#include <errno.h>
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
 #include <unistd.h>
@@ -56,8 +55,8 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     ssize_t sent = 0;
 
     if (send_len > 0) {
-        sent = sendto((jsec_socket_t)transport->handle, send_buf,
-                      (size_t)send_len, 0,
+        sent = sendto((jsec_socket_t)transport->handle,
+                      (const char *)send_buf, (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
                       session->peer_addr.addrlen);
     }
@@ -243,21 +242,25 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for IOCP */
 #ifdef JANET_WINDOWS
-    int fd =
-        (int)WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (fd == INVALID_SOCKET) {
+    jsec_socket_t fd =
+        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
 #else
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
 #endif
 
     /* Set socket options */
     int yes = 1;
+#ifdef JANET_WINDOWS
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+#else
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#endif
 
     /* Set non-blocking */
     /* Set non-blocking */
@@ -278,18 +281,18 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     if (strcmp(host, "0.0.0.0") == 0 || strlen(host) == 0) {
         addr.sin_addr.s_addr = INADDR_ANY;
     } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_param("invalid address: %s", host);
     }
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_socket("bind failed");
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport =
-        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport = janet_stream(
+        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS server */
     DTLSServer *server =
@@ -680,7 +683,8 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                          * registered for JANET_ASYNC_LISTEN_READ. */
                         break; /* Exit loop, stay registered */
                     }
-                    janet_cancel(fiber, janet_cstringv(strerror(sock_err)));
+                    janet_cancel(fiber, janet_cstringv(
+                                            jsec_socket_strerror(sock_err)));
                     janet_async_end(fiber);
                     return;
                 }

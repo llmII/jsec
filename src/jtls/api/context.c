@@ -109,7 +109,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                             "failed to create SNI context for %s", hostname);
                     }
 
-                    data->hostnames[idx] = strdup(hostname);
+                    data->hostnames[idx] = jsec_strdup(hostname);
                     data->contexts[idx] = sub_ctx;
                     idx++;
                 }

@@ -167,6 +167,33 @@ typedef SOCKET jsec_socket_t;
 #define jsec_close_socket(s) closesocket(s)
 #define jsec_socket_errno WSAGetLastError()
 
+/* Cross-platform strerror - returns error message for errno
+ * Uses strerror_s on Windows to avoid deprecation warnings.
+ * Uses thread-local buffer for thread safety. */
+static inline const char *jsec_strerror(int err) {
+    static __declspec(thread) char buf[256];
+    if (strerror_s(buf, sizeof(buf), err) != 0) {
+        buf[0] = '\0';
+    }
+    return buf;
+}
+
+/* Socket-specific error string (thread-local static buffer) */
+static inline const char *jsec_socket_strerror(int err) {
+    static __declspec(thread) char buf[256];
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
+                   sizeof(buf), NULL);
+    /* Remove trailing newline */
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+        buf[--len] = '\0';
+    return buf;
+}
+
+/* Cross-platform strdup (Windows uses _strdup) */
+#define jsec_strdup(s) _strdup(s)
+
 /* Error code mappings */
 #define JSEC_EWOULDBLOCK WSAEWOULDBLOCK
 #define JSEC_EINPROGRESS WSAEINPROGRESS
@@ -210,12 +237,27 @@ typedef int jsec_socket_t;
 #define jsec_close_socket(s) close(s)
 #define jsec_socket_errno errno
 
+/* Cross-platform strerror - same on Unix */
+#define jsec_strerror(err) strerror(err)
+#define jsec_socket_strerror(err) strerror(err)
+
+/* Cross-platform strdup - same on Unix (POSIX strdup) */
+#define jsec_strdup(s) strdup(s)
+
 #define JSEC_EWOULDBLOCK EWOULDBLOCK
 #define JSEC_EINPROGRESS EINPROGRESS
 #define JSEC_EAGAIN EAGAIN
 #define JSEC_EINTR EINTR
 #define JSEC_ECONNRESET ECONNRESET
 #define JSEC_EPIPE EPIPE
+
+/* MSG_DONTWAIT and MSG_NOSIGNAL may not be available on all platforms */
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 /* No-op on Unix */
 static inline int jsec_winsock_init(void) {

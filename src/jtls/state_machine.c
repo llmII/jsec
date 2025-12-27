@@ -158,7 +158,8 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
                      "%s syscall error: WSA error %d", op_name, sock_err);
 #else
             snprintf(state->error_msg, sizeof(state->error_msg),
-                     "%s syscall error: %s", op_name, strerror(sock_err));
+                     "%s syscall error: %s", op_name,
+                     jsec_socket_strerror(sock_err));
 #endif
             return TLS_IO_ERROR;
         }

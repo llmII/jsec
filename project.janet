@@ -25,7 +25,9 @@
 
 (def standard-cflags
   (if is-windows
-    ["/O2" "/W4" "/MD"]
+    # /wd4152 - function/data pointer conversion (inherent to Janet cfun registration)
+    # /wd4702 - unreachable code after janet_panic (MSVC doesn't know it's noreturn)
+    ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
     ["-std=c99" "-O2"
      "-Wall" "-Wextra" "-Wshadow" "-fno-common"
      "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
@@ -294,12 +296,34 @@
   :main "bin/perf9-analyze.janet"
   :name "perf9-analyze")
 
+# Cross-platform helper to recursively remove a directory
+(defn- rmdir-recursive [path]
+  "Recursively remove a directory and its contents"
+  (when (os/stat path)
+    (each entry (os/dir path)
+      (def full-path (string path "/" entry))
+      (def stat (os/stat full-path))
+      (if (= (stat :mode) :directory)
+        (rmdir-recursive full-path)
+        (os/rm full-path)))
+    (os/rmdir path)))
+
+# Cross-platform helper to remove a file if it exists
+(defn- rm-if-exists [path]
+  "Remove a file if it exists"
+  (when (os/stat path)
+    (os/rm path)))
+
 # Clean task
 (phony "clean" []
-       (os/shell "rm -rf build jpm_tree")
-       (os/shell "rm -f README.md CHANGELOG.md")
-       (os/shell "rm -f valgrind-output.txt")
-       (os/shell "rm -f debug.log"))
+       (print "Cleaning build artifacts...")
+       (rmdir-recursive "build")
+       (rmdir-recursive "jpm_tree")
+       (rm-if-exists "README.md")
+       (rm-if-exists "CHANGELOG.md")
+       (rm-if-exists "valgrind-output.txt")
+       (rm-if-exists "debug.log")
+       (print "Clean complete."))
 
 # Format C code with clang-format
 (phony "format-c" []

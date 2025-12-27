@@ -137,10 +137,10 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
     BIO_clear_retry_flags(bio);
 
     jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-    int n = send(fd, src, len, MSG_NOSIGNAL);
+    ssize_t n = send(fd, src, len, MSG_NOSIGNAL);
 
     if (n > 0) {
-        return n;
+        return (int)n;
     } else {
         /* Error - check if it's a retryable error */
         if (jsec_socket_errno == JSEC_EAGAIN ||

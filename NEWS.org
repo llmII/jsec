@@ -4,6 +4,26 @@
 
 * News
 
+** 2025-12-26 - Windows IOCP Support Complete
+
+Windows is now fully supported with all tests passing:
+
+*** Windows Platform Status
+- All 1119 tests pass (960 Unix socket tests automatically skipped)
+- Build via MSVC (Visual Studio 2022) with vcpkg OpenSSL
+- IOCP event loop integration complete
+
+*** Key Fixes
+- Fixed connection error detection on Windows
+  - Windows ~WSAConnect~ returns success immediately, errors on first I/O
+  - Updated tests to write after connect for cross-platform consistency
+- DTLS client refactored to use memory BIOs for Windows compatibility
+- Fixed ~getpeername~ check on INIT to properly detect pending connections
+
+*** clang-format Configuration
+- ~IndentPPDirectives: None~ - preprocessor directives at column 0
+- Code inside ~#ifdef~ blocks maintains normal indentation
+
 ** 2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements
 
 OpenBSD is now fully supported with all tests passing:

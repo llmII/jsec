@@ -466,13 +466,19 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Check if connect succeeded via SO_ERROR */
             int res = 0;
             socklen_t size = sizeof(res);
+#ifdef JANET_WINDOWS
+            int r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
+                               (char *)&res, (int *)&size);
+#else
             int r =
                 getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
+#endif
 
             if (r != 0 || res != 0) {
                 /* Connect failed */
-                janet_cancel(fiber, janet_cstringv(res ? strerror(res)
-                                                       : "connect failed"));
+                janet_cancel(fiber,
+                             janet_cstringv(res ? jsec_socket_strerror(res)
+                                                : "connect failed"));
                 stream->flags |= JANET_STREAM_TOCLOSE;
                 janet_async_end(fiber);
                 return;
@@ -669,7 +675,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         if (argc >= 3) opts = argv[2];
     }
 
-    int fd = -1;
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
     int status;
 
 #ifndef JANET_WINDOWS
@@ -803,7 +809,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
             }
 #endif
-            if (fd == -1) continue;
+            if (fd == JSEC_INVALID_SOCKET) continue;
 
             /* Attempt non-blocking connect */
 #ifdef JANET_WINDOWS
@@ -820,7 +826,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 freeaddrinfo(ai);
 
                 JanetStream *stream =
-                    janet_stream(fd,
+                    janet_stream((JanetHandle)fd,
                                  JANET_STREAM_SOCKET | JANET_STREAM_READABLE |
                                      JANET_STREAM_WRITABLE,
                                  NULL);
@@ -839,13 +845,13 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             } else {
                 /* This address failed immediately, try next */
                 jsec_close_socket(fd);
-                fd = -1;
+                fd = JSEC_INVALID_SOCKET;
             }
         }
         freeaddrinfo(ai);
     }
 
-    if (fd == -1) {
+    if (fd == JSEC_INVALID_SOCKET) {
 #ifndef JANET_WINDOWS
         if (is_unix) {
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
@@ -860,7 +866,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
 
     /* Create stream for async connect completion */
     JanetStream *stream = janet_stream(
-        fd,
+        (JanetHandle)fd,
         JANET_STREAM_SOCKET | JANET_STREAM_READABLE | JANET_STREAM_WRITABLE,
         NULL);
 

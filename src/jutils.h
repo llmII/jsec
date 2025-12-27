@@ -265,7 +265,7 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
     janet_panicf("[" mod ":" cat "] " msg ": %s", get_ssl_error_string())
 
 #define jsec_panic_errno(mod, cat, msg)                                      \
-    janet_panicf("[" mod ":" cat "] " msg ": %s", strerror(errno))
+    janet_panicf("[" mod ":" cat "] " msg ": %s", jsec_strerror(errno))
 
 /* Convenience macros for common patterns */
 

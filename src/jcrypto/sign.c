@@ -46,7 +46,7 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to sign");
     }
 
-    Janet result = janet_stringv(sig, siglen);
+    Janet result = janet_stringv(sig, (int32_t)siglen);
     janet_free(sig);
     EVP_PKEY_free(pkey);
     EVP_MD_CTX_free(mdctx);

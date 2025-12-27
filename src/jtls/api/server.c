@@ -422,7 +422,7 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         }
     }
 
-    int fd = -1;
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
 
 #ifndef JANET_WINDOWS
     if (is_unix) {
@@ -454,10 +454,10 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         }
 
         if (bind(fd, (struct sockaddr *)&addr, addrlen) != 0) {
-            close(fd);
+            jsec_close_socket(fd);
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
                        "could not bind to unix socket %s: %s", unix_path,
-                       strerror(errno));
+                       jsec_strerror(errno));
         }
     } else
 #endif
@@ -479,30 +479,40 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         struct addrinfo *rp;
         for (rp = ai; rp != NULL; rp = rp->ai_next) {
             fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-            if (fd == -1) continue;
+            if (fd == JSEC_INVALID_SOCKET) continue;
 
             int enable = 1;
+#ifdef JANET_WINDOWS
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&enable,
+                       sizeof(int));
+#else
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+#endif
 #ifdef SO_REUSEPORT
+#ifdef JANET_WINDOWS
+            setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, (const char *)&enable,
+                       sizeof(int));
+#else
             setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int));
 #endif
+#endif
 
-            if (bind(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) {
                 break;
             }
-            close(fd);
-            fd = -1;
+            jsec_close_socket(fd);
+            fd = JSEC_INVALID_SOCKET;
         }
         freeaddrinfo(ai);
 
-        if (fd == -1) {
+        if (fd == JSEC_INVALID_SOCKET) {
             jsec_panic(JSEC_MOD_TLS, "SOCKET", "failed to bind to %s:%s",
                        host, port);
         }
     }
 
     if (listen(fd, backlog) < 0) {
-        close(fd);
+        jsec_close_socket(fd);
         tls_panic_socket("listen failed");
     }
 
@@ -516,8 +526,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
 #endif
 
     /* Return a Janet stream */
-    return janet_wrap_abstract(janet_stream(
-        fd, JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
+    return janet_wrap_abstract(
+        janet_stream((JanetHandle)fd,
+                     JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
 }
 
 /*============================================================================
@@ -722,7 +733,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     if (state->owns_ctx && state->ctx) {
                         SSL_CTX_free(state->ctx);
                     }
-                    janet_cancel(fiber, janet_cstringv(strerror(sock_err)));
+                    janet_cancel(fiber, janet_cstringv(
+                                            jsec_socket_strerror(sock_err)));
                     janet_async_end(fiber);
                     return;
                 }

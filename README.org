@@ -143,6 +143,7 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 |----------+---------+----------------------------------------------|
 | OpenSSL  | Working | Primary backend. OpenSSL 3.0+ required.      |
 | LibreSSL | Working | For BSD platforms. Requires LibreSSL 3.9+.   |
+| SChannel | Future  | Native Windows TLS (no OpenSSL dependency).  |
 | mbedTLS  | Future  | Lighter-weight alternative for embedded use. |
 
 ** Operating System Support
@@ -155,7 +156,7 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 | NetBSD       | Working | OpenSSL 3.x   | Tested on NetBSD 10.1                  |
 | DragonflyBSD | Working | LibreSSL 3.9+ | Tested on DragonflyBSD 6.4             |
 | OpenBSD      | Working | LibreSSL 3.9+ | All tests pass on OpenBSD 7.6          |
-| Windows      | Planned | OpenSSL       | Community help needed                  |
+| Windows      | Working | OpenSSL 3.x   | MSVC + vcpkg, see [[file:docs/WINDOWS.org][Windows Guide]]        |
 
 ** Current Limitations
 - [ ] **DTLS Support is minimal/experimental.** It is not recommended for production use yet (mostly performance issues).
@@ -419,8 +420,8 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 ** Areas Seeking Help
 
 *** Platform Support
-- *Windows:* Testing, debugging, and CI improvements for Windows builds
 - *Cross-platform testing:* Help test on additional BSD variants or Linux distributions
+- *SChannel backend:* Native Windows TLS implementation (future direction)
 
 *** Testing & Quality
 - *Test Suite Expansion:* Additional edge cases, protocol scenarios, error conditions
