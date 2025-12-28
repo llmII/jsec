@@ -1,4 +1,5 @@
 #+TITLE: JSEC Developer Guide
+#+OPTIONS: toc:nil ^:nil
 #+AUTHOR: llmII <dev@amlegion.org>
 #+DATE: 2025-12-12
 
@@ -48,15 +49,18 @@ integration for Janet that works seamlessly with Janet's event loop (~ev~).
 ** Platform Strategy
 
 *** Windows Support
-- *Recommended:* MSYS2 with MinGW-w64 (UCRT64 or MINGW64)
+- *Status:* Fully supported
+- *Build:* MSVC with vcpkg OpenSSL, or MSYS2 MinGW-w64
 - *CI Strategy:* GitHub Actions ~windows-latest~ runner
-- *Status:* Best-effort
 
 *** macOS Support
-- *Constraint:* Author does not own Apple hardware
-- *Strategy:* Community driven
+- *Status:* Fully supported
+- *Requirement:* Homebrew OpenSSL 3.x (~brew install openssl@3~)
 - *CI Strategy:* GitHub Actions ~macos-latest~
-- *Policy:* macOS-specific issues require community PRs
+
+*** BSD Support
+- *Status:* Fully supported (FreeBSD, NetBSD, OpenBSD, DragonflyBSD)
+- *CI Strategy:* SSH-based testing on dedicated VMs
 
 * Source Organization
 

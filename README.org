@@ -1,4 +1,5 @@
 #+TITLE: JSEC - TLS/SSL Library for Janet
+#+OPTIONS: toc:nil ^:nil
 #+AUTHOR: llmII <dev@amlegion.org>
 #+DATE: 2025-11-29
 
@@ -139,23 +140,24 @@ The library is designed for flexibility and portability across various systems a
 
 The library supports multiple industry-standard TLS/SSL C libraries:
 
-| Backend  | Status  | Notes                                        |
-|----------+---------+----------------------------------------------|
-| OpenSSL  | Working | Primary backend. OpenSSL 3.0+ required.      |
-| LibreSSL | Working | For BSD platforms. Requires LibreSSL 3.9+.   |
-| SChannel | Future  | Native Windows TLS (no OpenSSL dependency).  |
-| mbedTLS  | Future  | Lighter-weight alternative for embedded use. |
+| Backend           | Status  | Notes                                        |
+|-------------------+---------+----------------------------------------------|
+| OpenSSL           | Working | Primary backend. OpenSSL 3.0+ required.      |
+| LibreSSL          | Working | For BSD platforms. Requires LibreSSL 3.9+.   |
+| SChannel          | Future  | Native Windows TLS (no OpenSSL dependency).  |
+| Network.framework | Future  | Native MacOS way of doing TLS.               |
+| mbedTLS           | Future  | Lighter-weight alternative for embedded use. |
 
 ** Operating System Support
 
 | Platform     | Status  | Backend       | Notes                                  |
 |--------------+---------+---------------+----------------------------------------|
-| Linux        | Working | OpenSSL 3.0+  | Primary development platform           |
+| Linux        | Working | OpenSSL 3.x   | Primary development platform           |
 | FreeBSD      | Working | OpenSSL 3.x   | Tested on FreeBSD 15                   |
 | macOS        | Working | OpenSSL 3.x   | Via Homebrew: ~brew install openssl@3~ |
 | NetBSD       | Working | OpenSSL 3.x   | Tested on NetBSD 10.1                  |
-| DragonflyBSD | Working | LibreSSL 3.9+ | Tested on DragonflyBSD 6.4             |
-| OpenBSD      | Working | LibreSSL 3.9+ | All tests pass on OpenBSD 7.6          |
+| DragonflyBSD | Working | LibreSSL 3.6+ | Tested on DragonflyBSD 6.4             |
+| OpenBSD      | Working | LibreSSL 3.6+ | All tests pass on OpenBSD 7.6          |
 | Windows      | Working | OpenSSL 3.x   | MSVC + vcpkg, see [[file:docs/WINDOWS.org][Windows Guide]]        |
 
 ** Current Limitations
@@ -347,6 +349,7 @@ janet test/runner.janet --list suites
 See [[file:docs/TESTING.org][docs/TESTING.org]] for complete testing documentation.
 
 ** Memory Leak Checking
+Note: This is not currently operable (valgrind is too slow)
 
 Run tests under valgrind:
 #+BEGIN_SRC shell
@@ -458,7 +461,7 @@ Looking for an easy way to get started? These focused improvements help build fa
 
 ** How to Contribute
 
-1. Check existing issues on GitHub or Fossil
+1. Check existing issues on GitHub and/or Fossil
 2. For large changes, open an issue first to discuss approach
 3. Follow the coding style (see ~jpm run format-janet~ and ~jpm run format-c~)
 4. Ensure tests pass: ~janet test/runner.janet -f '{unit,regression,coverage}'~

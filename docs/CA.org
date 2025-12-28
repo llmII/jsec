@@ -1,6 +1,6 @@
 #+TITLE: jsec/ca - Certificate Authority Module
 #+AUTHOR: jsec project
-#+OPTIONS: toc:2
+#+OPTIONS: toc:nil ^:nil
 
 * Overview
 

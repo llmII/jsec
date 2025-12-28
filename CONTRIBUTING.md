@@ -1,40 +1,12 @@
 
-# Table of Contents
-
-1.  [Welcome](#org64a4b85)
-2.  [Code Standards](#org20a90bb)
-    1.  [Janet Code Style](#org8fc2792)
-    2.  [C Code Style](#org743b06e)
-    3.  [Comments](#orgabf228f)
-3.  [Testing Requirements](#orgd1f6eb0)
-    1.  [All Contributions Must Include Tests](#orgc172d00)
-    2.  [Running Tests](#org10f1983)
-    3.  [Test Requirements](#orgacee330)
-    4.  [Test Style](#org9af07e6)
-    5.  [C Projects: Memory Testing](#org6bb7ed2)
-4.  [Pull Request Process](#org740a3b0)
-    1.  [Repository Information](#org636eb16)
-    2.  [Submission Process](#org0954776)
-    3.  [PR Checklist](#orga2b3c37)
-5.  [Documentation](#org4e4a8e8)
-6.  [Getting Help](#org7bfe620)
-7.  [License](#org0237094)
-
-
-
-<a id="org64a4b85"></a>
 
 # Welcome
 
 Thank you for considering contributing to jsec! This document explains our standards and processes.
 
 
-<a id="org20a90bb"></a>
-
 # Code Standards
 
-
-<a id="org8fc2792"></a>
 
 ## Janet Code Style
 
@@ -46,8 +18,6 @@ Thank you for considering contributing to jsec! This document explains our stand
     this so it's okay sometimes for lines to be longer until a tool exists to
     aid in this)
 
-
-<a id="org743b06e"></a>
 
 ## C Code Style
 
@@ -62,8 +32,6 @@ Thank you for considering contributing to jsec! This document explains our stand
 -   No compiler warnings allowed
 
 
-<a id="orgabf228f"></a>
-
 ## Comments
 
 -   Comment what code does, not implementation history
@@ -73,19 +41,13 @@ Thank you for considering contributing to jsec! This document explains our stand
 -   Focus on "why" rather than "what" for complex sections
 
 
-<a id="orgd1f6eb0"></a>
-
 # Testing Requirements
 
-
-<a id="orgc172d00"></a>
 
 ## All Contributions Must Include Tests
 
 New functionality or extended functionality **must** be appropriately tested for a contribution to be accepted.
 
-
-<a id="org10f1983"></a>
 
 ## Running Tests
 
@@ -115,20 +77,16 @@ jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
 See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 
 
-<a id="orgacee330"></a>
-
 ## Test Requirements
 
 -   All existing tests must pass
 -   New features require corresponding test cases
 -   Bug fixes should include regression tests
 -   Tests should work on Unix sockets as well as TCP (for TLS, for UDP we'll update when DTLS is good)
--   External connections only to example.com (tests should gracefully handle failures)
+-   External connections only to example.com if absolutely necessary (tests should gracefully handle failures)
 -   Tests must be concise for valgrind performance (though this obviously won't fix valgrind being too slow presently)
 -   No stubbed or incomplete tests accepted
 
-
-<a id="org9af07e6"></a>
 
 ## Test Style
 
@@ -140,8 +98,6 @@ See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 -   Test error conditions, not just happy paths
 -   Use matrix tests for testing across configurations (TLS versions, protocols, etc.)
 
-
-<a id="org6bb7ed2"></a>
 
 ## C Projects: Memory Testing
 
@@ -157,12 +113,8 @@ For projects with C code, memory checking is mandatory (once developer tooling w
     jpm run tidy
 
 
-<a id="org740a3b0"></a>
-
 # Pull Request Process
 
-
-<a id="org636eb16"></a>
 
 ## Repository Information
 
@@ -172,8 +124,6 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   Git contributions will be converted to patches and applied with Fossil
 -   We attempt to credit contributor's GitHub/Git name appropriately
 
-
-<a id="org0954776"></a>
 
 ## Submission Process
 
@@ -189,8 +139,6 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 10. Push to your fork and submit a pull request (Git) or commit (Fossil)
 
 
-<a id="orga2b3c37"></a>
-
 ## PR Checklist
 
 -   [ ] Code follows style guidelines
@@ -203,8 +151,6 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   [ ] Commit messages are clear and descriptive
 
 
-<a id="org4e4a8e8"></a>
-
 # Documentation
 
 -   Use org-mode files (`.org`), not Markdown
@@ -214,8 +160,6 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   Generate Markdown with `jpm run release`
 
 
-<a id="org7bfe620"></a>
-
 # Getting Help
 
 -   Check existing tests for patterns
@@ -223,8 +167,6 @@ For projects with C code, memory checking is mandatory (once developer tooling w
 -   Look at [examples](examples/) directory
 -   Review [style guide](STYLE.md)
 
-
-<a id="org0237094"></a>
 
 # License
 

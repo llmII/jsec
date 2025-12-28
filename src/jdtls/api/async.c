@@ -40,6 +40,12 @@ typedef struct {
  * Returns bytes sent, 0 if nothing to send, or -1 on error.
  */
 static ssize_t dtls_client_flush_wbio(DTLSClient *client) {
+    /* When using dgram BIO (Unix), wbio is NULL - dgram handles I/O directly
+     */
+    if (!client->wbio) {
+        return 0;
+    }
+
     size_t pending = BIO_ctrl_pending(client->wbio);
     if (pending == 0) {
         return 0;
@@ -182,19 +188,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #endif
         case JANET_ASYNC_EVENT_READ:
         case JANET_ASYNC_EVENT_WRITE: {
-#ifndef JANET_WINDOWS
-            /* Unix: Receive data from socket and write to rbio */
             DTLSClient *client = state->client;
-            uint8_t recv_buf[65536];
-            ssize_t n = recvfrom((jsec_socket_t)client->transport->handle,
-                                 (char *)recv_buf, sizeof(recv_buf),
-                                 MSG_DONTWAIT, NULL, NULL);
-            if (n > 0) {
-                BIO_write(client->rbio, recv_buf, (int)n);
-            }
-#else
-            DTLSClient *client = state->client;
-#endif
 
             DTLSResult result = DTLS_RESULT_ERROR;
             Janet retval = janet_wrap_nil();

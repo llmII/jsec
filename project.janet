@@ -25,8 +25,10 @@
 
 (def standard-cflags
   (if is-windows
-    # /wd4152 - function/data pointer conversion (inherent to Janet cfun registration)
-    # /wd4702 - unreachable code after janet_panic (MSVC doesn't know it's noreturn)
+    # /wd4152 - function/data pointer conversion (inherent to Janet cfun
+    # registration)
+    # /wd4702 - unreachable code after janet_panic (MSVC doesn't know it's
+    # noreturn)
     ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
     ["-std=c99" "-O2"
      "-Wall" "-Wextra" "-Wshadow" "-fno-common"

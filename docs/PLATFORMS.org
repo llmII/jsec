@@ -1,0 +1,365 @@
+#+TITLE: Platform Build Guide for jsec
+#+OPTIONS: toc:nil ^:nil
+#+DATE: 2025-12-28
+
+* Overview
+
+jsec supports Linux, FreeBSD, macOS, DragonflyBSD, NetBSD, OpenBSD, and Windows.
+
+| Platform     | SSL Library | Notes                |
+|--------------+-------------+----------------------|
+| Linux        | OpenSSL 3.x | Primary dev platform |
+| FreeBSD      | OpenSSL 3.x | System OpenSSL       |
+| macOS        | OpenSSL 3.x | Via Homebrew         |
+| DragonflyBSD | LibreSSL    | System LibreSSL 3.6+ |
+| NetBSD       | OpenSSL 3.x | System OpenSSL       |
+| OpenBSD      | LibreSSL    | System LibreSSL 3.9+ |
+| Windows      | OpenSSL 3.x | Via vcpkg            |
+
+** Janet Version Requirements
+
+jsec currently builds and tests against *Janet git master*. This is because
+git master contains a fix for a Unix domain socket bug on BSD platforms that
+has not yet been included in a stable release. Once the next Janet release is
+available with this fix, jsec will target the latest stable release, only
+deviating when blocked by a bug in Janet itself.
+
+For building Janet from source, see the official instructions:
+https://janet-lang.org/docs/index.html
+
+* Linux
+
+** Prerequisites
+
+#+begin_src bash
+# Debian/Ubuntu
+sudo apt install build-essential libssl-dev git
+
+# Fedora/RHEL
+sudo dnf install gcc openssl-devel git
+
+# Arch
+sudo pacman -S base-devel openssl git
+#+end_src
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+git clone https://github.com/janet-lang/janet.git
+cd janet
+make && sudo make install
+#+end_src
+
+** Building jsec
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+** Running Tests
+
+#+begin_src bash
+janet test/runner.janet --verbosity 2 -j thread:4
+#+end_src
+
+* FreeBSD
+
+** Prerequisites
+
+OpenSSL is included in the base system.
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+pkg install git gmake
+git clone https://github.com/janet-lang/janet.git
+cd janet
+gmake && gmake install
+#+end_src
+
+** Building jsec
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+** Notes
+
+- FreeBSD uses kqueue for event loop
+- All TLS and DTLS tests pass
+- Unix socket tests work correctly
+
+* macOS
+
+** Prerequisites
+
+macOS system LibreSSL 3.3.6 is too old. Use Homebrew OpenSSL:
+
+#+begin_src bash
+# Install Homebrew if needed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install OpenSSL
+brew install openssl@3
+#+end_src
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+git clone https://github.com/janet-lang/janet.git
+cd janet
+make && make install
+#+end_src
+
+Or install via Homebrew (may not be latest git):
+
+#+begin_src bash
+brew install janet
+#+end_src
+
+** Building jsec
+
+=project.janet= auto-detects Homebrew OpenSSL:
+- ARM Mac (M1/M2/M3): =/opt/homebrew/opt/openssl@3=
+- Intel Mac: =/usr/local/opt/openssl@3=
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+Override with environment variable if needed:
+
+#+begin_src bash
+OPENSSL_PREFIX=/custom/path jpm build
+#+end_src
+
+** Verification
+
+Verify jsec links to Homebrew OpenSSL (not system LibreSSL):
+
+#+begin_src bash
+otool -L build/jsec/tls-stream.so
+# Should show /opt/homebrew/opt/openssl@3/lib/libssl.*.dylib
+#+end_src
+
+* DragonflyBSD
+
+** Prerequisites
+
+DragonflyBSD ships with LibreSSL 3.6+ which has all required APIs.
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+pkg install git gmake
+git clone https://github.com/janet-lang/janet.git
+cd janet
+gmake && gmake install
+#+end_src
+
+** Building jsec
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+** Notes
+
+- Uses csh shell by default: use ~setenv~ instead of ~export~
+- LibreSSL compatibility layer handles API differences
+
+* NetBSD
+
+** Prerequisites
+
+NetBSD uses OpenSSL 3.x from base.
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+pkgin install git gmake
+git clone https://github.com/janet-lang/janet.git
+cd janet
+gmake && gmake install
+#+end_src
+
+** Building jsec
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+** Notes
+
+- Test suite runs ~2.4x slower than Linux (VM/platform overhead)
+- All tests pass
+
+* OpenBSD
+
+** Prerequisites
+
+OpenBSD ships with LibreSSL 3.9+ in base.
+
+Build Janet from source (see https://janet-lang.org/docs/index.html):
+
+#+begin_src bash
+pkg_add git gmake
+git clone https://github.com/janet-lang/janet.git
+cd janet
+gmake && doas gmake install
+#+end_src
+
+** Building jsec
+
+#+begin_src bash
+cd jsec
+jpm clean && jpm build && jpm install
+#+end_src
+
+** Notes
+
+- LibreSSL 3.9+ has all required APIs
+- All tests pass on OpenBSD 7.6
+
+* Windows
+
+** Prerequisites
+
+1. *Visual Studio 2022* (Build Tools or Community Edition)
+   - Install "Desktop development with C++" workload
+
+2. *Janet* - Download the Windows installer from https://janet-lang.org
+   - Add to PATH
+
+3. *vcpkg* (Package Manager)
+
+*Note:* On Windows, use the official Janet installer rather than building
+from source. Building Janet on Windows requires additional setup.
+
+** Installing vcpkg and OpenSSL
+
+#+begin_src cmd
+cd C:\Users\%USERNAME%\sources
+git clone https://github.com/microsoft/vcpkg.git
+cd vcpkg
+bootstrap-vcpkg.bat
+vcpkg install openssl:x64-windows
+#+end_src
+
+Set environment variable (optional):
+
+#+begin_src cmd
+setx VCPKG_ROOT "C:\Users\%USERNAME%\sources\vcpkg"
+#+end_src
+
+** Building jsec
+
+Use "x64 Native Tools Command Prompt for VS 2022":
+
+#+begin_src cmd
+cd path\to\jsec
+jpm build
+#+end_src
+
+Or from regular Command Prompt:
+
+#+begin_src cmd
+"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64
+jpm build
+#+end_src
+
+** Running Tests
+
+#+begin_src cmd
+janet test/runner.janet
+#+end_src
+
+Unix socket tests are automatically skipped on Windows.
+
+** Troubleshooting
+
+*** LNK1181: cannot open input file 'janet.lib'
+
+The jpm default configuration may have incorrect paths. Edit:
+
+#+begin_src cmd
+notepad "%LOCALAPPDATA%\Apps\Janet\Library\jpm\default-config.janet"
+#+end_src
+
+Fix the paths:
+
+#+begin_src janet
+;; Change these to point to actual location of janet.lib:
+:janet-importlib "C:/Users/YourName/AppData/Local/Apps/Janet/C/janet.lib"
+:libpath "C:/Users/YourName/AppData/Local/Apps/Janet/C"
+#+end_src
+
+*** DLL Not Found
+
+Add vcpkg bin to PATH:
+
+#+begin_src cmd
+set PATH=%VCPKG_ROOT%\installed\x64-windows\bin;%PATH%
+#+end_src
+
+** Platform Limitations
+
+- No Unix domain sockets (=AF_UNIX=)
+- IOCP reports connect success immediately; errors visible on first I/O
+- Use backslash paths (handled automatically by build system)
+
+* Common Information
+
+** Testing Commands
+
+All platforms use the same test runner:
+
+#+begin_src bash
+# Full suite with parallel threads
+janet test/runner.janet --verbosity 2 -j thread:4
+
+# Filter specific tests
+janet test/runner.janet --filter "tls"
+janet test/runner.janet --filter "dtls"
+
+# Unit tests only
+janet test/runner.janet --filter "unit/*"
+#+end_src
+
+** Environment Variables
+
+| Variable       | Purpose                                  |
+|----------------+------------------------------------------|
+| OPENSSL_PREFIX | Override OpenSSL location (macOS/custom) |
+| VCPKG_ROOT     | vcpkg installation path (Windows)        |
+| JANET_PATH     | Janet module search path                 |
+
+** Known Issues
+
+*** BSD Unix Socket Bug
+
+*Status:* Fixed in Janet git master. Awaiting next stable release.
+
+*Workaround:* Build Janet from git master (as documented above).
+
+** LibreSSL Compatibility
+
+DragonflyBSD and OpenBSD use LibreSSL. The compatibility layer in
+=src/compat.h= handles API differences:
+
+- Conditional includes for =core_names.h= (OpenSSL 3.0 only)
+- Fallbacks for =OSSL_PKEY_PARAM= macros
+- Guards for =SSL_OP_NO_RENEGOTIATION=
+
+** Verification
+
+After building, verify jsec loads correctly:
+
+#+begin_src bash
+janet -e '(import jsec) (print "jsec loaded successfully")'
+#+end_src

@@ -1,25 +1,4 @@
 
-# Table of Contents
-
-1.  [Overview](#orge8524d9)
-    1.  [Design Philosophy](#org2ff6dac)
-2.  [Quick Start](#org913834a)
-3.  [API Reference](#org120d1c0)
-    1.  [Constructors](#orgad4246a)
-    2.  [Certificate Issuance](#org762becf)
-    3.  [Accessor Methods](#orgbc8f8ad)
-    4.  [Revocation and CRL](#org3469f8e)
-    5.  [OCSP Support](#org6cf7491)
-    6.  [OCSP Responder Example](#org7313835)
-4.  [Key Types](#org4cc258e)
-5.  [Serial Number Persistence](#orga96c420)
-6.  [Certificate Tracking](#orgc5206c0)
-7.  [Subject Alternative Names (SAN)](#org46c291b)
-8.  [PKI Hierarchy Example](#orgdfcd2db)
-
-
-
-<a id="orge8524d9"></a>
 
 # Overview
 
@@ -33,8 +12,6 @@ for managing X.509 certificates. It supports:
 -   OCSP response creation (mechanics only - you provide HTTP server)
 
 
-<a id="org2ff6dac"></a>
-
 ## Design Philosophy
 
 -   **Simple API for common cases** - `:issue` generates key + cert in one call
@@ -43,8 +20,6 @@ for managing X.509 certificates. It supports:
 -   **Stateless by default** - Tracking is opt-in for memory efficiency
 -   **Crypto only** - We handle certificates, you handle networking
 
-
-<a id="org913834a"></a>
 
 # Quick Start
 
@@ -69,12 +44,8 @@ for managing X.509 certificates. It supports:
     (print (:get-cert root-ca))
 
 
-<a id="org120d1c0"></a>
-
 # API Reference
 
-
-<a id="orgad4246a"></a>
 
 ## Constructors
 
@@ -243,8 +214,6 @@ Options:
 </table>
 
 
-<a id="org762becf"></a>
-
 ## Certificate Issuance
 
 
@@ -410,8 +379,6 @@ Options:
 Returns: Certificate in PEM format.
 
 
-<a id="orgbc8f8ad"></a>
-
 ## Accessor Methods
 
 
@@ -456,8 +423,6 @@ Get list of issued certificates (only if tracking enabled).
 
 Returns: Array of PEM certificates, or nil if tracking disabled.
 
-
-<a id="org3469f8e"></a>
 
 ## Revocation and CRL
 
@@ -593,8 +558,6 @@ Get list of revoked certificate serials.
 Returns: Array of `{:serial N :reason <kw>}` tables.
 
 
-<a id="org6cf7491"></a>
-
 ## OCSP Support
 
 The CA module provides OCSP **mechanics** only. You implement the HTTP server
@@ -702,8 +665,6 @@ Options:
 Returns: DER-encoded OCSP response bytes.
 
 
-<a id="org7313835"></a>
-
 ## OCSP Responder Example
 
     (import jsec/ca)
@@ -727,8 +688,6 @@ Returns: DER-encoded OCSP response bytes.
        :headers {"Content-Type" "application/ocsp-response"}
        :body response})
 
-
-<a id="org4cc258e"></a>
 
 # Key Types
 
@@ -810,8 +769,6 @@ EC keys are recommended for new deployments. RSA keys are available for
 compatibility with legacy systems.
 
 
-<a id="orga96c420"></a>
-
 # Serial Number Persistence
 
 For production CAs, serial numbers must be persisted to avoid reuse:
@@ -829,8 +786,6 @@ For production CAs, serial numbers must be persisted to avoid reuse:
       (def serial (scan-number (slurp serial-path)))
       (ca/create cert key {:serial serial}))
 
-
-<a id="orgc5206c0"></a>
 
 # Certificate Tracking
 
@@ -852,8 +807,6 @@ tracking when you need to:
     (def issued (:get-issued ca))
     (print (length issued))  # => 2
 
-
-<a id="org46c291b"></a>
 
 # Subject Alternative Names (SAN)
 
@@ -905,8 +858,6 @@ Prefix types:
 </tbody>
 </table>
 
-
-<a id="orgdfcd2db"></a>
 
 # PKI Hierarchy Example
 

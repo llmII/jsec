@@ -259,7 +259,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Create memory BIOs for decoupled I/O (required for IOCP on Windows)
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: Use memory BIOs for decoupled I/O
      * - rbio: We write received UDP data here, SSL reads from it
      * - wbio: SSL writes encrypted data here, we sendto() from it
      */
@@ -277,6 +278,27 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(client->ssl, client->rbio, client->wbio);
+#else
+    /* Unix: Use dgram BIO for direct socket I/O
+     * This is the original trunk approach that works on all Unix platforms.
+     * OpenSSL handles socket I/O directly through the dgram BIO. */
+    client->rbio = NULL;
+    client->wbio = NULL;
+
+    BIO *bio = BIO_new_dgram(fd, BIO_NOCLOSE);
+    if (!bio) {
+        dtls_panic_ssl("failed to create BIO");
+    }
+
+    /* Set peer address on BIO */
+    BIO_ctrl(bio, BIO_CTRL_DGRAM_SET_CONNECTED, 0, &addr);
+
+    /* Set non-blocking */
+    BIO_set_nbio(bio, 1);
+
+    /* Attach to SSL */
+    SSL_set_bio(client->ssl, bio, bio);
+#endif
 
     /* Set connect state and start handshake */
     SSL_set_connect_state(client->ssl);

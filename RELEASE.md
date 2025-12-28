@@ -1,43 +1,17 @@
 
-# Table of Contents
-
-1.  [Release Checklist](#org0d8d292)
-    1.  [Pre-Release](#org7a5b8d3)
-    2.  [Version Numbering](#org36f5b23)
-    3.  [Release Steps](#org37a6567)
-    4.  [Post-Release](#org610ce3b)
-    5.  [Development vs Release](#org86911ef)
-    6.  [Quality Gates](#org113c5b6)
-    7.  [Emergency Releases](#org0372fb9)
-2.  [Available Build Targets](#org8b26a5d)
-3.  [Distribution](#org3c69581)
-    1.  [Janet Package Manager (JPM)](#orgfbe40fd)
-    2.  [Manual Installation (Fossil)](#org560766c)
-    3.  [Manual Installation (Git Mirror)](#org1278130)
-    4.  [Dependencies](#orgcbeeeb9)
-4.  [Testing](#org598cda0)
-    1.  [Running Tests](#orgfe90f9f)
-    2.  [Performance Testing](#orgbd2a11e)
-5.  [Support Policy](#orga4f5294)
-
-
-
-<a id="org0d8d292"></a>
 
 # Release Checklist
 
-
-<a id="org7a5b8d3"></a>
 
 ## Pre-Release
 
 1.  Ensure all tests pass:
     
         janet test/runner.janet -f '{unit,regression,coverage}'
-2.  Run sanitizer tests (ASan/UBSan):
+2.  Run sanitizer tests (ASan/UBSan) (once working):
     
         jpm run test-sanitized
-3.  Check for memory leaks:
+3.  Check for memory leaks (once working):
     
         jpm run leak-check
 4.  Update version in `project.janet`
@@ -51,8 +25,6 @@
         jpm clean && jpm build && jpm install
         janet test/runner.janet -f '{unit,regression,coverage}'
 
-
-<a id="org36f5b23"></a>
 
 ## Version Numbering
 
@@ -68,8 +40,9 @@ Example: `1.2.3`
 -   Minor: 2
 -   Patch: 3
 
+This doesn't apply until we reach 1.0.0, changes may be made and API may be
+refined during this time period.
 
-<a id="org37a6567"></a>
 
 ## Release Steps
 
@@ -114,8 +87,6 @@ Example: `1.2.3`
         cd ../jsec-git && git push origin main --tags
 
 
-<a id="org610ce3b"></a>
-
 ## Post-Release
 
 1.  Verify installation from repository
@@ -123,8 +94,6 @@ Example: `1.2.3`
 3.  Announce release
 4.  Begin next development cycle
 
-
-<a id="org86911ef"></a>
 
 ## Development vs Release
 
@@ -137,8 +106,6 @@ After a release, immediately bump to next dev version:
 -   `1.0.0` → `1.1.0-dev` (for minor development)
 -   `1.0.0` → `2.0.0-dev` (for major development)
 
-
-<a id="org113c5b6"></a>
 
 ## Quality Gates
 
@@ -154,8 +121,6 @@ All of these must pass before release:
 -   [ ] Version is bumped appropriately
 
 
-<a id="org0372fb9"></a>
-
 ## Emergency Releases
 
 For critical security fixes:
@@ -166,8 +131,6 @@ For critical security fixes:
 4.  Release as patch version
 5.  Backport fix to development branch
 
-
-<a id="org8b26a5d"></a>
 
 # Available Build Targets
 
@@ -234,12 +197,8 @@ For critical security fixes:
 </table>
 
 
-<a id="org3c69581"></a>
-
 # Distribution
 
-
-<a id="orgfbe40fd"></a>
 
 ## Janet Package Manager (JPM)
 
@@ -252,8 +211,6 @@ jsec is installed via `jpm`:
     jpm install https://fossil.example.org/jsec
 
 
-<a id="org560766c"></a>
-
 ## Manual Installation (Fossil)
 
 From source using Fossil:
@@ -265,8 +222,6 @@ From source using Fossil:
     jpm install
 
 
-<a id="org1278130"></a>
-
 ## Manual Installation (Git Mirror)
 
 From the GitHub mirror:
@@ -277,23 +232,17 @@ From the GitHub mirror:
     jpm install
 
 
-<a id="orgcbeeeb9"></a>
-
 ## Dependencies
 
--   Janet 1.30+
--   OpenSSL 3.0+
+-   Janet 1.40+
+-   OpenSSL 3.0+, LibreSSL 3.6+
 -   spork (Janet package)
 
-
-<a id="org598cda0"></a>
 
 # Testing
 
 jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
 
-
-<a id="orgfe90f9f"></a>
 
 ## Running Tests
 
@@ -310,8 +259,6 @@ jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
     janet test/runner.janet -f '{unit,regression,coverage}' --verbosity 2
 
 
-<a id="orgbd2a11e"></a>
-
 ## Performance Testing
 
 Performance tests are separate and run for extended periods:
@@ -324,8 +271,6 @@ Performance tests are separate and run for extended periods:
 
 See [docs/TESTING.org](docs/TESTING.md) for comprehensive testing documentation.
 
-
-<a id="orga4f5294"></a>
 
 # Support Policy
 
