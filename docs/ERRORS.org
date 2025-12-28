@@ -1,6 +1,6 @@
 #+TITLE: JSEC Error Reference
 #+AUTHOR: JSEC Project
-#+OPTIONS: toc:3 num:t
+#+OPTIONS: toc:nil ^:nil
 
 * Overview
 

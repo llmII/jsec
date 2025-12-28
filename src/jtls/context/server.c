@@ -190,8 +190,8 @@ static void update_cache(SSL_CTX *ctx, const char *cert_path,
 
     /* Store file paths if using file-based certs */
     if (cert_path && key_path) {
-        char *new_cert_path = strdup(cert_path);
-        char *new_key_path = strdup(key_path);
+        char *new_cert_path = jsec_strdup(cert_path);
+        char *new_key_path = jsec_strdup(key_path);
         if (new_cert_path && new_key_path) {
             server_ctx_cache.cert_path = new_cert_path;
             server_ctx_cache.key_path = new_key_path;

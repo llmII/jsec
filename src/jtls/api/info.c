@@ -15,8 +15,12 @@
  */
 
 #include "../internal.h"
+#ifndef JANET_WINDOWS
 #include <arpa/inet.h>
+#endif
+#ifndef JANET_WINDOWS
 #include <sys/un.h>
+#endif
 
 /*============================================================================
  * HELPER: Check handshake completion
@@ -221,6 +225,7 @@ static Janet sockaddr_to_tuple(const struct sockaddr_storage *ss) {
                              janet_wrap_integer(ntohs(sai6->sin6_port))};
             return janet_wrap_tuple(janet_tuple_n(pair, 2));
         }
+#ifndef JANET_WINDOWS
         case AF_UNIX: {
             const struct sockaddr_un *sun = (const struct sockaddr_un *)ss;
             Janet pathname;
@@ -235,6 +240,7 @@ static Janet sockaddr_to_tuple(const struct sockaddr_storage *ss) {
             }
             return janet_wrap_tuple(janet_tuple_n(&pathname, 1));
         }
+#endif
         default:
             tls_panic_param("unknown address family");
     }
@@ -260,7 +266,8 @@ Janet cfun_localname(int32_t argc, Janet *argv) {
     socklen_t slen = sizeof(ss);
     memset(&ss, 0, slen);
 
-    if (getsockname(tls->transport->handle, (struct sockaddr *)&ss, &slen)) {
+    if (getsockname((jsec_socket_t)tls->transport->handle,
+                    (struct sockaddr *)&ss, &slen)) {
         tls_panic_socket("failed to get localname");
     }
 
@@ -287,7 +294,8 @@ Janet cfun_peername(int32_t argc, Janet *argv) {
     socklen_t slen = sizeof(ss);
     memset(&ss, 0, slen);
 
-    if (getpeername(tls->transport->handle, (struct sockaddr *)&ss, &slen)) {
+    if (getpeername((jsec_socket_t)tls->transport->handle,
+                    (struct sockaddr *)&ss, &slen)) {
         tls_panic_socket("failed to get peername");
     }
 

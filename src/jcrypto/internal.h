@@ -23,7 +23,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #if JSEC_HAS_OSSL_PARAM
-  #include <openssl/core_names.h> /* For OSSL_PKEY_PARAM_* (OpenSSL 3.0+) */
+#include <openssl/core_names.h> /* For OSSL_PKEY_PARAM_* (OpenSSL 3.0+) */
 #endif
 
 /*============================================================================

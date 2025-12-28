@@ -1,30 +1,4 @@
 
-# Table of Contents
-
-1.  [Overview](#org785d469)
-2.  [Directory Structure](#orgec5b85f)
-3.  [Running Tests](#orgcfe0e48)
-    1.  [Basic Usage](#org3df4169)
-    2.  [Filter Syntax](#orgc4884f7)
-    3.  [Verbosity Levels](#org49001fc)
-    4.  [Listing Tests](#orge799bcd)
-    5.  [Other Options](#org61895b3)
-4.  [Writing Tests](#orgd3bda9a)
-    1.  [Basic Test Suite](#org668a57e)
-    2.  [Using Test Helpers](#org0d309a0)
-    3.  [Matrix Testing](#orgf911668)
-    4.  [Expected Failures](#org73d15bb)
-5.  [Performance Testing (Experimental)](#org4a665fd)
-    1.  [Running Performance Tests](#org4d99b1d)
-    2.  [Analyzing Results with perf9-analyze](#orgc5f892c)
-    3.  [Performance Test Matrix](#orgcfc23ac)
-6.  [Test Categories](#org59f113f)
-7.  [Naming Conventions](#org6d9b500)
-8.  [Environment Variables](#org8406eaf)
-
-
-
-<a id="org785d469"></a>
 
 # Overview
 
@@ -33,8 +7,6 @@ category, with support for matrix testing, timeouts, and parallel execution.
 
 **Note:** `jpm test` is deprecated. Use the runner directly.
 
-
-<a id="orgec5b85f"></a>
 
 # Directory Structure
 
@@ -53,12 +25,8 @@ category, with support for matrix testing, timeouts, and parallel execution.
         └── runner.janet         # Test runner entry point
 
 
-<a id="orgcfe0e48"></a>
-
 # Running Tests
 
-
-<a id="org3df4169"></a>
 
 ## Basic Usage
 
@@ -77,8 +45,6 @@ category, with support for matrix testing, timeouts, and parallel execution.
     # Run with verbose output
     janet test/runner.janet -f 'unit' --verbosity 5
 
-
-<a id="orgc4884f7"></a>
 
 ## Filter Syntax
 
@@ -105,8 +71,6 @@ Examples:
 
 Use `--filter-help` for complete syntax documentation.
 
-
-<a id="org49001fc"></a>
 
 ## Verbosity Levels
 
@@ -160,8 +124,6 @@ Use `--filter-help` for complete syntax documentation.
     janet test/runner.janet --verbosity 5
 
 
-<a id="orge799bcd"></a>
-
 ## Listing Tests
 
     # List suites
@@ -173,8 +135,6 @@ Use `--filter-help` for complete syntax documentation.
     # List categories
     janet test/runner.janet --list categories
 
-
-<a id="org61895b3"></a>
 
 ## Other Options
 
@@ -197,12 +157,8 @@ Use `--filter-help` for complete syntax documentation.
     janet test/runner.janet --wrapper 'valgrind --leak-check=full'
 
 
-<a id="orgd3bda9a"></a>
-
 # Writing Tests
 
-
-<a id="org668a57e"></a>
 
 ## Basic Test Suite
 
@@ -220,8 +176,6 @@ Use `--filter-help` for complete syntax documentation.
     (assay/end-suite)
 
 
-<a id="org0d309a0"></a>
-
 ## Using Test Helpers
 
     (use suites/helpers)
@@ -237,8 +191,6 @@ Use `--filter-help` for complete syntax documentation.
     (def port (make-random-port))
 
 
-<a id="orgf911668"></a>
-
 ## Matrix Testing
 
 Run tests with multiple parameter combinations:
@@ -250,8 +202,6 @@ Run tests with multiple parameter combinations:
         (test-with-protocol (config :protocol) (config :verify))))
 
 
-<a id="org73d15bb"></a>
-
 ## Expected Failures
 
 Mark tests that document known issues:
@@ -261,8 +211,6 @@ Mark tests that document known issues:
       (assert false "This is expected to fail"))
 
 
-<a id="org4a665fd"></a>
-
 # Performance Testing (Experimental)
 
 Performance tests use the perf9 framework and can run for extended periods.
@@ -271,8 +219,6 @@ They are excluded from the default test run.
 **Warning:** Performance testing is unstable. Output formats, metrics collection,
 and implementation details are subject to change as optimizations are made.
 
-
-<a id="org4d99b1d"></a>
 
 ## Running Performance Tests
 
@@ -285,8 +231,6 @@ and implementation details are subject to change as optimizations are made.
     # Output results to JSON for analysis
     janet test/runner.janet -f 'performance' --json /tmp/perf-results.json
 
-
-<a id="orgc5f892c"></a>
 
 ## Analyzing Results with perf9-analyze
 
@@ -312,8 +256,6 @@ The analyzer provides:
 -   Comparison between test runs with percentage changes
 
 
-<a id="orgcfc23ac"></a>
-
 ## Performance Test Matrix
 
 The perf9 suite tests combinations of:
@@ -324,8 +266,6 @@ The perf9 suite tests combinations of:
 -   Chunk sizes: Different buffer sizes
 -   Worker types: Fibers, threads, subprocesses
 
-
-<a id="org59f113f"></a>
 
 # Test Categories
 
@@ -372,16 +312,12 @@ The perf9 suite tests combinations of:
 </table>
 
 
-<a id="org6d9b500"></a>
-
 # Naming Conventions
 
 -   Suite files: `suite-*.janet` in category directory
 -   Test names: Descriptive, kebab-case
 -   Helpers: Shared utilities in `suites/helpers/`
 
-
-<a id="org8406eaf"></a>
 
 # Environment Variables
 
@@ -401,12 +337,12 @@ The perf9 suite tests combinations of:
 </thead>
 <tbody>
 <tr>
-<td class="org-left">JSEC<sub>DEBUG</sub></td>
+<td class="org-left">JSEC_DEBUG</td>
 <td class="org-left">Enable debug output (1=on)</td>
 </tr>
 
 <tr>
-<td class="org-left">JSEC<sub>VERBOSE</sub></td>
+<td class="org-left">JSEC_VERBOSE</td>
 <td class="org-left">Enable verbose output (1=on)</td>
 </tr>
 </tbody>

@@ -61,7 +61,7 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
     }
 
     /* Ahead buffer is empty - read from socket */
-    int fd = (int)tls->transport->handle;
+    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
 
     /* If request is small and we have a buffer, read ahead */
     if (tls->bio_ahead.data && (size_t)len < tls->bio_ahead.capacity) {
@@ -70,7 +70,12 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         tls->bio_ahead.pe = tls->bio_ahead.data;
 
         /* Read as much as we can into the buffer */
+#ifdef JANET_WINDOWS
+        int n = recv(fd, (char *)tls->bio_ahead.data,
+                     (int)tls->bio_ahead.capacity, 0);
+#else
         ssize_t n = read(fd, tls->bio_ahead.data, tls->bio_ahead.capacity);
+#endif
 
         if (n > 0) {
             tls->bio_ahead.pe = tls->bio_ahead.data + n;
@@ -82,7 +87,8 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         } else if (n == 0) {
             return 0; /* EOF */
         } else {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (jsec_socket_errno == JSEC_EAGAIN ||
+                jsec_socket_errno == JSEC_EWOULDBLOCK) {
                 BIO_set_retry_read(bio);
             }
             return -1;
@@ -90,7 +96,11 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
     }
 
     /* No buffer or large request - read directly */
+#ifdef JANET_WINDOWS
+    int n = recv(fd, dst, len, 0);
+#else
     ssize_t n = read(fd, dst, (size_t)len);
+#endif
 
     if (n > 0) {
         return (int)n;
@@ -99,7 +109,8 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         return 0;
     } else {
         /* Error - check if it's a retryable error */
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (jsec_socket_errno == JSEC_EAGAIN ||
+            jsec_socket_errno == JSEC_EWOULDBLOCK) {
             BIO_set_retry_read(bio);
         }
         return -1;
@@ -125,14 +136,15 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
 
     BIO_clear_retry_flags(bio);
 
-    int fd = (int)tls->transport->handle;
-    ssize_t n = send(fd, src, (size_t)len, MSG_NOSIGNAL);
+    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
+    ssize_t n = send(fd, src, len, MSG_NOSIGNAL);
 
     if (n > 0) {
         return (int)n;
     } else {
         /* Error - check if it's a retryable error */
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (jsec_socket_errno == JSEC_EAGAIN ||
+            jsec_socket_errno == JSEC_EWOULDBLOCK) {
             BIO_set_retry_write(bio);
         }
         return -1;

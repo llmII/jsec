@@ -10,11 +10,13 @@
  */
 
 #ifdef __linux__
-  #define _GNU_SOURCE
+#define _GNU_SOURCE
 #endif
 
 #include "../internal.h"
+#ifndef _WIN32
 #include <sys/un.h>
+#endif
 
 /*============================================================================
  * WRAP - Wrap an existing stream with TLS
@@ -443,9 +445,18 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             janet_async_end(fiber);
             return;
 
-#ifndef JANET_WINDOWS
+#ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_INIT:
-            /* On non-Windows, wait for actual event before checking */
+            /* Windows IOCP: Check connect status immediately since Windows
+             * doesn't support readiness-based async connect the same way.
+             * Fall through to WRITE case to check getsockopt for connect
+             * result. */
+#if defined(__GNUC__) || defined(__clang__)
+            __attribute__((fallthrough));
+#endif
+#else
+        case JANET_ASYNC_EVENT_INIT:
+            /* On non-Windows, wait for actual WRITE event before checking */
             return;
 #endif
 
@@ -455,13 +466,19 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Check if connect succeeded via SO_ERROR */
             int res = 0;
             socklen_t size = sizeof(res);
+#ifdef JANET_WINDOWS
+            int r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
+                               (char *)&res, (int *)&size);
+#else
             int r =
                 getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
+#endif
 
             if (r != 0 || res != 0) {
                 /* Connect failed */
-                janet_cancel(fiber, janet_cstringv(res ? strerror(res)
-                                                       : "connect failed"));
+                janet_cancel(fiber,
+                             janet_cstringv(res ? jsec_socket_strerror(res)
+                                                : "connect failed"));
                 stream->flags |= JANET_STREAM_TOCLOSE;
                 janet_async_end(fiber);
                 return;
@@ -658,9 +675,10 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         if (argc >= 3) opts = argv[2];
     }
 
-    int fd = -1;
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
     int status;
 
+#ifndef JANET_WINDOWS
     if (is_unix) {
         /* Unix socket connection */
         struct sockaddr_un addr;
@@ -700,7 +718,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
 
         do {
             status = connect(fd, (struct sockaddr *)&addr, addrlen);
-        } while (status == -1 && errno == EINTR);
+        } while (status == -1 && jsec_socket_errno == JSEC_EINTR);
 
         if (status == 0) {
             /* Connected immediately */
@@ -741,14 +759,16 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             wrap_args[2] = opts;
 
             return cfun_wrap(3, wrap_args);
-        } else if (errno != EINPROGRESS) {
-            close(fd);
+        } else if (jsec_socket_errno != JSEC_EINPROGRESS &&
+                   jsec_socket_errno != JSEC_EWOULDBLOCK) {
+            jsec_close_socket(fd);
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
-                       "could not connect to unix socket %s: %s", unix_path,
-                       strerror(errno));
+                       "could not connect to unix socket %s", unix_path);
         }
         /* else EINPROGRESS - fall through to async handling */
-    } else {
+    } else
+#endif /* !_WIN32 */
+    {
         /* TCP connection - DNS resolution (blocking, same as Janet's
          * net/connect) */
         struct addrinfo hints;
@@ -768,10 +788,18 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         struct addrinfo *rp;
         for (rp = ai; rp != NULL; rp = rp->ai_next) {
             /* Create socket with non-blocking from the start */
-#ifdef __linux__
+#ifdef JANET_LINUX
             fd = socket(rp->ai_family,
                         rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
                         rp->ai_protocol);
+#elif defined(JANET_WINDOWS)
+            /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
+            fd = WSASocketW(rp->ai_family, rp->ai_socktype, rp->ai_protocol,
+                            NULL, 0, WSA_FLAG_OVERLAPPED);
+            if (fd != INVALID_SOCKET) {
+                unsigned long mode = 1;
+                ioctlsocket(fd, FIONBIO, &mode);
+            }
 #else
             fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
             if (fd != -1) {
@@ -781,19 +809,24 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
             }
 #endif
-            if (fd == -1) continue;
+            if (fd == JSEC_INVALID_SOCKET) continue;
 
             /* Attempt non-blocking connect */
+#ifdef JANET_WINDOWS
+            status = WSAConnect(fd, rp->ai_addr, (int)rp->ai_addrlen, NULL,
+                                NULL, NULL, NULL);
+#else
             do {
                 status = connect(fd, rp->ai_addr, rp->ai_addrlen);
-            } while (status == -1 && errno == EINTR);
+            } while (status == -1 && jsec_socket_errno == JSEC_EINTR);
+#endif
 
             if (status == 0) {
                 /* Connected immediately (rare, but possible on localhost) */
                 freeaddrinfo(ai);
 
                 JanetStream *stream =
-                    janet_stream(fd,
+                    janet_stream((JanetHandle)fd,
                                  JANET_STREAM_SOCKET | JANET_STREAM_READABLE |
                                      JANET_STREAM_WRITABLE,
                                  NULL);
@@ -805,23 +838,27 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 wrap_args[2] = opts;
 
                 return cfun_wrap(3, wrap_args);
-            } else if (errno == EINPROGRESS) {
+            } else if (jsec_socket_errno == JSEC_EINPROGRESS ||
+                       jsec_socket_errno == JSEC_EWOULDBLOCK) {
                 /* Connection in progress - normal async case */
                 break;
             } else {
                 /* This address failed immediately, try next */
-                close(fd);
-                fd = -1;
+                jsec_close_socket(fd);
+                fd = JSEC_INVALID_SOCKET;
             }
         }
         freeaddrinfo(ai);
     }
 
-    if (fd == -1) {
+    if (fd == JSEC_INVALID_SOCKET) {
+#ifndef JANET_WINDOWS
         if (is_unix) {
             jsec_panic(JSEC_MOD_TLS, "SOCKET",
                        "could not connect to unix socket %s", unix_path);
-        } else {
+        } else
+#endif
+        {
             jsec_panic(JSEC_MOD_TLS, "SOCKET", "could not connect to %s:%s",
                        host, port);
         }
@@ -829,7 +866,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
 
     /* Create stream for async connect completion */
     JanetStream *stream = janet_stream(
-        fd,
+        (JanetHandle)fd,
         JANET_STREAM_SOCKET | JANET_STREAM_READABLE | JANET_STREAM_WRITABLE,
         NULL);
 

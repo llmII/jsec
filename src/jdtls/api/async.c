@@ -14,6 +14,14 @@
  */
 
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
+    DWORD bytes_received;
+#endif
     DTLSClient *client;
     JanetBuffer *buffer;      /* For read */
     JanetByteView write_data; /* For write */
@@ -24,7 +32,43 @@ typedef struct {
         CLIENT_OP_WRITE,
         CLIENT_OP_CLOSE
     } op;
+    int want_write; /* Track if we're waiting for write vs read */
 } DTLSClientAsyncState;
+
+/*
+ * Helper: Flush any pending data from wbio to the socket via sendto
+ * Returns bytes sent, 0 if nothing to send, or -1 on error.
+ */
+static ssize_t dtls_client_flush_wbio(DTLSClient *client) {
+    /* When using dgram BIO (Unix), wbio is NULL - dgram handles I/O directly
+     */
+    if (!client->wbio) {
+        return 0;
+    }
+
+    size_t pending = BIO_ctrl_pending(client->wbio);
+    if (pending == 0) {
+        return 0;
+    }
+
+    uint8_t *buf = janet_malloc(pending);
+    if (!buf) {
+        return -1;
+    }
+
+    int n = BIO_read(client->wbio, buf, (int)pending);
+    ssize_t sent = 0;
+
+    if (n > 0) {
+        sent = sendto((jsec_socket_t)client->transport->handle,
+                      (const char *)buf, (size_t)n, 0,
+                      (struct sockaddr *)&client->peer_addr.addr,
+                      client->peer_addr.addrlen);
+    }
+
+    janet_free(buf);
+    return sent;
+}
 
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     DTLSClientAsyncState *state = (DTLSClientAsyncState *)fiber->ev_state;
@@ -36,6 +80,48 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
     switch (event) {
         case JANET_ASYNC_EVENT_INIT:
+#ifdef JANET_WINDOWS
+            /* Windows IOCP with memory BIOs:
+             * - If want_write: Flush wbio via WSASendTo, then wait for recv
+             * - Else: Start WSARecvFrom to receive UDP datagram into recv_buf
+             */
+            if (state && state->client && state->client->transport) {
+                DTLSClient *client = state->client;
+                JanetStream *stream = client->transport;
+
+                /* First flush any pending wbio data */
+                dtls_client_flush_wbio(client);
+
+                /* Now start async receive */
+                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+                state->wsa_flags = 0;
+                state->bytes_received = 0;
+                state->wsa_buf.buf = (char *)state->recv_buf;
+                state->wsa_buf.len = sizeof(state->recv_buf);
+
+                int status =
+                    WSARecv((SOCKET)stream->handle, &state->wsa_buf, 1,
+                            &state->bytes_received, &state->wsa_flags,
+                            &state->overlapped, NULL);
+
+                if (status == SOCKET_ERROR &&
+                    WSAGetLastError() != WSA_IO_PENDING) {
+                    janet_cancel(fiber, janet_cstringv("WSARecv failed"));
+                    fiber->ev_state = NULL;
+                    janet_async_end(fiber);
+                    return;
+                }
+                janet_async_in_flight(fiber);
+            }
+            break;
+#else
+            /* Unix: Flush any pending wbio data (e.g., ClientHello) before
+             * waiting for READ events */
+            if (state && state->client) {
+                dtls_client_flush_wbio(state->client);
+            }
+            break;
+#endif
         case JANET_ASYNC_EVENT_DEINIT:
             /* Nothing to do */
             break;
@@ -59,9 +145,51 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             janet_async_end(fiber);
             return;
 
+#ifdef JANET_WINDOWS
+        case JANET_ASYNC_EVENT_COMPLETE:
+        case JANET_ASYNC_EVENT_FAILED: {
+            /* Windows IOCP: Receive completed with actual data - write to
+             * rbio */
+            DTLSClient *client = state->client;
+            DWORD bytes_transferred;
+            DWORD flags;
+            BOOL success = WSAGetOverlappedResult(
+                (SOCKET)client->transport->handle, &state->overlapped,
+                &bytes_transferred, FALSE, &flags);
+
+            if (!success || bytes_transferred == 0) {
+                /* No data received - start another receive */
+                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+                state->wsa_flags = 0;
+                state->bytes_received = 0;
+                state->wsa_buf.buf = (char *)state->recv_buf;
+                state->wsa_buf.len = sizeof(state->recv_buf);
+
+                int status =
+                    WSARecv((SOCKET)client->transport->handle,
+                            &state->wsa_buf, 1, &state->bytes_received,
+                            &state->wsa_flags, &state->overlapped, NULL);
+                if (status == SOCKET_ERROR &&
+                    WSAGetLastError() != WSA_IO_PENDING) {
+                    janet_cancel(fiber,
+                                 janet_cstringv("WSARecv restart failed"));
+                    janet_async_end(fiber);
+                    return;
+                }
+                janet_async_in_flight(fiber);
+                return;
+            }
+
+            /* Write received UDP data to rbio for SSL to process */
+            BIO_write(client->rbio, state->recv_buf, (int)bytes_transferred);
+
+            /* Fall through to process SSL operation */
+        }
+#endif
         case JANET_ASYNC_EVENT_READ:
         case JANET_ASYNC_EVENT_WRITE: {
             DTLSClient *client = state->client;
+
             DTLSResult result = DTLS_RESULT_ERROR;
             Janet retval = janet_wrap_nil();
 
@@ -130,6 +258,9 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
             }
 
+            /* Flush any data SSL wrote to wbio - handshake responses, etc */
+            dtls_client_flush_wbio(client);
+
             /* Handle result */
             switch (result) {
                 case DTLS_RESULT_OK:
@@ -140,6 +271,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 case DTLS_RESULT_WANT_READ: {
                     /* Need to switch async modes - end current, start new */
                     DTLSClientAsyncState *saved = state;
+                    saved->want_write = 0; /* Update for next INIT */
                     fiber->ev_state = NULL;
                     janet_async_end(fiber);
                     janet_async_start_fiber(
@@ -150,6 +282,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
                 case DTLS_RESULT_WANT_WRITE: {
                     DTLSClientAsyncState *saved = state;
+                    saved->want_write = 1; /* Update for next INIT */
                     fiber->ev_state = NULL;
                     janet_async_end(fiber);
                     janet_async_start_fiber(
@@ -214,6 +347,7 @@ int dtls_client_start_handshake(DTLSClient *client) {
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->op = CLIENT_OP_HANDSHAKE;
+    state->want_write = (result == DTLS_RESULT_WANT_WRITE) ? 1 : 0;
 
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
@@ -231,6 +365,7 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
     state->buffer = buf;
     state->nbytes = nbytes;
     state->op = CLIENT_OP_READ;
+    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }
@@ -243,6 +378,7 @@ void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
     state->client = client;
     state->write_data = data;
     state->op = CLIENT_OP_WRITE;
+    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }
@@ -253,6 +389,7 @@ void dtls_client_start_async_close(DTLSClient *client, int mode) {
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->op = CLIENT_OP_CLOSE;
+    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }

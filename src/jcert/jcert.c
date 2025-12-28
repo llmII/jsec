@@ -12,7 +12,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #if JSEC_HAS_OSSL_PARAM
-  #include <openssl/core_names.h>
+#include <openssl/core_names.h>
 #endif
 #include <string.h>
 #include <time.h>
@@ -840,8 +840,8 @@ static Janet calc_fingerprint(X509 *cert, const EVP_MD *md) {
     if (!result) return janet_wrap_nil();
 
     for (unsigned int i = 0; i < digest_len; i++) {
-        sprintf(result + (size_t)i * 3, "%02X%s", digest[i],
-                (i < digest_len - 1) ? ":" : "");
+        snprintf(result + (size_t)i * 3, 4, "%02X%s", digest[i],
+                 (i < digest_len - 1) ? ":" : "");
     }
 
     Janet ret = janet_cstringv(result);

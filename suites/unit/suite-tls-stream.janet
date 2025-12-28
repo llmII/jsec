@@ -63,6 +63,18 @@
     (merge {:verify false} ctx-opts)))
 
 # =============================================================================
+# Skip predicates for platform-specific combinations
+# =============================================================================
+
+(defn skip-unix-on-windows?
+  "Skip Unix socket tests on Windows."
+  [combo]
+  (if (and (= (os/which) :windows)
+           (= (combo :socket-type) :unix))
+    "Unix sockets not supported on Windows"
+    false))
+
+# =============================================================================
 # Suite Definition
 # =============================================================================
 
@@ -80,6 +92,7 @@
                                           :tcp-nodelay [true false]
                                           :cert-type [:rsa :ec-p256]
                                           :cipher-group [:aes-gcm :chacha20]}
+                                 :skip-cases [skip-unix-on-windows?]
                                  :parallel {:fiber 6 :thread 6 :subprocess 6}
                                  :harness [:certs {:setup (fn [cfg vs]
                                                             (generate-certs-for-matrix cfg))}]
@@ -989,7 +1002,18 @@
                  (assay/def-test "connection refused"
                                  :expected-fail "Connection to closed port should fail"
                                  (ev/with-deadline 5
-                                   (tls/connect "127.0.0.1" "1" {:verify false})))
+                                   # Create a listener to get a valid port, then close it
+                                   # This guarantees the port exists but has nothing listening
+                                   (def server (net/listen "127.0.0.1" "0"))
+                                   (def [_ port] (net/localname server))
+                                   (:close server)
+                                   # Small delay to ensure OS releases the port
+                                   (ev/sleep 0.1)
+                                   # Connect and try to use it - on Windows, connection
+                                   # errors only appear on first I/O, not at connect time
+                                   (def conn (tls/connect "127.0.0.1" (string port) {:verify false}))
+                                   (:write conn "test")
+                                   (:close conn)))
 
                  # ---------------------------------------------------------------------------
                  # OCSP Stapling Test

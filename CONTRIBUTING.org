@@ -1,4 +1,5 @@
 #+TITLE: Contributing to jsec
+#+OPTIONS: toc:nil ^:nil
 #+AUTHOR: llmII
 #+EMAIL: dev@amlegion.org
 
@@ -79,7 +80,7 @@ See [[file:docs/TESTING.org][docs/TESTING.org]] for comprehensive testing docume
 - New features require corresponding test cases
 - Bug fixes should include regression tests
 - Tests should work on Unix sockets as well as TCP (for TLS, for UDP we'll update when DTLS is good)
-- External connections only to example.com (tests should gracefully handle failures)
+- External connections only to example.com if absolutely necessary (tests should gracefully handle failures)
 - Tests must be concise for valgrind performance (though this obviously won't fix valgrind being too slow presently)
 - No stubbed or incomplete tests accepted
 

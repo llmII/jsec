@@ -17,14 +17,15 @@
 
 #include "internal.h"
 #include <string.h>
-#include <errno.h>
 #include <fcntl.h>
+#ifndef JANET_WINDOWS
 #include <unistd.h>
+#endif
 
 /* MSG_DONTWAIT may not be available on all platforms.
  * Since our sockets are already non-blocking, we can use 0 as fallback. */
 #ifndef MSG_DONTWAIT
-  #define MSG_DONTWAIT 0
+#define MSG_DONTWAIT 0
 #endif
 
 /*
@@ -54,7 +55,8 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     ssize_t sent = 0;
 
     if (send_len > 0) {
-        sent = sendto(transport->handle, send_buf, (size_t)send_len, 0,
+        sent = sendto((jsec_socket_t)transport->handle,
+                      (const char *)send_buf, (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
                       session->peer_addr.addrlen);
     }
@@ -238,19 +240,37 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
 
-    /* Create UDP socket */
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+    /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for IOCP */
+#ifdef JANET_WINDOWS
+    jsec_socket_t fd =
+        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
+#else
+    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == JSEC_INVALID_SOCKET) {
+        dtls_panic_socket("failed to create socket");
+    }
+#endif
 
     /* Set socket options */
     int yes = 1;
+#ifdef JANET_WINDOWS
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+#else
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#endif
 
     /* Set non-blocking */
+    /* Set non-blocking */
+#ifdef JANET_WINDOWS
+    unsigned long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
     /* Bind */
     struct sockaddr_in addr;
@@ -261,18 +281,18 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     if (strcmp(host, "0.0.0.0") == 0 || strlen(host) == 0) {
         addr.sin_addr.s_addr = INADDR_ANY;
     } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_param("invalid address: %s", host);
     }
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_socket("bind failed");
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport =
-        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport = janet_stream(
+        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS server */
     DTLSServer *server =
@@ -386,6 +406,16 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
  */
 
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    uint8_t recv_buf[65536];           /* Buffer for received datagram */
+    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
+    int peer_addrlen;
+    DWORD bytes_received;
+#endif
     DTLSServer *server;
     JanetBuffer *buffer;
     int32_t nbytes;
@@ -496,6 +526,46 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
  * the case where session resumption causes handshake + app data to
  * arrive in rapid succession.
  */
+
+#ifdef JANET_WINDOWS
+/* Forward declare callback for helper */
+static void dtls_recv_from_callback(JanetFiber *fiber, JanetAsyncEvent event);
+/* Start an async WSARecvFrom operation for Windows IOCP */
+static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
+                                   JanetFiber *fiber) {
+    DTLSServer *server = state->server;
+
+    /* Reset overlapped struct */
+    memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+    state->wsa_flags = 0;
+    state->peer_addrlen = sizeof(state->peer_addr);
+    state->bytes_received = 0;
+
+    /* Set up buffer */
+    state->wsa_buf.buf = (char *)state->recv_buf;
+    state->wsa_buf.len = sizeof(state->recv_buf);
+
+    int result =
+        WSARecvFrom((SOCKET)server->transport->handle, &state->wsa_buf, 1,
+                    &state->bytes_received, &state->wsa_flags,
+                    (struct sockaddr *)&state->peer_addr,
+                    &state->peer_addrlen, &state->overlapped, NULL);
+
+    if (result == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSA_IO_PENDING) {
+            /* Async recv started */
+            janet_async_in_flight(fiber);
+            return 0;
+        }
+        /* Real error */
+        return -1;
+    }
+    /* Completed synchronously (rare) - will be handled in COMPLETE */
+    return 0;
+}
+#endif
+
 static void dtls_recv_from_callback(JanetFiber *fiber,
                                     JanetAsyncEvent event) {
     DTLSRecvFromState *state = (DTLSRecvFromState *)fiber->ev_state;
@@ -525,6 +595,70 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             janet_async_end(fiber);
             return;
 
+#ifdef JANET_WINDOWS
+        case JANET_ASYNC_EVENT_INIT:
+            /* Windows: Start async WSARecvFrom */
+            if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
+                janet_cancel(fiber, janet_cstringv("WSARecvFrom failed"));
+                janet_async_end(fiber);
+                return;
+            }
+            break;
+
+        case JANET_ASYNC_EVENT_COMPLETE:
+        case JANET_ASYNC_EVENT_FAILED: {
+            DTLSServer *server = state->server;
+
+            /* Get the number of bytes received from GetQueuedCompletionStatus
+             */
+            DWORD bytes_transferred;
+            DWORD flags;
+            BOOL success = WSAGetOverlappedResult(
+                (SOCKET)server->transport->handle, &state->overlapped,
+                &bytes_transferred, FALSE, &flags);
+
+            if (!success || bytes_transferred == 0) {
+                /* Try to start another receive */
+                if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
+                    janet_cancel(
+                        fiber, janet_cstringv("WSARecvFrom restart failed"));
+                    janet_async_end(fiber);
+                    return;
+                }
+                break;
+            }
+
+            /* Cleanup expired sessions periodically */
+            dtls_server_cleanup_expired(server, get_current_time());
+
+            /* Process datagram - may be handshake or app data */
+            DTLSAddress peer_addr;
+            memcpy(&peer_addr.addr, &state->peer_addr,
+                   sizeof(peer_addr.addr));
+            peer_addr.addrlen = state->peer_addrlen;
+
+            Janet result = process_datagram(server, state->recv_buf,
+                                            (int)bytes_transferred,
+                                            &peer_addr, state->buffer);
+
+            if (janet_checktype(result, JANET_ABSTRACT)) {
+                /* Got application data - return to caller */
+                janet_schedule(fiber, result);
+                janet_async_end(fiber);
+                return;
+            }
+
+            /* Handshake packet processed - start next recv */
+            if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
+                janet_cancel(fiber,
+                             janet_cstringv("WSARecvFrom restart failed"));
+                janet_async_end(fiber);
+                return;
+            }
+            break;
+        }
+#else
+        /* Unix: Use epoll/kqueue readiness notification */
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
             DTLSServer *server = state->server;
@@ -535,19 +669,22 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                 DTLSAddress peer_addr;
                 peer_addr.addrlen = sizeof(peer_addr.addr);
 
-                ssize_t n = recvfrom(server->transport->handle, recv_buf,
-                                     sizeof(recv_buf), MSG_DONTWAIT,
+                ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
+                                     recv_buf, sizeof(recv_buf), MSG_DONTWAIT,
                                      (struct sockaddr *)&peer_addr.addr,
                                      &peer_addr.addrlen);
 
                 if (n < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    int sock_err = jsec_socket_errno;
+                    if (sock_err == JSEC_EAGAIN ||
+                        sock_err == JSEC_EWOULDBLOCK) {
                         /* No more data available - just return and wait for
                          * the next READ event. The fiber is already
                          * registered for JANET_ASYNC_LISTEN_READ. */
                         break; /* Exit loop, stay registered */
                     }
-                    janet_cancel(fiber, janet_cstringv(strerror(errno)));
+                    janet_cancel(fiber, janet_cstringv(
+                                            jsec_socket_strerror(sock_err)));
                     janet_async_end(fiber);
                     return;
                 }
@@ -569,6 +706,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             }
             break;
         }
+#endif
 
         default:
             break;
@@ -734,8 +872,8 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     struct sockaddr_storage addr;
     socklen_t addrlen = sizeof(addr);
 
-    if (getsockname(server->transport->handle, (struct sockaddr *)&addr,
-                    &addrlen) < 0) {
+    if (getsockname((jsec_socket_t)server->transport->handle,
+                    (struct sockaddr *)&addr, &addrlen) < 0) {
         dtls_panic_socket("getsockname failed");
     }
 

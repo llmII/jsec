@@ -6,9 +6,11 @@
 
 #include "../internal.h"
 #include <string.h>
-#include <errno.h>
+
 #include <fcntl.h>
+#ifndef JANET_WINDOWS
 #include <unistd.h>
+#endif
 #include <time.h>
 #include <openssl/x509v3.h>
 
@@ -91,14 +93,25 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Create UDP socket and connect */
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
+    jsec_socket_t fd =
+        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+#else
+    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+#endif
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("failed to create socket");
     }
 
     /* Set non-blocking */
+#ifdef JANET_WINDOWS
+    unsigned long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
     /* Resolve and connect */
     struct sockaddr_in addr;
@@ -107,19 +120,20 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     addr.sin_port = htons((uint16_t)port);
 
     if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        close(fd);
+        jsec_close_socket(fd);
         dtls_panic_param("invalid address: %s", host);
     }
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 &&
-        errno != EINPROGRESS) {
-        close(fd);
+        jsec_socket_errno != JSEC_EINPROGRESS &&
+        jsec_socket_errno != JSEC_EWOULDBLOCK) {
+        jsec_close_socket(fd);
         dtls_panic_socket("connect failed");
     }
 
     /* Wrap as Janet stream */
-    JanetStream *transport =
-        janet_stream(fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+    JanetStream *transport = janet_stream(
+        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
 
     /* Create DTLS client */
     DTLSClient *client =
@@ -245,7 +259,32 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Create dgram BIO for connected socket */
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: Use memory BIOs for decoupled I/O
+     * - rbio: We write received UDP data here, SSL reads from it
+     * - wbio: SSL writes encrypted data here, we sendto() from it
+     */
+    client->rbio = BIO_new(BIO_s_mem());
+    client->wbio = BIO_new(BIO_s_mem());
+    if (!client->rbio || !client->wbio) {
+        if (client->rbio) BIO_free(client->rbio);
+        if (client->wbio) BIO_free(client->wbio);
+        dtls_panic_ssl("failed to create memory BIOs");
+    }
+
+    /* Set non-blocking mode on memory BIOs */
+    BIO_set_nbio(client->rbio, 1);
+    BIO_set_nbio(client->wbio, 1);
+
+    /* Attach BIOs to SSL - SSL takes ownership */
+    SSL_set_bio(client->ssl, client->rbio, client->wbio);
+#else
+    /* Unix: Use dgram BIO for direct socket I/O
+     * This is the original trunk approach that works on all Unix platforms.
+     * OpenSSL handles socket I/O directly through the dgram BIO. */
+    client->rbio = NULL;
+    client->wbio = NULL;
+
     BIO *bio = BIO_new_dgram(fd, BIO_NOCLOSE);
     if (!bio) {
         dtls_panic_ssl("failed to create BIO");
@@ -259,6 +298,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach to SSL */
     SSL_set_bio(client->ssl, bio, bio);
+#endif
 
     /* Set connect state and start handshake */
     SSL_set_connect_state(client->ssl);

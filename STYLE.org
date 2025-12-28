@@ -1,4 +1,5 @@
 #+TITLE: JSEC Coding Style
+#+OPTIONS: toc:nil ^:nil
 #+DATE: 2025-11-29
 
 * Overview

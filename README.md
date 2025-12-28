@@ -1,62 +1,9 @@
 
-# Table of Contents
-
-1.  [Overview](#org8a054aa)
-    1.  [API Compatibility Guarantee](#org2347d49)
-2.  [⚠️ Security and Auditing Disclaimer](#org4e46ab8)
-3.  [✅ Robust Testing & Stability Assurance](#org199c49e)
-    1.  [Example Performance Output](#orgaad226d)
-    2.  [Testing Status & Maturity](#org89b9370)
-4.  [⭐ Features and Compatibility](#org2c96b2b)
-    1.  [Core Features](#orgaa7f5b1)
-    2.  [Supported Backends](#org429655a)
-    3.  [Operating System Support](#orgf3095e8)
-    4.  [Current Limitations](#org242455c)
-5.  [Installation](#orge42c836)
-6.  [Documentation & Examples](#orge2daaa3)
-7.  [Quick Start](#orgf05ce19)
-    1.  [Secure Client (TCP/TLS)](#orgebc98b7)
-    2.  [Secure Server (TCP/TLS)](#org3a288bd)
-    3.  [Self-Signed Certificate Generation](#orgaa277e9)
-    4.  [STARTTLS Upgrade](#org5a8ccf1)
-    5.  [DTLS (Datagram TLS)](#org6c2f250)
-    6.  [BIO (Basic I/O Abstraction)](#orgba613a5)
-    7.  [Crypto Primitives](#org002b3c0)
-8.  [Development & Testing](#orge0a1ccc)
-    1.  [Building](#orge9380a8)
-    2.  [Running Tests](#org2da11d2)
-    3.  [Memory Leak Checking](#org5a045cd)
-    4.  [Debug Build](#org0f8c1e8)
-    5.  [Code Formatting](#orgd148849)
-    6.  [Documentation Generation](#org2537421)
-    7.  [Release Process](#org58de3f4)
-    8.  [Test Coverage Details](#org88e5472)
-9.  [Security Configuration](#org2c8b829)
-10. [Contributing](#org5241978)
-    1.  [Areas Seeking Help](#org4891dee)
-        1.  [Platform Support](#org6fc5358)
-        2.  [Testing & Quality](#org00c0446)
-        3.  [Performance](#orga5fc0ca)
-        4.  [DTLS](#orgf25757c)
-        5.  [Documentation & Examples](#orgbfe9a73)
-        6.  [Infrastructure](#orgad8abd5)
-    2.  [How to Contribute](#org250b6ba)
-11. [License](#org1bd3ac6)
-12. [Credits and Acknowledgments](#org7aef916)
-    1.  [Janet Language](#org34875bd)
-    2.  [cqueues](#org115d029)
-    3.  [janet-jdn](#orge181d26)
-
-
-
-<a id="org8a054aa"></a>
 
 # Overview
 
 **jsec** (JSEC) is a TLS/SSL library for Janet that aims to be production-quality, built on OpenSSL. It features proper async integration with Janet's event loop (\`ev/\`), a security-first design, and comprehensive support for both client and server modes.
 
-
-<a id="org2347d49"></a>
 
 ## API Compatibility Guarantee
 
@@ -69,8 +16,6 @@ The primary design goal of \`jsec\` is strict compatibility with Janet's standar
 ****Any deviation in behavior from the standard Janet Stream API (unexpected blocking, method signature mismatches, return value differences) when used in a standard context is considered a bug.**** The author has validated this to the best of their ability, but if you encounter any such inconsistency, please report it immediately.
 
 
-<a id="org4e46ab8"></a>
-
 # ⚠️ Security and Auditing Disclaimer
 
 This library implements critical cryptographic protocols. Users must understand the risks associated with this type of software:
@@ -79,8 +24,6 @@ This library implements critical cryptographic protocols. Users must understand 
 -   ****Cryptographic Primitives:**** The security of the library relies heavily on the underlying C libraries (OpenSSL). While these libraries are industry standards, the binding layer and integration logic have not yet undergone external security review.
 -   ****Vulnerability Reporting:**** We highly encourage community review. If you discover a vulnerability, please report it immediately via a fossil ticket or GitHub issue as a public issue. We will address valid reports as promptly as possible. Once the library has been audited in the future this section will be updated with information on how to submit privately so that a fix can be made before the issue is made publicly known, but during this phase of development there is no reason such should not be public by default, and we will strive to keep things as public by default even in the future unless there is a true worry that disclosure might lead to abuse.
 
-
-<a id="org199c49e"></a>
 
 # ✅ Robust Testing & Stability Assurance
 
@@ -96,22 +39,20 @@ While a security audit is pending, the library maintains high standards for func
 -   ****Continuous Integration:**** Tests are run automatically on every commit via GitHub Actions across Linux environments to ensure ongoing stability. (planned)
 
 
-<a id="orgaad226d"></a>
-
 ## Example Performance Output
 
 Note that perf can be somewhat skewed by testing framework intricacies but it
 gives a bit of an idea.
 
-<div class="details" id="org1e67297">
-<div class="summary" id="org983165c">
+<div class="details" id="org987d585">
+<div class="summary" id="orgc5e7371">
 <p>
 Sample perf9 run: 50 clients, 4 servers, 4 client-hosts, threaded mode, 30s duration
 </p>
 
 </div>
 
-<pre class="example" id="org6d62a70">
+<pre class="example" id="org1da8024">
 ================================================================================
   Results by Protocol
 ================================================================================
@@ -187,21 +128,15 @@ janet test/runner.janet \
 </div>
 
 
-<a id="org89b9370"></a>
-
 ## Testing Status & Maturity
 
 Although the test count is high, effectively approaching fuzzing-level coverage, the library is still in active development. While the current test suite has successfully prevented known bugs, coverage is not yet exhaustive. Users should assume that testing requires further refinement, even though the current state is robust. The test infrastructure includes mechanisms to track expected failures and skips, ensuring that the matrix of scenarios is handled correctly.
 
 
-<a id="org2c96b2b"></a>
-
 # ⭐ Features and Compatibility
 
 The library is designed for flexibility and portability across various systems and underlying TLS implementations.
 
-
-<a id="orgaa7f5b1"></a>
 
 ## Core Features
 
@@ -215,8 +150,6 @@ The library is designed for flexibility and portability across various systems a
 -   ****Session Resumption:**** Built-in OpenSSL session cache support for performance.
 -   ****Runtime Cert Generation:**** Generate self-signed certificates on the fly.
 
-
-<a id="org429655a"></a>
 
 ## Supported Backends
 
@@ -253,6 +186,18 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 </tr>
 
 <tr>
+<td class="org-left">SChannel</td>
+<td class="org-left">Future</td>
+<td class="org-left">Native Windows TLS (no OpenSSL dependency).</td>
+</tr>
+
+<tr>
+<td class="org-left">Network.framework</td>
+<td class="org-left">Future</td>
+<td class="org-left">Native MacOS way of doing TLS.</td>
+</tr>
+
+<tr>
 <td class="org-left">mbedTLS</td>
 <td class="org-left">Future</td>
 <td class="org-left">Lighter-weight alternative for embedded use.</td>
@@ -260,8 +205,6 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 </tbody>
 </table>
 
-
-<a id="orgf3095e8"></a>
 
 ## Operating System Support
 
@@ -289,7 +232,7 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 <tr>
 <td class="org-left">Linux</td>
 <td class="org-left">Working</td>
-<td class="org-left">OpenSSL 3.0+</td>
+<td class="org-left">OpenSSL 3.x</td>
 <td class="org-left">Primary development platform</td>
 </tr>
 
@@ -317,28 +260,26 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 <tr>
 <td class="org-left">DragonflyBSD</td>
 <td class="org-left">Working</td>
-<td class="org-left">LibreSSL 3.9+</td>
+<td class="org-left">LibreSSL 3.6+</td>
 <td class="org-left">Tested on DragonflyBSD 6.4</td>
 </tr>
 
 <tr>
 <td class="org-left">OpenBSD</td>
 <td class="org-left">Working</td>
-<td class="org-left">LibreSSL 3.9+</td>
+<td class="org-left">LibreSSL 3.6+</td>
 <td class="org-left">All tests pass on OpenBSD 7.6</td>
 </tr>
 
 <tr>
 <td class="org-left">Windows</td>
-<td class="org-left">Planned</td>
-<td class="org-left">OpenSSL</td>
-<td class="org-left">Community help needed</td>
+<td class="org-left">Working</td>
+<td class="org-left">OpenSSL 3.x</td>
+<td class="org-left">MSVC + vcpkg, see <a href="docs/WINDOWS.html">Windows Guide</a></td>
 </tr>
 </tbody>
 </table>
 
-
-<a id="org242455c"></a>
 
 ## Current Limitations
 
@@ -346,14 +287,10 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 -   [ ] Only X.509 certificates are supported; no FIDO/U2F integration.
 
 
-<a id="orge42c836"></a>
-
 # Installation
 
     jpm install https://github.com/llmII/jsec.git
 
-
-<a id="orge2daaa3"></a>
 
 # Documentation & Examples
 
@@ -362,12 +299,8 @@ The library supports multiple industry-standard TLS/SSL C libraries:
 -   ****[Examples](examples/)****: Complete, runnable code examples.
 
 
-<a id="orgf05ce19"></a>
-
 # Quick Start
 
-
-<a id="orgebc98b7"></a>
 
 ## Secure Client (TCP/TLS)
 
@@ -387,8 +320,6 @@ The library supports multiple industry-standard TLS/SSL C libraries:
     
       (print (string buf)))
 
-
-<a id="org3a288bd"></a>
 
 ## Secure Server (TCP/TLS)
 
@@ -410,8 +341,6 @@ The library supports multiple industry-standard TLS/SSL C libraries:
           (:write client "Hello, Secure World!\n")))))
 
 
-<a id="orgaa277e9"></a>
-
 ## Self-Signed Certificate Generation
 
 Useful for testing or internal tools.
@@ -426,8 +355,6 @@ Useful for testing or internal tools.
     (spit "cert.pem" (certs :cert))
     (spit "key.pem" (certs :key))
 
-
-<a id="org5a8ccf1"></a>
 
 ## STARTTLS Upgrade
 
@@ -452,8 +379,6 @@ Upgrade an existing plaintext connection to TLS.
     (:write tls-stream "AUTH PLAIN ...")
 
 
-<a id="org6c2f250"></a>
-
 ## DTLS (Datagram TLS)
 
 **Note: DTLS support is currently experimental.**
@@ -476,8 +401,6 @@ Upgrade an existing plaintext connection to TLS.
     }))
 
 
-<a id="orgba613a5"></a>
-
 ## BIO (Basic I/O Abstraction)
 
 Use OpenSSL BIOs for custom I/O handling, such as memory buffers.
@@ -488,8 +411,6 @@ Use OpenSSL BIOs for custom I/O handling, such as memory buffers.
     (bio/write mem-bio "Secret Data")
     (def data (bio/read mem-bio 100))
 
-
-<a id="org002b3c0"></a>
 
 ## Crypto Primitives
 
@@ -506,12 +427,8 @@ Access to OpenSSL crypto functions for hashing, signing, and verification.
     (def valid (crypto/verify key "data" sig))
 
 
-<a id="orge0a1ccc"></a>
-
 # Development & Testing
 
-
-<a id="orge9380a8"></a>
 
 ## Building
 
@@ -524,8 +441,6 @@ Clean build:
     jpm clean
     jpm build
 
-
-<a id="org2da11d2"></a>
 
 ## Running Tests
 
@@ -549,16 +464,14 @@ Run tests using the assay test runner directly (jpm test is deprecated):
 See [docs/TESTING.org](docs/TESTING.md) for complete testing documentation.
 
 
-<a id="org5a045cd"></a>
-
 ## Memory Leak Checking
+
+Note: This is not currently operable (valgrind is too slow)
 
 Run tests under valgrind:
 
     janet test/runner.janet --wrapper 'valgrind --leak-check=full'
 
-
-<a id="org0f8c1e8"></a>
 
 ## Debug Build
 
@@ -567,8 +480,6 @@ Enable debug logging in C code:
     # Edit src/jshared.h and uncomment: #define JSEC_DEBUG 1
     jpm build
 
-
-<a id="orgd148849"></a>
 
 ## Code Formatting
 
@@ -581,16 +492,12 @@ Format C code:
     jpm run format-c
 
 
-<a id="org2537421"></a>
-
 ## Documentation Generation
 
 Generate markdown from org files:
 
     jpm run docs
 
-
-<a id="org58de3f4"></a>
 
 ## Release Process
 
@@ -602,8 +509,6 @@ This runs: clean, format checks, build, tests, leak checks, and documentation
 generation.
 
 
-<a id="org88e5472"></a>
-
 ## Test Coverage Details
 
 The test suite is extensive, with over 2,000 generated test cases covering:
@@ -614,8 +519,6 @@ The test suite is extensive, with over 2,000 generated test cases covering:
 -   BIO Suite: Memory BIO operations
 -   Crypto Suite: Hashing, signing, verification
 
-
-<a id="org2c8b829"></a>
 
 # Security Configuration
 
@@ -630,27 +533,19 @@ You can pass a \`:security\` table to \`connect\` or \`accept\` to enforce polic
     }
 
 
-<a id="org5241978"></a>
-
 # Contributing
 
 We welcome contributions! JSEC is an ambitious project and there are many areas where community help would be valuable.
 
 
-<a id="org4891dee"></a>
-
 ## Areas Seeking Help
 
 
-<a id="org6fc5358"></a>
-
 ### Platform Support
 
--   **Windows:** Testing, debugging, and CI improvements for Windows builds
 -   **Cross-platform testing:** Help test on additional BSD variants or Linux distributions
+-   **SChannel backend:** Native Windows TLS implementation (future direction)
 
-
-<a id="org00c0446"></a>
 
 ### Testing & Quality
 
@@ -667,8 +562,6 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
     -   **Expand matrix test coverage:** assay's `matrix` feature generates test combinations automatically. Originally designed for fuzz testing parameter spaces, matrices are useful anywhere you need to test across multiple configurations (TLS versions, cipher suites, buffer sizes, etc.). Look for tests with manual loops over configurations that could be converted to declarative matrices.
 
 
-<a id="orga5fc0ca"></a>
-
 ### Performance
 
 -   **C-side Optimizations:** Buffer handling, memory allocation patterns
@@ -677,16 +570,12 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 -   **Profiling:** Identifying bottlenecks under various workloads
 
 
-<a id="orgf25757c"></a>
-
 ### DTLS
 
 -   **Protocol Correctness:** DTLS has known issues and needs attention
 -   **Multi-client Server:** Improving the DTLS server implementation
 -   **Testing:** Expanding DTLS test coverage
 
-
-<a id="orgbfe9a73"></a>
 
 ### Documentation & Examples
 
@@ -695,8 +584,6 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 -   **API Documentation:** Improving clarity and completeness
 
 
-<a id="orgad8abd5"></a>
-
 ### Infrastructure
 
 -   **CI/CD:** GitHub Actions improvements, cross-platform testing
@@ -704,32 +591,24 @@ We welcome contributions! JSEC is an ambitious project and there are many areas 
 -   **Testing Framework:** Improvements to the [assay](https://github.com/llmII/janet-assay) test framework
 
 
-<a id="org250b6ba"></a>
-
 ## How to Contribute
 
-1.  Check existing issues on GitHub or Fossil
+1.  Check existing issues on GitHub and/or Fossil
 2.  For large changes, open an issue first to discuss approach
 3.  Follow the coding style (see `jpm run format-janet` and `jpm run format-c`)
 4.  Ensure tests pass: `janet test/runner.janet -f '{unit,regression,coverage}'`
 5.  Submit a PR on GitHub or patch via Fossil
 
 
-<a id="org1bd3ac6"></a>
-
 # License
 
 ISC License. See LICENSE file.
 
 
-<a id="org7aef916"></a>
-
 # Credits and Acknowledgments
 
 This project was made possible by studying and learning from:
 
-
-<a id="org34875bd"></a>
 
 ## Janet Language
 
@@ -739,8 +618,6 @@ This project was made possible by studying and learning from:
 -   Some test patterns in this library were adapted from Janet's test suite (MIT licensed).
 
 
-<a id="org115d029"></a>
-
 ## cqueues
 
 -   Author: William Ahern
@@ -748,8 +625,6 @@ This project was made possible by studying and learning from:
 -   Repository: <https://github.com/wahern/cqueues>
 -   The event loop integration patterns, particularly for TLS BIO handling, were informed by studying cqueues' excellent implementation.
 
-
-<a id="orge181d26"></a>
 
 ## janet-jdn
 

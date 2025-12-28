@@ -1,39 +1,4 @@
 
-# Table of Contents
-
-1.  [Overview](#org93989ac)
-2.  [Critical Constraints](#org5c5b892)
-    1.  [C Code Requirements](#orgd9275c0)
-    2.  [API Compatibility](#orgc9c8ede)
-    3.  [Platform Strategy](#org7a8a45e)
-        1.  [Windows Support](#orgb9da8fe)
-        2.  [macOS Support](#org10372a7)
-3.  [Source Organization](#org5597080)
-4.  [TLS State Machine](#org22de375)
-    1.  [States](#orgaf44cfb)
-    2.  [State Transitions](#org4277780)
-    3.  [SSL<sub>ERROR</sub> Handling](#org9106aa1)
-5.  [Event Loop Integration](#orge55f139)
-    1.  [The Async Pattern](#orgb0922db)
-    2.  [Key Functions](#org7befe62)
-    3.  [Why WANT<sub>WRITE</sub> During Read?](#orgf7fd005)
-6.  [Memory Management](#org255b4ad)
-    1.  [OpenSSL Objects](#org835ac0c)
-    2.  [Janet Integration](#org47b1275)
-    3.  [Error Path Cleanup](#org9e01940)
-7.  [Adding New Functionality](#orgef0d22c)
-    1.  [Adding a Stream Method](#orgba62ef8)
-    2.  [Adding a Module Function](#org3bf59a6)
-8.  [Building and Debugging](#org7bbf3b1)
-    1.  [Build with Debug Symbols](#org8010ddc)
-    2.  [OpenSSL Error Messages](#org19f528c)
-    3.  [Useful Tools](#orgb47c532)
-9.  [Common Pitfalls](#org269e475)
-10. [References](#orgb131323)
-
-
-
-<a id="org93989ac"></a>
 
 # Overview
 
@@ -41,12 +6,8 @@ This guide covers JSEC internals for contributors. JSEC provides TLS/DTLS
 integration for Janet that works seamlessly with Janet's event loop (`ev`).
 
 
-<a id="org5c5b892"></a>
-
 # Critical Constraints
 
-
-<a id="orgd9275c0"></a>
 
 ## C Code Requirements
 
@@ -54,11 +15,11 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     -   NO pthread includes or direct pthread usage
     -   NO accessing Janet internal structures
     -   Use Janet's locking primitives if locks needed
-    -   Use `janet_malloc` / `janet_free` (NOT malloc/free, NOT janet<sub>smalloc</sub>)
-    -   **Exception:** Structures tied to OpenSSL ex<sub>data</sub> callbacks use standard
+    -   Use `janet_malloc` / `janet_free` (NOT malloc/free, NOT janet\_smalloc)
+    -   **Exception:** Structures tied to OpenSSL ex\_data callbacks use standard
         malloc/free because they are freed in OpenSSL callback context where
         Janet's allocator may not be initialized. This includes: SNIData,
-        OCSPData, ALPNConfig, server<sub>ctx</sub><sub>cache</sub> data.
+        OCSPData, ALPNConfig, server\_ctx\_cache data.
 
 2.  **NO kludging from C to Janet code**
     -   NO `janet_resolve`, `janet_call`, `janet_get_method` from C
@@ -74,8 +35,6 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     -   Proper error handling is mandatory
 
 
-<a id="orgc9c8ede"></a>
-
 ## API Compatibility
 
 1.  TLS streams MUST match Janet's Stream API
@@ -88,31 +47,28 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
 3.  No features can be lost from prior versions
 
 
-<a id="org7a8a45e"></a>
-
 ## Platform Strategy
 
 
-<a id="orgb9da8fe"></a>
-
 ### Windows Support
 
--   **Recommended:** MSYS2 with MinGW-w64 (UCRT64 or MINGW64)
+-   **Status:** Fully supported
+-   **Build:** MSVC with vcpkg OpenSSL, or MSYS2 MinGW-w64
 -   **CI Strategy:** GitHub Actions `windows-latest` runner
--   **Status:** Best-effort
 
-
-<a id="org10372a7"></a>
 
 ### macOS Support
 
--   **Constraint:** Author does not own Apple hardware
--   **Strategy:** Community driven
+-   **Status:** Fully supported
+-   **Requirement:** Homebrew OpenSSL 3.x (`brew install openssl@3`)
 -   **CI Strategy:** GitHub Actions `macos-latest`
--   **Policy:** macOS-specific issues require community PRs
 
 
-<a id="org5597080"></a>
+### BSD Support
+
+-   **Status:** Fully supported (FreeBSD, NetBSD, OpenBSD, DragonflyBSD)
+-   **CI Strategy:** SSH-based testing on dedicated VMs
+
 
 # Source Organization
 
@@ -147,12 +103,8 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     │   ├── jcert.c                  # Certificate generation
 
 
-<a id="org22de375"></a>
-
 # TLS State Machine
 
-
-<a id="orgaf44cfb"></a>
 
 ## States
 
@@ -165,8 +117,6 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
         TLS_STATE_CLOSED          /* Connection closed */
     } tls_state_t;
 
-
-<a id="org4277780"></a>
 
 ## State Transitions
 
@@ -211,9 +161,7 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
                            └───────────────┘      └─────────┘
 
 
-<a id="org9106aa1"></a>
-
-## SSL<sub>ERROR</sub> Handling
+## SSL\_ERROR Handling
 
 When OpenSSL returns an error, check `SSL_get_error()`:
 
@@ -227,52 +175,48 @@ When OpenSSL returns an error, check `SSL_get_error()`:
 </colgroup>
 <thead>
 <tr>
-<th scope="col" class="org-left">SSL<sub>ERROR</sub></th>
+<th scope="col" class="org-left">SSL_ERROR</th>
 <th scope="col" class="org-left">Action</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>NONE</sub></td>
+<td class="org-left">SSL_ERROR_NONE</td>
 <td class="org-left">Operation completed successfully</td>
 </tr>
 
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>WANT</sub><sub>READ</sub></td>
+<td class="org-left">SSL_ERROR_WANT_READ</td>
 <td class="org-left">Register for read event, retry when ready</td>
 </tr>
 
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>WANT</sub><sub>WRITE</sub></td>
+<td class="org-left">SSL_ERROR_WANT_WRITE</td>
 <td class="org-left">Register for write event, retry when ready</td>
 </tr>
 
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>ZERO</sub><sub>RETURN</sub></td>
+<td class="org-left">SSL_ERROR_ZERO_RETURN</td>
 <td class="org-left">Clean shutdown received (EOF)</td>
 </tr>
 
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>SYSCALL</sub></td>
+<td class="org-left">SSL_ERROR_SYSCALL</td>
 <td class="org-left">Check errno; usually connection reset</td>
 </tr>
 
 <tr>
-<td class="org-left">SSL<sub>ERROR</sub><sub>SSL</sub></td>
-<td class="org-left">Protocol error; check ERR<sub>get</sub><sub>error</sub>()</td>
+<td class="org-left">SSL_ERROR_SSL</td>
+<td class="org-left">Protocol error; check ERR_get_error()</td>
 </tr>
 </tbody>
 </table>
 
 
-<a id="orge55f139"></a>
-
 # Event Loop Integration
 
 JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
 
-
-<a id="orgb0922db"></a>
 
 ## The Async Pattern
 
@@ -315,8 +259,6 @@ JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
     }
 
 
-<a id="org7befe62"></a>
-
 ## Key Functions
 
 -   `janet_async_start()` - Begin async operation, fiber yields
@@ -324,24 +266,18 @@ JSEC uses Janet's `janet_async_start()` / `janet_async_end()` API for async I/O.
 -   `janet_async_mod()` - Change event registration (READ <-> WRITE)
 
 
-<a id="orgf7fd005"></a>
-
-## Why WANT<sub>WRITE</sub> During Read?
+## Why WANT\_WRITE During Read?
 
 TLS can renegotiate at any time. During a read, OpenSSL may need to send
 a handshake message, returning `SSL_ERROR_WANT_WRITE`. We must:
 
 1.  Switch to write event registration
-2.  When writable, retry the **same** SSL<sub>read</sub>() call
+2.  When writable, retry the **same** SSL\_read() call
 3.  OpenSSL handles the renegotiation transparently
 
 
-<a id="org255b4ad"></a>
-
 # Memory Management
 
-
-<a id="org835ac0c"></a>
 
 ## OpenSSL Objects
 
@@ -350,16 +286,12 @@ a handshake message, returning `SSL_ERROR_WANT_WRITE`. We must:
 -   `BIO` - Managed by SSL when attached, freed automatically
 
 
-<a id="org47b1275"></a>
-
 ## Janet Integration
 
 -   Streams are garbage collected via `gc` callback
 -   Use `janet_gcroot()` / `janet_gcunroot()` for persistent references
 -   Always clean up OpenSSL state in `gc` callback
 
-
-<a id="org9e01940"></a>
 
 ## Error Path Cleanup
 
@@ -387,12 +319,8 @@ Use goto cleanup pattern consistently:
     }
 
 
-<a id="orgef0d22c"></a>
-
 # Adding New Functionality
 
-
-<a id="orgba62ef8"></a>
 
 ## Adding a Stream Method
 
@@ -414,8 +342,6 @@ Use goto cleanup pattern consistently:
         };
 
 
-<a id="org3bf59a6"></a>
-
 ## Adding a Module Function
 
 1.  Add function in appropriate file:
@@ -432,20 +358,14 @@ Use goto cleanup pattern consistently:
         };
 
 
-<a id="org7bbf3b1"></a>
-
 # Building and Debugging
 
-
-<a id="org8010ddc"></a>
 
 ## Build with Debug Symbols
 
     jpm clean
     jpm build -- -O0 -g
 
-
-<a id="org19f528c"></a>
 
 ## OpenSSL Error Messages
 
@@ -461,8 +381,6 @@ Use goto cleanup pattern consistently:
     fprintf(stderr, "OpenSSL error: %s\n", buf);
 
 
-<a id="orgb47c532"></a>
-
 ## Useful Tools
 
 -   `strace -f -e trace=network` - Trace network syscalls
@@ -471,18 +389,14 @@ Use goto cleanup pattern consistently:
 -   `wireshark` - Packet inspection (can decrypt with SSLKEYLOGFILE)
 
 
-<a id="org269e475"></a>
-
 # Common Pitfalls
 
 1.  **Blocking in Event Loop** - Never use blocking OpenSSL calls
-2.  **Ignoring WANT<sub>READ</sub>/WANT<sub>WRITE</sub>** - Must handle renegotiation
-3.  **Memory Leaks** - Always free SSL/SSL<sub>CTX</sub> in gc callback
-4.  **Missing Error Checks** - Always check SSL<sub>get</sub><sub>error</sub>() return
+2.  **Ignoring WANT\_READ/WANT\_WRITE** - Must handle renegotiation
+3.  **Memory Leaks** - Always free SSL/SSL\_CTX in gc callback
+4.  **Missing Error Checks** - Always check SSL\_get\_error() return
 5.  **Thread Safety** - OpenSSL 1.1.1+ is thread-safe, but not Janet streams
 
-
-<a id="orgb131323"></a>
 
 # References
 

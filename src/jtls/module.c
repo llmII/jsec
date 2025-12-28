@@ -24,6 +24,14 @@
  * We only initialize our own state (mutex, ex_data indices, keylog file).
  */
 void jtls_module_init(JanetTable *env) {
+    /* Initialize Winsock on Windows - must happen before any socket
+     * operations */
+#ifdef JANET_WINDOWS
+    if (jsec_winsock_init() != 0) {
+        tls_panic_config("failed to initialize Winsock");
+    }
+#endif
+
     /* Initialize BIO method first - must happen before any threads */
     jtls_init_bio_method();
 
@@ -37,7 +45,13 @@ void jtls_module_init(JanetTable *env) {
     /* Check for SSLKEYLOGFILE environment variable for debugging */
     const char *keylog_path = getenv("SSLKEYLOGFILE");
     if (keylog_path && !keylog_file) {
+#ifdef JANET_WINDOWS
+        if (fopen_s(&keylog_file, keylog_path, "a") != 0) {
+            keylog_file = NULL;
+        }
+#else
         keylog_file = fopen(keylog_path, "a");
+#endif
         if (!keylog_file) {
             janet_eprintf("Warning: Could not open SSLKEYLOGFILE: %s\n",
                           keylog_path);

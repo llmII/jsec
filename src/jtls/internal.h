@@ -57,17 +57,17 @@
 #include <time.h> /* For clock_gettime, CLOCK_MONOTONIC */
 
 #ifndef JANET_WINDOWS
-  #include <fcntl.h>
-  #include <netdb.h>
-  #include <netinet/in.h>
-  #include <netinet/tcp.h> /* For TCP_NODELAY */
-  #include <sys/socket.h>
-  #include <unistd.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h> /* For TCP_NODELAY */
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 /* MSG_NOSIGNAL prevents SIGPIPE on write to closed socket */
 #ifndef MSG_NOSIGNAL
-  #define MSG_NOSIGNAL 0
+#define MSG_NOSIGNAL 0
 #endif
 
 /*
@@ -172,6 +172,19 @@ typedef struct ServerCTXCache ServerCTXCache;
  * 3. Reset when operation completes
  */
 struct TLSState {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP requires overlapped I/O to trigger completions.
+     * CRITICAL: WSAOVERLAPPED MUST be first field! Janet IOCP completion
+     * matching compares fiber->ev_state (points to this struct) with the
+     * overlapped pointer from GetQueuedCompletionStatus - they must match.
+     * We use zero-byte WSARecv/WSASend as readiness probes - they complete
+     * when the socket is readable/writable. After completion, our BIO's
+     * non-blocking recv/send will succeed (data is in kernel buffer). */
+    WSAOVERLAPPED
+    overlapped;      /* Overlapped structure for IOCP - MUST BE FIRST */
+    WSABUF wsa_buf;  /* Zero-byte buffer descriptor */
+    DWORD wsa_flags; /* Flags for WSARecv */
+#endif
     TLSStream *tls;            /* The TLS stream */
     TLSOpType op;              /* Operation type */
     TLSIOState io_state;       /* Current I/O state */

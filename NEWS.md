@@ -1,23 +1,51 @@
 
-# Table of Contents
-
--   [News](#orgfc6dfbe)
-    -   [2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements](#orgf5b0049)
-    -   [2025-12-24 - NetBSD & DragonflyBSD Support](#orge4bd06f)
-    -   [2025-12-23 - macOS Support via Homebrew OpenSSL](#orgfdd09ae)
-    -   [2025-12-15 - FreeBSD Support & Performance Improvements](#org4887c3a)
-    -   [2025-12-13 - OpenSSL 3.0 Compatibility Fixes](#org2ff7ede)
-    -   [2025-12-13 - Dependency Update](#org431fa5b)
-    -   [2025-12-12 - Initial Release](#orge2f65b9)
-
-
-
-<a id="orgfc6dfbe"></a>
 
 # News
 
 
-<a id="orgf5b0049"></a>
+## 2025-12-27 - DTLS Cross-Platform Fixes
+
+DTLS now works correctly on all platforms:
+
+
+### Platform-Specific BIO Strategy
+
+-   Unix (Linux, FreeBSD, NetBSD, macOS, DragonflyBSD, OpenBSD): Uses dgram BIO which handles socket I/O directly
+-   Windows: Uses memory BIOs with manual recv/send coordination for IOCP compatibility
+
+
+### Bug Fixes
+
+-   Fixed DTLS hangs on BSD platforms (FreeBSD, NetBSD, macOS)
+-   Fixed `dtls/upgrade` handshake failure on NetBSD (missing peer address on dgram BIO)
+-   Code now correctly matches trunk behavior: SSL operations handle socket I/O through dgram BIO
+
+
+## 2025-12-26 - Windows IOCP Support Complete
+
+Windows is now fully supported with all tests passing:
+
+
+### Windows Platform Status
+
+-   All tests pass (Unix socket tests automatically skipped)
+-   Build via MSVC (Visual Studio 2022) with vcpkg OpenSSL
+-   IOCP event loop integration complete
+
+
+### Key Fixes
+
+-   Fixed connection error detection on Windows
+    -   Windows `WSAConnect` returns success immediately, errors on first I/O
+    -   Updated tests to write after connect for cross-platform consistency
+-   DTLS client refactored to use memory BIOs on Windows
+
+
+### clang-format Configuration
+
+-   `IndentPPDirectives: None` - preprocessor directives at column 0
+-   Code inside `#ifdef` blocks maintains normal indentation
+
 
 ## 2025-12-24 - OpenBSD LibreSSL Support & Code Quality Improvements
 
@@ -26,16 +54,16 @@ OpenBSD is now fully supported with all tests passing:
 
 ### OpenBSD (LibreSSL 3.9+)
 
--   Fixed TLS hang in `accept-loop` test caused by premature WANT<sub>READ</sub> returns
+-   Fixed TLS hang in `accept-loop` test caused by premature WANT\_READ returns
 -   Added do-while loop in `jtls_attempt_io` to retry operations when BIO buffer has unread data
 -   Prevents yielding to event loop when local buffered data can satisfy reads
--   All 1934 tests now pass on OpenBSD 7.6
+-   All tests now pass on OpenBSD 7.6
 
 
 ### Code Quality Improvements
 
 -   Migrated from astyle to clang-format for C code formatting
--   Consistent K&R style with 4-space indentation, 78/80 column limits
+-   Consistent style with 4-space indentation, 78/80 column limits
 -   Improved buffer allocation code clarity with better variable naming
 -   Added `check-format-c` task to verify formatting compliance
 -   Updated CONTRIBUTING documentation
@@ -49,8 +77,6 @@ OpenBSD is now fully supported with all tests passing:
 -   No functional changes - existing code was correct
 
 
-<a id="orge4bd06f"></a>
-
 ## 2025-12-24 - NetBSD & DragonflyBSD Support
 
 NetBSD and DragonflyBSD are now fully supported with all tests passing:
@@ -59,29 +85,23 @@ NetBSD and DragonflyBSD are now fully supported with all tests passing:
 ### NetBSD (OpenSSL 3.x)
 
 -   Tested on NetBSD 10.1
--   All 1934 tests pass
+-   All tests pass
 -   No platform-specific changes needed
 
 
 ### DragonflyBSD (LibreSSL 3.9+)
 
 -   Tested on DragonflyBSD 6.4
--   All 1935 tests pass
+-   All tests pass
 -   Fixed `BIO_flush~/~BIO_reset` unused value warnings
 
 
 ### LibreSSL Compatibility
 
--   LibreSSL support now working across all BSD platforms excluding OpenBSD (WIP)
+-   LibreSSL support now working across all BSD platforms upon which it is native
 -   Conditional compilation for OpenSSL 3.0 vs LibreSSL APIs
+-   All BSDs tested and passing: FreeBSD, NetBSD, DragonflyBSD
 
-
-### OpenBSD Status
-
--   Build and most tests work with LibreSSL 3.9+
-
-
-<a id="orgfdd09ae"></a>
 
 ## 2025-12-23 - macOS Support via Homebrew OpenSSL
 
@@ -94,8 +114,6 @@ macOS is now fully supported with all tests passing:
 -   Janet and jpm
 
 
-<a id="org4887c3a"></a>
-
 ## 2025-12-15 - FreeBSD Support & Performance Improvements
 
 All tests continue to pass under Linux and FreeBSD is now fully supported with
@@ -104,7 +122,7 @@ all tests passing:
 
 ### FreeBSD Fixes
 
--   Fixed build failures: header order, implicit fallthrough warnings, MSG<sub>DONTWAIT</sub>
+-   Fixed build failures: header order, implicit fallthrough warnings, MSG\_DONTWAIT
 -   Fixed time function calls: use `clock_gettime` with `CLOCK_MONOTONIC` instead
     of `gettimeofday` which isn't available with `__POSIX_C_SOURCE`
 -   Fixed DTLS and Unix socket handling for FreeBSD's kqueue-based event loop
@@ -118,8 +136,6 @@ all tests passing:
 -   Added `-O2` optimization flag to production builds
 -   Some keywords cached to prevent runtime lookups in hot paths
 
-
-<a id="org2ff7ede"></a>
 
 ## 2025-12-13 - OpenSSL 3.0 Compatibility Fixes
 
@@ -138,15 +154,11 @@ Several fixes were made to ensure jsec works correctly with OpenSSL 3.0:
 These changes ensure jsec works with both OpenSSL 3.0.x and 3.5.x.
 
 
-<a id="org431fa5b"></a>
-
 ## 2025-12-13 - Dependency Update
 
 -   Changed spork dependency to use upstream instead of fork, as upstream
     merged the necessary changes for spork-https compatibility
 
-
-<a id="orge2f65b9"></a>
 
 ## 2025-12-12 - Initial Release
 

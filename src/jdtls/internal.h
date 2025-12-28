@@ -64,14 +64,19 @@
 
 #include "../jutils.h"
 /* Error macros now in jutils.h */
+#ifndef JANET_WINDOWS
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#else
+/* Windows uses winsock2.h (included in compat.h) */
+#include <ws2tcpip.h>
+#endif
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
-#include <sys/socket.h>
-#include <sys/types.h>
 #include <time.h>
 
 /*
@@ -188,11 +193,13 @@ typedef struct {
     JanetStream *transport; /* Underlying UDP socket (connected) */
     SSL *ssl;               /* OpenSSL SSL object */
     SSL_CTX *ctx;           /* Client SSL context */
-    DTLSState state;        /* Connection state */
-    DTLSAddress peer_addr;  /* Server address (for reference) */
-    int closed;             /* Client has been closed */
-    int owns_ctx;           /* Whether we own ctx (should free on GC) */
-    int is_server;          /* Whether acting as server (for upgrade) */
+    BIO *rbio;             /* Memory BIO: we write received data, SSL reads */
+    BIO *wbio;             /* Memory BIO: SSL writes, we sendto() */
+    DTLSState state;       /* Connection state */
+    DTLSAddress peer_addr; /* Server address (for reference) */
+    int closed;            /* Client has been closed */
+    int owns_ctx;          /* Whether we own ctx (should free on GC) */
+    int is_server;         /* Whether acting as server (for upgrade) */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
     int track_handshake_time;     /* Whether to record handshake timing */

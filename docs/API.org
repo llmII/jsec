@@ -1,4 +1,5 @@
 #+TITLE: API Reference
+#+OPTIONS: toc:nil ^:nil
 #+AUTHOR: llmII
 #+DATE: 2025-12-04
 

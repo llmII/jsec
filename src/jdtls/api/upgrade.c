@@ -6,9 +6,10 @@
 
 #include "../internal.h"
 #include <string.h>
-#include <errno.h>
 #include <fcntl.h>
+#ifndef JANET_WINDOWS
 #include <unistd.h>
+#endif
 #include <time.h>
 #include <openssl/x509v3.h>
 
@@ -79,8 +80,8 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     }
 
     /* Get the file descriptor from the stream */
-    int fd = (int)transport->handle;
-    if (fd < 0) {
+    jsec_socket_t fd = (jsec_socket_t)transport->handle;
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_io("invalid transport stream");
     }
 
@@ -207,18 +208,46 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Create dgram BIO */
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: Use memory BIOs for decoupled I/O
+     * - rbio: We write received UDP data here, SSL reads from it
+     * - wbio: SSL writes encrypted data here, we sendto() from it
+     */
+    client->rbio = BIO_new(BIO_s_mem());
+    client->wbio = BIO_new(BIO_s_mem());
+    if (!client->rbio || !client->wbio) {
+        if (client->rbio) BIO_free(client->rbio);
+        if (client->wbio) BIO_free(client->wbio);
+        dtls_panic_ssl("failed to create memory BIOs");
+    }
+
+    /* Set non-blocking mode on memory BIOs */
+    BIO_set_nbio(client->rbio, 1);
+    BIO_set_nbio(client->wbio, 1);
+
+    /* Attach BIOs to SSL - SSL takes ownership */
+    SSL_set_bio(client->ssl, client->rbio, client->wbio);
+#else
+    /* Unix: Use dgram BIO for direct socket I/O
+     * This is the original trunk approach that works on all Unix platforms.
+     * OpenSSL handles socket I/O directly through the dgram BIO. */
+    client->rbio = NULL;
+    client->wbio = NULL;
+
     BIO *bio = BIO_new_dgram(fd, BIO_NOCLOSE);
     if (!bio) {
         dtls_panic_ssl("failed to create BIO");
     }
 
-    /* Set peer address on BIO */
+    /* Set peer address on BIO (required for dgram BIO to know destination) */
     BIO_ctrl(bio, BIO_CTRL_DGRAM_SET_CONNECTED, 0, &peer_addr);
+
+    /* Set non-blocking */
     BIO_set_nbio(bio, 1);
 
     /* Attach to SSL */
     SSL_set_bio(client->ssl, bio, bio);
+#endif
 
     /* Set mode */
     if (is_server) {
