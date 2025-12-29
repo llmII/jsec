@@ -561,7 +561,219 @@ Generate a self-signed certificate using an existing private key.
 
 *Returns*: Certificate PEM string.
 
+** (cert/parse cert-pem)
+
+Parse an X.509 certificate and return its details.
+
+- *cert-pem*: Certificate in PEM format.
+
+*Returns*: Table with:
+- ~:version~ - Certificate version (1, 2, or 3)
+- ~:serial~ - Serial number as hex string
+- ~:subject~ - Subject fields ~{:cn :o :ou :c :st :l :email :dn}~
+- ~:issuer~ - Issuer fields (same structure as subject)
+- ~:not-before~ - Validity start (Unix timestamp)
+- ~:not-after~ - Validity end (Unix timestamp)
+- ~:public-key~ - Key info ~{:type :bits :curve}~
+- ~:san~ - Subject Alternative Names array
+- ~:key-usage~ - Key usage array
+- ~:ext-key-usage~ - Extended key usage array
+- ~:is-ca~ - Boolean indicating if cert is a CA
+- ~:fingerprint-sha256~ - SHA-256 fingerprint
+- ~:fingerprint-sha1~ - SHA-1 fingerprint
+- ~:signature-algorithm~ - Signature algorithm name
+- ~:pem~ - Original PEM data
+
+** (cert/fingerprint cert-pem &opt algorithm)
+
+Calculate certificate fingerprint.
+
+- *cert-pem*: Certificate in PEM format.
+- *algorithm*: Hash algorithm (default ~:sha256~). Supported: ~:sha256~, ~:sha384~, ~:sha512~, ~:sha1~.
+
+*Returns*: Fingerprint as hex string with colons.
+
+** (cert/verify-signature cert-pem issuer-cert-pem)
+
+Verify that a certificate was signed by the issuer.
+
+- *cert-pem*: Certificate to verify.
+- *issuer-cert-pem*: Issuer's certificate.
+
+*Returns*: Boolean (~true~ if signature valid).
+
+** (cert/verify-chain cert-pem &opt opts)
+
+Verify a certificate against a trust chain.
+
+- *cert-pem*: Certificate to verify.
+- *opts*: Optional table.
+  - ~:chain~ - Array of intermediate certificate PEMs.
+  - ~:trusted~ - Array of trusted root certificate PEMs.
+  - ~:trusted-dir~ - Directory of trusted certs (OpenSSL hash format).
+  - ~:purpose~ - Certificate purpose (~:server-auth~, ~:client-auth~, ~:code-signing~, ~:email-protection~, ~:timestamp~, ~:any~).
+  - ~:hostname~ - Verify hostname in SAN/CN.
+  - ~:time~ - Verify at specific Unix timestamp.
+  - ~:check-crl~ - Enable CRL checking.
+  - ~:crl~ - CRL PEM to check against.
+
+*Returns*: Table:
+- ~{:valid true :chain [<pem> ...]}~ on success
+- ~{:valid false :error "message" :depth N}~ on failure
+
+** (cert/build-chain cert-pem intermediates trusted)
+
+Build a certificate chain from cert to trusted root.
+
+- *cert-pem*: Certificate to start chain from.
+- *intermediates*: Array of intermediate PEMs or single PEM with multiple certs.
+- *trusted*: Array of trusted root PEMs or single PEM.
+
+*Returns*: Array of PEM strings from cert to root, or ~nil~ if chain can't be built.
+
 *Example*: See [[file:../examples/cert_gen.janet][cert_gen.janet]] for certificate generation usage.
+
+* Module: jsec/ca
+
+The CA module provides a complete Certificate Authority implementation for
+managing X.509 certificates.
+
+For detailed examples, tutorials, and advanced usage patterns, see [[file:CA.org][CA.org]].
+
+** (ca/generate &opt opts)
+
+Generate a new self-signed root CA.
+
+- *opts*: Optional table.
+  - ~:common-name~ - CA common name (default "Root CA").
+  - ~:days-valid~ - Validity period in days (default 3650).
+  - ~:key-type~ - Key type: ~:ec-p256~, ~:ec-p384~, ~:rsa-2048~, etc. (default ~:ec-p256~).
+  - ~:serial~ - Starting serial number for issued certs (default 1).
+  - ~:track-issued~ - Track issued certificates in memory (default ~false~).
+  - ~:organization~ - Organization name.
+  - ~:country~ - Two-letter country code.
+
+*Returns*: CA object.
+
+** (ca/generate-intermediate parent-ca &opt opts)
+
+Generate an intermediate CA signed by a parent CA.
+
+- *parent-ca*: Parent CA object.
+- *opts*: Same as ~ca/generate~ plus:
+  - ~:path-length~ - Maximum sub-CAs allowed (default 0).
+
+*Returns*: CA object.
+
+** (ca/create cert-pem key-pem &opt opts)
+
+Create a CA from existing certificate and private key.
+
+- *cert-pem*: CA certificate in PEM format.
+- *key-pem*: CA private key in PEM format.
+- *opts*: Optional table.
+  - ~:serial~ - Current serial number (for restoration).
+  - ~:track-issued~ - Track issued certificates.
+
+*Returns*: CA object.
+
+** (:issue ca &opt opts) / (ca/issue ca &opt opts)
+
+Generate a new certificate (key + cert in one step).
+
+- *ca*: CA object.
+- *opts*: Optional table.
+  - ~:common-name~ - Certificate common name. *Required*.
+  - ~:san~ - Subject Alternative Names array (e.g., ~["DNS:example.com" "IP:1.2.3.4"]~).
+  - ~:days-valid~ - Validity period (default 365).
+  - ~:key-type~ - Key type (default ~:ec-p256~).
+  - ~:extended-key-usage~ - e.g., "serverAuth", "clientAuth".
+  - ~:key-usage~ - Override key usage extension.
+  - ~:organization~ - Organization name.
+  - ~:country~ - Country code.
+
+*Returns*: ~{:cert <pem> :key <pem>}~
+
+** (:sign-csr ca csr-pem &opt opts) / (ca/sign ca csr-pem &opt opts)
+
+Sign a Certificate Signing Request.
+
+- *ca*: CA object.
+- *csr-pem*: CSR in PEM format.
+- *opts*: Optional table.
+  - ~:days-valid~ - Validity period (default 365).
+  - ~:serial~ - Override serial number.
+  - ~:copy-extensions~ - Copy extensions from CSR (default ~false~).
+  - ~:extended-key-usage~ - Extended key usage.
+  - ~:san~ - Subject Alternative Names.
+
+*Returns*: Certificate in PEM format.
+
+** (:get-cert ca) / (ca/get-cert ca)
+
+Get the CA's certificate in PEM format.
+
+** (:get-serial ca) / (ca/get-serial ca)
+
+Get the CA's current serial number. Use for persistence.
+
+** (:set-serial ca serial) / (ca/set-serial ca serial)
+
+Set the CA's serial number. Use to restore from persistence.
+
+** (:revoke ca serial &opt reason) / (ca/revoke ca serial &opt reason)
+
+Revoke a certificate by serial number.
+
+- *serial*: Certificate serial number.
+- *reason*: Revocation reason keyword (~:key-compromise~, ~:superseded~, etc.).
+
+** (:generate-crl ca &opt opts) / (ca/crl ca &opt opts)
+
+Generate a Certificate Revocation List.
+
+- *opts*: Optional table.
+  - ~:days-valid~ - CRL validity period (default 30).
+  - ~:revoked~ - Additional revocations array.
+
+*Returns*: CRL in PEM format.
+
+** (:get-revoked ca) / (ca/get-revoked ca)
+
+Get list of revoked certificate serials.
+
+*Returns*: Array of ~{:serial N :reason <kw>}~ tables.
+
+** (ca/parse-ocsp-request request-bytes)
+
+Parse an OCSP request (DER-encoded bytes).
+
+*Returns*: ~{:issuer-name-hash :issuer-key-hash :serial :nonce}~
+
+** (:create-ocsp-response ca request-info status &opt opts)
+
+Create an OCSP response for a certificate status query.
+
+- *request-info*: Parsed request from ~ca/parse-ocsp-request~.
+- *status*: ~:good~, ~:revoked~, or ~:unknown~.
+- *opts*: Optional table.
+  - ~:revocation-time~ - When revoked (required if status ~:revoked~).
+  - ~:revocation-reason~ - Why revoked.
+  - ~:this-update~ - Response validity start (default: now).
+  - ~:next-update~ - Response validity end (default: +1 day).
+  - ~:include-nonce~ - Echo nonce from request (default ~true~).
+
+*Returns*: DER-encoded OCSP response bytes.
+
+** (:is-tracking ca) / (ca/is-tracking ca)
+
+Check if the CA is tracking issued certificates.
+
+** (:get-issued ca) / (ca/get-issued ca)
+
+Get list of issued certificates (only if tracking enabled).
+
+*Returns*: Array of PEM certificates, or ~nil~ if tracking disabled.
 
 * Module: jsec/bio
 
@@ -1087,6 +1299,55 @@ Deserialize EC point from SEC1 format.
 *Returns*: ~{:x <buffer> :y <buffer>}~
 
 *Example*: See [[file:../examples/ec_point_operations.janet][ec_point_operations.janet]] for EC operations.
+
+* Module: jsec/utils
+
+Utility functions for introspection and backend detection.
+
+** (utils/ssl-backend)
+
+Returns the SSL backend keyword: ~:openssl~ or ~:libressl~.
+
+Useful for conditional code paths based on the SSL library.
+
+** (utils/ssl-version)
+
+Returns detailed SSL library version info.
+
+*Returns*: Struct with:
+- ~:backend~ - ~:openssl~ or ~:libressl~
+- ~:version~ - Version string (e.g., "OpenSSL 3.0.2" or "LibreSSL 4.0.0")
+- ~:number~ - Numeric version for comparison
+
+* Additional TLS Stream Methods
+
+** (tls/get-handshake-time stream)
+
+Get the TLS handshake duration.
+
+*Returns*: Handshake time in seconds as floating-point number, or ~nil~ if handshake hasn't completed.
+
+Requires ~:handshake-timing true~ option during connection.
+
+* Additional DTLS Functions
+
+** (dtls/new-context &opt opts)
+
+Create a reusable DTLS context.
+
+- *opts*: Optional table.
+  - ~:cert~ - Certificate (PEM string or file path).
+  - ~:key~ - Private key (PEM string or file path).
+  - ~:verify~ - Verify peer certificates (default ~true~ for client, ~false~ for server).
+  - ~:ca~ - CA certificate path.
+  - ~:trusted-cert~ - Trust specific certificate (for self-signed).
+  - ~:ciphers~ - Cipher suite string.
+  - ~:security~ - Security options table.
+
+If ~:cert~ and ~:key~ are provided, creates a server-capable context.
+Otherwise creates a client-only context.
+
+*Returns*: SSLContext that can be passed to ~dtls/connect~ or ~dtls/listen~.
 
 * Security Options
 

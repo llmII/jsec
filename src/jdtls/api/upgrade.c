@@ -228,8 +228,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(client->ssl, client->rbio, client->wbio);
 #else
-    /* Unix: Use dgram BIO for direct socket I/O
-     * This is the original trunk approach that works on all Unix platforms.
+    /* Unix: Use dgram BIO for direct socket I/O.
      * OpenSSL handles socket I/O directly through the dgram BIO. */
     client->rbio = NULL;
     client->wbio = NULL;

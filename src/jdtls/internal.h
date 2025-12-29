@@ -320,9 +320,8 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
  * =============================================================================
  * DTLSContext - Reusable SSL_CTX wrapper (like TLS's TLSContext)
  * =============================================================================
- * Now uses the unified SSLContext type from jshared.h.
- * Note: is_server was removed - that's a connection-level property, not
- * context.
+ * Uses the unified SSLContext type from jshared.h.
+ * is_server is determined per-connection, not stored in the context.
  */
 
 typedef SSLContext DTLSContext;

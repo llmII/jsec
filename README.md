@@ -44,15 +44,15 @@ While a security audit is pending, the library maintains high standards for func
 Note that perf can be somewhat skewed by testing framework intricacies but it
 gives a bit of an idea.
 
-<div class="details" id="org987d585">
-<div class="summary" id="orgc5e7371">
+<div class="details" id="orgd34402b">
+<div class="summary" id="orgadb0f52">
 <p>
 Sample perf9 run: 50 clients, 4 servers, 4 client-hosts, threaded mode, 30s duration
 </p>
 
 </div>
 
-<pre class="example" id="org1da8024">
+<pre class="example" id="orgf0b4976">
 ================================================================================
   Results by Protocol
 ================================================================================

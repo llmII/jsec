@@ -40,9 +40,9 @@ typedef struct {
  * Returns bytes sent, 0 if nothing to send, or -1 on error.
  */
 static ssize_t dtls_client_flush_wbio(DTLSClient *client) {
-    /* When using dgram BIO (Unix), wbio is NULL - dgram handles I/O directly
-     */
-    if (!client->wbio) {
+    /* When using dgram BIO (Unix), wbio is NULL - dgram handles I/O directly.
+     * Also skip if transport is NULL (already closed). */
+    if (!client->wbio || !client->transport) {
         return 0;
     }
 
