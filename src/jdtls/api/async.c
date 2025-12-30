@@ -36,39 +36,10 @@ typedef struct {
 } DTLSClientAsyncState;
 
 /*
- * Helper: Flush any pending data from wbio to the socket via sendto
- * Returns bytes sent, 0 if nothing to send, or -1 on error.
+ * Helper: Flush wbio - use shared helper from internal.h
+ * This wrapper maintains the local function name for minimal diff in callers.
  */
-static ssize_t dtls_client_flush_wbio(DTLSClient *client) {
-    /* When using dgram BIO (Unix), wbio is NULL - dgram handles I/O directly.
-     * Also skip if transport is NULL (already closed). */
-    if (!client->wbio || !client->transport) {
-        return 0;
-    }
-
-    size_t pending = BIO_ctrl_pending(client->wbio);
-    if (pending == 0) {
-        return 0;
-    }
-
-    uint8_t *buf = janet_malloc(pending);
-    if (!buf) {
-        return -1;
-    }
-
-    int n = BIO_read(client->wbio, buf, (int)pending);
-    ssize_t sent = 0;
-
-    if (n > 0) {
-        sent = sendto((jsec_socket_t)client->transport->handle,
-                      (const char *)buf, (size_t)n, 0,
-                      (struct sockaddr *)&client->peer_addr.addr,
-                      client->peer_addr.addrlen);
-    }
-
-    janet_free(buf);
-    return sent;
-}
+#define dtls_client_flush_wbio(client) dtls_client_flush_wbio_to_peer(client)
 
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     DTLSClientAsyncState *state = (DTLSClientAsyncState *)fiber->ev_state;

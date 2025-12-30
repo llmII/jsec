@@ -208,6 +208,46 @@ typedef struct {
 } DTLSClient;
 
 /*
+ * Helper: Flush any pending data from client's wbio to the socket via sendto.
+ * Used by both async.c and state_machine.c.
+ *
+ * Returns bytes sent, 0 if nothing to send, or -1 on error.
+ *
+ * Note: When using dgram BIO (Unix), wbio is NULL - dgram handles I/O
+ * directly. This function handles that case by returning 0.
+ */
+static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
+    /* Skip if wbio is NULL (dgram BIO handles I/O directly) or transport
+     * closed */
+    if (!client->wbio || !client->transport) {
+        return 0;
+    }
+
+    size_t pending = BIO_ctrl_pending(client->wbio);
+    if (pending == 0) {
+        return 0;
+    }
+
+    uint8_t *buf = (uint8_t *)janet_malloc(pending);
+    if (!buf) {
+        return -1;
+    }
+
+    int n = BIO_read(client->wbio, buf, (int)pending);
+    ssize_t sent = 0;
+
+    if (n > 0) {
+        sent = sendto((jsec_socket_t)client->transport->handle,
+                      (const char *)buf, (size_t)n, 0,
+                      (struct sockaddr *)&client->peer_addr.addr,
+                      client->peer_addr.addrlen);
+    }
+
+    janet_free(buf);
+    return sent;
+}
+
+/*
  * =============================================================================
  * DTLSServer - Server managing multiple peer sessions
  * =============================================================================

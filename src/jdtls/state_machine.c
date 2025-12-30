@@ -144,7 +144,22 @@ DTLSResult dtls_do_shutdown(SSL *ssl) {
  * Only step 4 allocates full SSL state, preventing resource exhaustion.
  */
 
-/* Secret key for cookie generation (initialized once) */
+/* Secret key for cookie generation (initialized once)
+ *
+ * Design Note: There are two separate cookie generators in jsec DTLS:
+ *   1. dtls_generate_cookie (this file) - Used by DTLSv1_listen path
+ *   2. server_generate_cookie (server.c) - Used by DTLSServer path
+ *
+ * Both generate cookies using HMAC(secret, peer_address) for DoS protection.
+ * Separate secrets are intentional:
+ *   - state_machine.c handles low-level async operations
+ *   - server.c handles the DTLSServer abstraction
+ *   - Each module manages its own secret lifecycle
+ *
+ * This is a security feature: even if one secret is compromised, the other
+ * remains independent. Both secrets are generated via RAND_bytes at first
+ * use.
+ */
 static uint8_t cookie_secret[32];
 static int cookie_secret_initialized = 0;
 
@@ -252,43 +267,14 @@ typedef struct {
 
 /*
  * Helper: Flush any pending data from client wbio to the socket via sendto
- * Only applies to client (is_server=0), server has its own send_dtls_packet
+ * Only applies to client (is_server=0), server has its own send_dtls_packet.
+ * Uses shared helper from internal.h.
  */
 static ssize_t dtls_async_flush_wbio(DTLSAsyncData *data) {
     if (data->is_server || !data->owner) {
         return 0; /* Server handles its own send */
     }
-
-    DTLSClient *client = (DTLSClient *)data->owner;
-
-    /* On Unix with dgram BIO, wbio is NULL (dgram BIO handles I/O directly)
-     */
-    if (!client->wbio) {
-        return 0;
-    }
-
-    size_t pending = BIO_ctrl_pending(client->wbio);
-    if (pending == 0) {
-        return 0;
-    }
-
-    uint8_t *buf = janet_malloc(pending);
-    if (!buf) {
-        return -1;
-    }
-
-    int n = BIO_read(client->wbio, buf, (int)pending);
-    ssize_t sent = 0;
-
-    if (n > 0) {
-        sent = sendto((jsec_socket_t)client->transport->handle,
-                      (const char *)buf, (size_t)n, 0,
-                      (struct sockaddr *)&client->peer_addr.addr,
-                      client->peer_addr.addrlen);
-    }
-
-    janet_free(buf);
-    return sent;
+    return dtls_client_flush_wbio_to_peer((DTLSClient *)data->owner);
 }
 
 static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
