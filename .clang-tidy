@@ -35,12 +35,16 @@
 # - clang-analyzer-security.insecureAPI.*: Controlled usage of string functions
 # - concurrency-mt-unsafe: strerror() usage is acceptable in our context
 # - performance-no-int-to-ptr: OpenSSL NID_* constants require this pattern
+#
+# CRITICAL for cross-platform: bugprone-assignment-in-if-condition catches
+# implicit pointer-to-bool conversions that fail on stricter compilers (ARM Mac)
 
 Checks: '-*,clang-analyzer-*,bugprone-*,readability-*,cert-*,misc-*,concurrency-*,performance-*,portability-*,-readability-magic-numbers,-readability-function-cognitive-complexity,-readability-identifier-length,-readability-identifier-naming,-readability-braces-around-statements,-readability-else-after-return,-readability-isolate-declaration,-readability-math-missing-parentheses,-readability-redundant-declaration,-readability-non-const-parameter,-bugprone-easily-swappable-parameters,-bugprone-reserved-identifier,-bugprone-branch-clone,-bugprone-multi-level-implicit-pointer-conversion,-misc-no-recursion,-misc-include-cleaner,-cert-err33-c,-cert-err34-c,-cert-dcl37-c,-cert-dcl51-cpp,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy,-concurrency-mt-unsafe,-performance-no-int-to-ptr'
 
+# All enabled checks are errors - fail the build on any issue
 WarningsAsErrors: '*'
 
-HeaderFilterRegex: 'src/.*\.h$'
+HeaderFilterRegex: 'src/.*\\.h$'
 
 CheckOptions:
   - key: readability-function-size.LineThreshold

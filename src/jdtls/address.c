@@ -330,7 +330,7 @@ static Janet cfun_dtls_address_port(int32_t argc, Janet *argv) {
 static Janet cfun_dtls_address_p(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     return janet_wrap_boolean(
-        janet_checkabstract(argv[0], &dtls_address_type));
+        NULL != janet_checkabstract(argv[0], &dtls_address_type));
 }
 
 /*

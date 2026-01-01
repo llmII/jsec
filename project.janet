@@ -86,15 +86,23 @@
 # Compiler Flags
 # ============================================================================
 
-# Standard flags - comprehensive warnings
+# Standard flags - comprehensive warnings for defensive builds
+# These catch issues that may only manifest on stricter platforms (e.g., ARM Mac)
 # Note: Some flags omitted because janet.h macros trigger unavoidable warnings
 (def- standard-cflags
   (if windows?
     ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
     ["-std=c99" "-O2"
+     # Basic warnings
      "-Wall" "-Wextra" "-Wshadow" "-fno-common"
      "-Wuninitialized" "-Wpointer-arith" "-Wstrict-prototypes"
-     "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"]))
+     "-Wfloat-equal" "-Wformat=2" "-Wimplicit-fallthrough"
+     # Integer/pointer conversion warnings (critical for cross-platform)
+     "-Wint-conversion" "-Wpointer-to-int-cast" "-Wint-to-pointer-cast"
+     # Null pointer and type safety
+     "-Wnull-dereference" "-Wcast-align"
+     # Sign conversion (can catch subtle bugs)
+     "-Wsign-compare"]))
 
 # Sanitizer flags (Unix only)
 (defn- build-sanitizer-flags []
