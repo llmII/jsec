@@ -14,16 +14,20 @@ static const JanetReg cfuns[] = {
      ":sha512, :sha1, :md5."},
     {"digest-begin", cfun_digest_begin,
      "(jsec/crypto/digest-begin alg)\n\n"
-     "Begin an incremental hash digest operation. Returns a digest context object."},
+     "Begin an incremental hash digest operation. Returns a digest context "
+     "object."},
     {"digest-update", cfun_digest_update,
      "(jsec/crypto/digest-update ctx data)\n\n"
-     "Update the digest context with chunk data (string or buffer). Returns ctx."},
+     "Update the digest context with chunk data (string or buffer). Returns "
+     "ctx."},
     {"digest-finish", cfun_digest_finish,
      "(jsec/crypto/digest-finish ctx)\n\n"
-     "Finish the digest operation, free context resources, and return the raw binary digest string."},
+     "Finish the digest operation, free context resources, and return the "
+     "raw binary digest string."},
     {"digest-close", cfun_digest_close,
      "(jsec/crypto/digest-close ctx)\n\n"
-     "Close the digest context and release internal resources without finalizing. Safe to call multiple times."},
+     "Close the digest context and release internal resources without "
+     "finalizing. Safe to call multiple times."},
     {"generate-key", cfun_generate_key,
      "(jsec/crypto/generate-key alg &opt bits)\n\n"
      "Generate private key. Returns PEM format.\n"

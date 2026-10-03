@@ -41,12 +41,8 @@ static int jcrypto_digest_ctx_get(void *p, Janet key, Janet *out) {
 }
 
 static const JanetAbstractType jcrypto_digest_ctx_type = {
-    "jsec/digest-ctx",
-    jcrypto_digest_ctx_gc,
-    NULL,
-    jcrypto_digest_ctx_get,
-    JANET_ATEND_GET
-};
+    "jsec/digest-ctx", jcrypto_digest_ctx_gc, NULL, jcrypto_digest_ctx_get,
+    JANET_ATEND_GET};
 
 void jcrypto_register_digest_type(void) {
     janet_register_abstract_type(&jcrypto_digest_ctx_type);
@@ -92,7 +88,8 @@ Janet cfun_digest_begin(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to initialize digest context");
     }
 
-    EVP_MD_CTX **box = (EVP_MD_CTX **)janet_abstract(&jcrypto_digest_ctx_type, sizeof(EVP_MD_CTX *));
+    EVP_MD_CTX **box = (EVP_MD_CTX **)janet_abstract(&jcrypto_digest_ctx_type,
+                                                     sizeof(EVP_MD_CTX *));
     *box = mdctx;
 
     return janet_wrap_abstract(box);
@@ -100,7 +97,8 @@ Janet cfun_digest_begin(int32_t argc, Janet *argv) {
 
 Janet cfun_digest_update(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
-    EVP_MD_CTX **box = (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
+    EVP_MD_CTX **box =
+        (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
     if (!*box) crypto_panic_param("digest context is closed");
 
     JanetByteView data = janet_getbytes(argv, 1);
@@ -113,7 +111,8 @@ Janet cfun_digest_update(int32_t argc, Janet *argv) {
 
 Janet cfun_digest_finish(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    EVP_MD_CTX **box = (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
+    EVP_MD_CTX **box =
+        (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
     if (!*box) crypto_panic_param("digest context is closed");
 
     unsigned char md_value[EVP_MAX_MD_SIZE];
@@ -134,7 +133,8 @@ Janet cfun_digest_finish(int32_t argc, Janet *argv) {
 
 Janet cfun_digest_close(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    EVP_MD_CTX **box = (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
+    EVP_MD_CTX **box =
+        (EVP_MD_CTX **)janet_getabstract(argv, 0, &jcrypto_digest_ctx_type);
     if (*box) {
         EVP_MD_CTX_free(*box);
         *box = NULL;

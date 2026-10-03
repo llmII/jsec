@@ -245,7 +245,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
             while (1) {
                 /* Calculate how many bytes we want to read this iteration.
                  * bytes_requested counts bytes appended since buf_start, not
-                 * the buffer's total length (buffers may arrive pre-filled). */
+                 * the buffer's total length (buffers may arrive pre-filled).
+                 */
                 int read_size = state->bytes_requested -
                                 (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested < 0) {
@@ -276,7 +277,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     /* Keep reading until WANT_READ */
                 } else {
                     ssl_err = SSL_get_error(tls->ssl, ret);
-                    int has_data = (state->user_buf->count > state->buf_start);
+                    int has_data =
+                        (state->user_buf->count > state->buf_start);
                     return handle_ssl_error(ssl_err, ret, state, "Read",
                                             has_data, tls);
                 }
@@ -808,10 +810,9 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                                        janet_wrap_buffer(state->user_buf));
                     } else {
                         janet_schedule(
-                            fiber,
-                            (state->user_buf->count > state->buf_start)
-                                ? janet_wrap_buffer(state->user_buf)
-                                : janet_wrap_nil());
+                            fiber, (state->user_buf->count > state->buf_start)
+                                       ? janet_wrap_buffer(state->user_buf)
+                                       : janet_wrap_nil());
                     }
                     fiber->ev_state = NULL;
                     janet_async_end(fiber);
