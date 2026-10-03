@@ -116,6 +116,7 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     state->op = read_all ? TLS_OP_CHUNK : TLS_OP_READ;
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
+    state->buf_start = buffer->count;
     /* write_data, write_len, write_offset unused for reads - not zeroed */
     /* error_msg only written on error via snprintf - not pre-zeroed */
 
@@ -125,7 +126,7 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
-        if (buffer->count == 0 && bytes_to_read > 0) {
+        if (buffer->count == state->buf_start && bytes_to_read > 0) {
             return janet_wrap_nil();
         }
         return janet_wrap_buffer(buffer);
@@ -162,6 +163,7 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     state->op = TLS_OP_CHUNK;
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
+    state->buf_start = buffer->count;
 
     /* Add timeout before starting async operation */
     if (!is_infinite_timeout(timeout)) {

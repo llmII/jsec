@@ -4,6 +4,25 @@
 
 * News
 
+** 2026-10-03 - Read Buffer Accounting & Streaming Digest Context
+
+*** Read Buffer Accounting
+- Fixed buffer offset accounting in ~cfun_read~ and ~TLS_OP_READ~ to measure
+  bytes appended relative to ~buf_start~ instead of total buffer length
+- Matches Janet ~ev/read~ semantics, preventing premature EOF and early returns
+  when reading into pre-filled or accumulating buffers
+- Fixes chunked encoding state corruption and premature stream termination in HTTP clients
+
+*** Streaming Digest Context
+- Added streaming cryptographic digest context API: ~crypto/digest-begin~,
+  ~crypto/digest-update~, ~crypto/digest-finish~, ~crypto/digest-close~
+- Uses boxed ~EVP_MD_CTX*~ abstract type (~jsec/digest-ctx~) for incremental
+  hashing without buffering entire payloads in memory
+
+*** Platform Verification Note
+- Verified under Linux x86_64 (Janet 1.40.1, OpenSSL 3.x)
+- Other supported operating systems and LibreSSL backends pending cross-platform validation
+
 ** 2025-12-27 - DTLS Cross-Platform Fixes
 
 DTLS now works correctly on all platforms:
