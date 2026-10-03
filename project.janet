@@ -81,7 +81,7 @@
     illumos? (or (os/getenv "OPENSSL_PREFIX") "/usr/openssl/3")
     windows?
     (when-let [vcpkg-root (os/getenv "VCPKG_ROOT")]
-      (string vcpkg-root "/installed/x64-windows"))
+      (string (string/trim vcpkg-root) "/installed/x64-windows"))
     nil))
 
 # ============================================================================
