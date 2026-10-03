@@ -18,6 +18,7 @@
 (def- windows? (= (os/which) :windows))
 (def- macos? (= (os/which) :macos))
 (def- dragonfly? (= (os/which) :dragonfly))
+(def- illumos? (= (os/which) :illumos))
 
 # ============================================================================
 # Build Configuration (from environment)
@@ -77,6 +78,7 @@
           "/opt/homebrew/opt/openssl@3" # ARM Mac
           "/usr/local/opt/openssl@3")) # Intel Mac
     dragonfly? "/usr/local"
+    illumos? (or (os/getenv "OPENSSL_PREFIX") "/usr/openssl/3")
     windows?
     (when-let [vcpkg-root (os/getenv "VCPKG_ROOT")]
       (string vcpkg-root "/installed/x64-windows"))
@@ -139,6 +141,8 @@
     (if openssl-prefix
       [(string "/I" openssl-prefix "/include")]
       [])
+    illumos?
+    [(string "-I" openssl-prefix "/include") "-D__EXTENSIONS__"]
     openssl-prefix
     [(string "-I" openssl-prefix "/include")]
     []))
@@ -149,6 +153,9 @@
     (if openssl-prefix
       [(string "/LIBPATH:" openssl-prefix "/lib") "libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"]
       ["libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"])
+    illumos?
+    (let [libdir (string openssl-prefix "/lib/amd64")]
+      [(string "-L" libdir) (string "-Wl,-R," libdir) "-lssl" "-lcrypto" "-lsocket" "-lnsl"])
     openssl-prefix
     [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
     ["-lssl" "-lcrypto"]))
