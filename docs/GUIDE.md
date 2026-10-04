@@ -120,7 +120,8 @@ For advanced use cases, use OpenSSL BIO (Basic I/O) objects for custom transport
 
 Jsec provides access to OpenSSL cryptographic primitives:
 
--   Hashing (SHA-256, SHA-384, SHA-512)
+-   Hashing (one-shot and streaming via `digest-begin`,
+    `digest-update`, `digest-finish`)
 -   Digital signatures (Ed25519, RSA)
 -   Key generation
 

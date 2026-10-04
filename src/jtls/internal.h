@@ -52,7 +52,8 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h> /* For X509_CHECK_FLAG_* hostname verification flags */
+/* For X509_CHECK_FLAG_* hostname verification flags */
+#include <openssl/x509v3.h>
 #include <string.h>
 #include <time.h> /* For clock_gettime, CLOCK_MONOTONIC */
 
@@ -193,6 +194,9 @@ struct TLSState {
     int32_t write_len;         /* Total bytes to write */
     int32_t write_offset;      /* Bytes already written */
     int32_t bytes_requested;   /* Bytes requested for read (-1 for any) */
+    int32_t buf_start;         /* user_buf->count when read op began; n is
+                                * relative to this, matching ev/read append
+                                * semantics (never treat n as buffer total) */
     char error_msg[256];       /* Error message buffer */
 };
 

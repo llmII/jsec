@@ -18,6 +18,7 @@
 (def- windows? (= (os/which) :windows))
 (def- macos? (= (os/which) :macos))
 (def- dragonfly? (= (os/which) :dragonfly))
+(def- illumos? (= (os/which) :illumos))
 
 # ============================================================================
 # Build Configuration (from environment)
@@ -77,9 +78,10 @@
           "/opt/homebrew/opt/openssl@3" # ARM Mac
           "/usr/local/opt/openssl@3")) # Intel Mac
     dragonfly? "/usr/local"
+    illumos? (or (os/getenv "OPENSSL_PREFIX") "/usr/openssl/3")
     windows?
     (when-let [vcpkg-root (os/getenv "VCPKG_ROOT")]
-      (string vcpkg-root "/installed/x64-windows"))
+      (string (string/trim vcpkg-root) "/installed/x64-windows"))
     nil))
 
 # ============================================================================
@@ -87,8 +89,9 @@
 # ============================================================================
 
 # Standard flags - comprehensive warnings for defensive builds
-# These catch issues that may only manifest on stricter platforms (e.g., ARM Mac)
-# Note: Some flags omitted because janet.h macros trigger unavoidable warnings
+# These catch issues that may only manifest on stricter platforms
+# (e.g., ARM Mac). Note: Some flags omitted because janet.h macros
+# trigger unavoidable warnings.
 (def- standard-cflags
   (if windows?
     ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
@@ -139,6 +142,8 @@
     (if openssl-prefix
       [(string "/I" openssl-prefix "/include")]
       [])
+    illumos?
+    [(string "-I" openssl-prefix "/include") "-D__EXTENSIONS__"]
     openssl-prefix
     [(string "-I" openssl-prefix "/include")]
     []))
@@ -147,8 +152,13 @@
   (cond
     windows?
     (if openssl-prefix
-      [(string "/LIBPATH:" openssl-prefix "/lib") "libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"]
+      [(string "/LIBPATH:" openssl-prefix "/lib")
+       "libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"]
       ["libssl.lib" "libcrypto.lib" "ws2_32.lib" "mswsock.lib"])
+    illumos?
+    (let [libdir (string openssl-prefix "/lib/amd64")]
+      [(string "-L" libdir) (string "-Wl,-R," libdir)
+       "-lssl" "-lcrypto" "-lsocket" "-lnsl"])
     openssl-prefix
     [(string "-L" openssl-prefix "/lib") "-lssl" "-lcrypto"]
     ["-lssl" "-lcrypto"]))
@@ -223,7 +233,8 @@
 
 (declare-native
   :name "jsec/crypto"
-  :source [;(find-files-by-suffixes "src/jcrypto" [".c"]) ;jutils-shared-sources]
+  :source [;(find-files-by-suffixes "src/jcrypto" [".c"])
+           ;jutils-shared-sources]
   :headers [;(find-files-by-suffixes "src/jcrypto" [".h"]) ;jutils-headers]
   :cflags build-cflags
   :lflags build-lflags)
@@ -290,15 +301,39 @@
 (phony "format/all" ["format/c" "format/janet" "format/org"]
        (print "All code formatted."))
 
+# Convenient aliases matching CONTRIBUTING.org
+(phony "format" ["format/all"])
+(phony "format-c" ["format/c"])
+(phony "format-janet" ["format/janet"])
+
+# Check C code formatting with clang-format
+(phony "check-format-c" []
+       (print "Checking C formatting...")
+       (def files (find-files-by-suffixes "src" [".c" ".h"]))
+       (when (not (empty? files))
+         (os/execute ["clang-format" "--dry-run" "-Werror" ;files] :p)))
+
 # Clang-tidy static analysis
 (phony "tidy" []
        (print "Running clang-tidy static analysis...")
-       (def include-args ["-I/usr/local/include/janet" "-I/usr/include/openssl" "-Isrc"])
+       (def janet-inc
+         (cond
+           (os/stat "/usr/local/include/janet/janet.h")
+           "/usr/local/include/janet"
+           (os/stat
+             (string (os/getenv "HOME") "/.local/include/janet/janet.h"))
+           (string (os/getenv "HOME") "/.local/include/janet")
+           (os/stat "/usr/include/janet/janet.h")
+           "/usr/include/janet"
+           "/usr/include"))
+       (def include-args
+         [(string "-I" janet-inc) "-I/usr/include/openssl" "-Isrc"])
        (def files (find-files-by-suffixes "src" [".c"]))
        (var failed false)
        (each src files
-         (def proc (os/spawn ["clang-tidy" "--quiet" src "--" "-std=c99" ;include-args]
-                             :p {:out :pipe :err :pipe}))
+         (def proc
+           (os/spawn ["clang-tidy" "--quiet" src "--" "-std=c99" ;include-args]
+                     :p {:out :pipe :err :pipe}))
          (def stdout-content (ev/read (proc :out) :all))
          (def stderr-content (ev/read (proc :err) :all))
          (os/proc-wait proc)
@@ -307,7 +342,8 @@
          (when (or (string/find "warning:" combined)
                    (string/find "error:" combined))
            (def lines (string/split "\n" combined))
-           (def filtered (filter |(not (string/find "warnings generated" $)) lines))
+           (def filtered
+             (filter |(not (string/find "warnings generated" $)) lines))
            (print (string/join filtered "\n"))
            (set failed true)))
        (if failed
@@ -330,12 +366,18 @@
 
 # Test with sanitizers - placeholder (requires debug build)
 (phony "test/sanitized" []
-       (print "Note: Sanitizer testing requires JSEC_DEBUG=1 JSEC_ASAN=1 jpm build first.")
+       (print
+         (string "Note: Sanitizer testing requires "
+                 "JSEC_DEBUG=1 JSEC_ASAN=1 jpm build first."))
        (print "Then run: janet test/runner.janet")
        (print "This target is a no-op for now."))
+(phony "test-sanitized" ["test/sanitized"])
 
 # Leak check with valgrind - placeholder
 (phony "test/valgrind" []
        (print "Note: Valgrind leak checking requires a debug build.")
-       (print "Run manually: valgrind --leak-check=full janet test/runner.janet")
+       (print
+         (string "Run manually: valgrind --leak-check=full "
+                 "janet test/runner.janet"))
        (print "This target is a no-op for now."))
+(phony "leak-check" ["test/valgrind"])

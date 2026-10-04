@@ -243,11 +243,16 @@ TLSIOState jtls_process_operation(TLSState *state) {
          */
         case TLS_OP_READ: {
             while (1) {
-                /* Calculate how many bytes we want to read this iteration */
-                int read_size =
-                    state->bytes_requested - state->user_buf->count;
-                if (read_size <= 0) {
+                /* Calculate how many bytes we want to read this iteration.
+                 * bytes_requested counts bytes appended since buf_start, not
+                 * the buffer's total length (buffers may arrive pre-filled).
+                 */
+                int read_size = state->bytes_requested -
+                                (state->user_buf->count - state->buf_start);
+                if (state->bytes_requested < 0) {
                     read_size = 65536; /* Read in 64KB chunks if no limit */
+                } else if (read_size <= 0) {
+                    return TLS_IO_COMPLETE;
                 }
 
                 /* Ensure buffer has capacity for existing data + new data to
@@ -265,13 +270,15 @@ TLSIOState jtls_process_operation(TLSState *state) {
 
                     /* Check if we've read enough */
                     if (state->bytes_requested > 0 &&
-                        state->user_buf->count >= state->bytes_requested) {
+                        (state->user_buf->count - state->buf_start) >=
+                            state->bytes_requested) {
                         return TLS_IO_COMPLETE;
                     }
                     /* Keep reading until WANT_READ */
                 } else {
                     ssl_err = SSL_get_error(tls->ssl, ret);
-                    int has_data = (state->user_buf->count > 0);
+                    int has_data =
+                        (state->user_buf->count > state->buf_start);
                     return handle_ssl_error(ssl_err, ret, state, "Read",
                                             has_data, tls);
                 }
@@ -289,8 +296,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
         case TLS_OP_CHUNK: {
             int just_read_data = 0; /* Track if we just successfully read */
             while (1) {
-                int remaining =
-                    state->bytes_requested - state->user_buf->count;
+                int remaining = state->bytes_requested -
+                                (state->user_buf->count - state->buf_start);
                 if (remaining <= 0) {
                     return TLS_IO_COMPLETE;
                 }
@@ -310,7 +317,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     state->user_buf->count += ret;
                     just_read_data = 1;
 
-                    if (state->user_buf->count >= state->bytes_requested) {
+                    if ((state->user_buf->count - state->buf_start) >=
+                        state->bytes_requested) {
                         return TLS_IO_COMPLETE;
                     }
                     /* Continue reading - unlike READ, don't return early */
@@ -575,7 +583,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                         break;
 
                     case TLS_OP_READ:
-                        result = (state->user_buf->count > 0)
+                        result = (state->user_buf->count > state->buf_start)
                                      ? janet_wrap_buffer(state->user_buf)
                                      : janet_wrap_nil();
                         break;
@@ -793,25 +801,27 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 TLSStream *tls = state->tls;
                 /* For CHUNK, only read what was requested.
                  * For READ, read up to 64KB. */
-                int read_size;
-                if (state->op == TLS_OP_CHUNK) {
-                    read_size =
-                        state->bytes_requested - state->user_buf->count;
-                    if (read_size <= 0) {
+                int read_size = state->bytes_requested -
+                                (state->user_buf->count - state->buf_start);
+                if (state->bytes_requested >= 0 && read_size <= 0) {
+                    if (state->op == TLS_OP_CHUNK) {
                         /* Already have enough data */
                         janet_schedule(fiber,
                                        janet_wrap_buffer(state->user_buf));
-                        fiber->ev_state = NULL;
-                        janet_async_end(fiber);
-                        return;
+                    } else {
+                        janet_schedule(
+                            fiber, (state->user_buf->count > state->buf_start)
+                                       ? janet_wrap_buffer(state->user_buf)
+                                       : janet_wrap_nil());
                     }
-                } else {
-                    read_size =
-                        state->bytes_requested - state->user_buf->count;
-                    if (read_size <= 0) {
-                        read_size =
-                            65536; /* Read in 64KB chunks if no limit */
-                    }
+                    fiber->ev_state = NULL;
+                    janet_async_end(fiber);
+                    return;
+                }
+                if (state->bytes_requested < 0) {
+                    read_size = 65536;
+                } else if (state->op != TLS_OP_CHUNK && read_size > 65536) {
+                    read_size = 65536;
                 }
 
                 /* Ensure buffer has capacity for existing data + new data to
@@ -835,7 +845,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     if (ssl_err == SSL_ERROR_ZERO_RETURN) {
                         /* Clean shutdown - return what we have or nil */
                         Janet result =
-                            (state->user_buf->count > 0)
+                            (state->user_buf->count > state->buf_start)
                                 ? janet_wrap_buffer(state->user_buf)
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
@@ -846,7 +856,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                                (errno == 0 || errno == ECONNRESET)) {
                         /* Connection reset - return what we have or nil */
                         Janet result =
-                            (state->user_buf->count > 0)
+                            (state->user_buf->count > state->buf_start)
                                 ? janet_wrap_buffer(state->user_buf)
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
@@ -860,7 +870,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
-                    } else if (state->user_buf->count > 0) {
+                    } else if (state->user_buf->count > state->buf_start) {
                         /* Some data was read before error - return it */
                         janet_schedule(fiber,
                                        janet_wrap_buffer(state->user_buf));

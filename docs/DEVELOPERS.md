@@ -70,6 +70,21 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
 -   **CI Strategy:** SSH-based testing on dedicated VMs
 
 
+### Illumos / OpenIndiana Support
+
+-   **Status:** Fully supported
+-   **Requirement:** System OpenSSL in `/usr/openssl/3`
+-   **Flags:** `-L/usr/openssl/3/lib/amd64 -Wl,-R,... -lsocket -lnsl -D__EXTENSIONS__`
+-   **CI Strategy:** SSH-based testing on dedicated Illumos VM
+
+
+### Chimera Linux Support (musl libc + LLVM)
+
+-   **Status:** Fully supported
+-   **Requirement:** `apk add clang gmake musl-devel openssl3-devel`
+-   **CI Strategy:** SSH-based testing on dedicated Chimera VM
+
+
 # Source Organization
 
     src/
@@ -94,13 +109,18 @@ integration for Janet that works seamlessly with Janet's event loop (`ev`).
     │   ├── crl.c                # CRL generation
     │   └── ocsp.c               # OCSP responder
     ├── jcrypto/                 # Cryptographic operations
+    │   ├── digest.c             # Hashing & streaming digest contexts
+    │   ├── cipher.c             # Symmetric cipher operations
+    │   ├── hmac.c               # HMAC computation
+    │   ├── keys.c               # Key generation & PEM management
+    │   └── module.c             # Module registration
     ├── jutils/                  # Shared utilities
     │   ├── context.c            # Unified SSL_CTX handling
     │   ├── security.c           # Security option parsing
     │   └── panic.c              # Error handling macros
     ├── jbio.c                   # Memory BIO operations
     ├── jcert/
-    │   ├── jcert.c                  # Certificate generation
+    │   ├── jcert.c              # Certificate generation
 
 
 # TLS State Machine

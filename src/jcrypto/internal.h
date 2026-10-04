@@ -50,6 +50,11 @@ Janet cfun_parse_csr(int32_t argc, Janet *argv);
 
 /* digest.c */
 Janet cfun_digest(int32_t argc, Janet *argv);
+Janet cfun_digest_begin(int32_t argc, Janet *argv);
+Janet cfun_digest_update(int32_t argc, Janet *argv);
+Janet cfun_digest_finish(int32_t argc, Janet *argv);
+Janet cfun_digest_close(int32_t argc, Janet *argv);
+void jcrypto_register_digest_type(void);
 
 /* hmac.c */
 Janet cfun_hmac(int32_t argc, Janet *argv);
