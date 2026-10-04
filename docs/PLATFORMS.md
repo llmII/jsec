@@ -2,7 +2,8 @@
 
 # Overview
 
-jsec supports Linux, FreeBSD, macOS, DragonflyBSD, NetBSD, OpenBSD, and Windows.
+jsec supports Linux (glibc and musl), FreeBSD, macOS, DragonflyBSD,
+NetBSD, OpenBSD, OpenIndiana (Illumos), and Windows.
 
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
@@ -23,45 +24,63 @@ jsec supports Linux, FreeBSD, macOS, DragonflyBSD, NetBSD, OpenBSD, and Windows.
 </thead>
 <tbody>
 <tr>
-<td class="org-left">Linux</td>
+<td class="org-left">Linux (glibc)</td>
 <td class="org-left">OpenSSL 3.x</td>
-<td class="org-left">Primary dev platform</td>
+<td class="org-left">Primary development platform</td>
 </tr>
 
 <tr>
-<td class="org-left">FreeBSD</td>
+<td class="org-left">Ubuntu 24.04 LTS</td>
+<td class="org-left">OpenSSL 3.0.x</td>
+<td class="org-left">Standard Linux distribution</td>
+</tr>
+
+<tr>
+<td class="org-left">Chimera Linux</td>
+<td class="org-left">OpenSSL 3.x</td>
+<td class="org-left">musl libc + LLVM/Clang</td>
+</tr>
+
+<tr>
+<td class="org-left">FreeBSD 15</td>
 <td class="org-left">OpenSSL 3.x</td>
 <td class="org-left">System OpenSSL</td>
 </tr>
 
 <tr>
-<td class="org-left">macOS</td>
-<td class="org-left">OpenSSL 3.x</td>
-<td class="org-left">Via Homebrew</td>
-</tr>
-
-<tr>
-<td class="org-left">DragonflyBSD</td>
+<td class="org-left">DragonflyBSD 6.4</td>
 <td class="org-left">LibreSSL</td>
 <td class="org-left">System LibreSSL 3.6+</td>
 </tr>
 
 <tr>
-<td class="org-left">NetBSD</td>
-<td class="org-left">OpenSSL 3.x</td>
+<td class="org-left">OpenBSD 7.8</td>
+<td class="org-left">LibreSSL</td>
+<td class="org-left">System LibreSSL 4.2+</td>
+</tr>
+
+<tr>
+<td class="org-left">NetBSD 10.1</td>
+<td class="org-left">OpenSSL 3.0.x</td>
 <td class="org-left">System OpenSSL</td>
 </tr>
 
 <tr>
-<td class="org-left">OpenBSD</td>
-<td class="org-left">LibreSSL</td>
-<td class="org-left">System LibreSSL 3.9+</td>
+<td class="org-left">macOS (Tahoe/Sequoia)</td>
+<td class="org-left">OpenSSL 3.x</td>
+<td class="org-left">Via Homebrew</td>
 </tr>
 
 <tr>
-<td class="org-left">Windows</td>
+<td class="org-left">OpenIndiana (Illumos)</td>
+<td class="org-left">OpenSSL 3.5.x</td>
+<td class="org-left">/usr/openssl/3</td>
+</tr>
+
+<tr>
+<td class="org-left">Windows 11</td>
 <td class="org-left">OpenSSL 3.x</td>
-<td class="org-left">Via vcpkg</td>
+<td class="org-left">MSVC 2022 + vcpkg</td>
 </tr>
 </tbody>
 </table>
@@ -69,11 +88,12 @@ jsec supports Linux, FreeBSD, macOS, DragonflyBSD, NetBSD, OpenBSD, and Windows.
 
 ## Janet Version Requirements
 
-jsec currently builds and tests against **Janet git master**. This is because
-git master contains a fix for a Unix domain socket bug on BSD platforms that
-has not yet been included in a stable release. Once the next Janet release is
-available with this fix, jsec will target the latest stable release, only
-deviating when blocked by a bug in Janet itself.
+jsec supports **Janet 1.40.1** and later as its baseline. Compatibility with
+Janet 1.40.1 is maintained across all supported operating systems.
+
+Note for macOS: Janet 1.40.1 header macros trigger unavoidable `-Wcast-align`
+warnings under Apple Clang. These are benign upstream macro artifacts left
+unpatched to maintain clean baseline compatibility with supported Janet 1.40.1.
 
 For building Janet from source, see the official instructions:
 <https://janet-lang.org/docs/index.html>
@@ -82,7 +102,10 @@ For building Janet from source, see the official instructions:
 # Linux
 
 
-## Prerequisites
+## glibc Distributions (Ubuntu, Debian, Fedora, Arch)
+
+
+### Prerequisites
 
     # Debian/Ubuntu
     sudo apt install build-essential libssl-dev git
@@ -100,15 +123,41 @@ Build Janet from source (see <https://janet-lang.org/docs/index.html>):
     make && sudo make install
 
 
-## Building jsec
+### Building jsec
 
     cd jsec
     jpm clean && jpm build && jpm install
 
 
-## Running Tests
+### Running Tests
 
-    janet test/runner.janet --verbosity 2 -j thread:4
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
+
+
+## Chimera Linux (musl libc + LLVM/Clang)
+
+Chimera Linux is a modern Linux distribution built with musl libc, the LLVM
+toolchain (Clang/lld), and the `apk` package manager.
+
+
+### Prerequisites
+
+    apk add clang gmake musl-devel openssl3-devel git
+
+Build and install Janet, jpm, spork, and janet-assay into `~/.local`.
+
+
+### Building jsec
+
+    cd jsec
+    jpm clean && jpm build && jpm install
+
+
+### Running Tests with Parallel Matrix Execution
+
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
 
 
 # FreeBSD
@@ -264,7 +313,44 @@ Build Janet from source (see <https://janet-lang.org/docs/index.html>):
 ## Notes
 
 -   LibreSSL 3.9+ has all required APIs
--   All tests pass on OpenBSD 7.6
+-   All tests pass on OpenBSD 7.6+
+
+
+# OpenIndiana (Illumos / SunOS)
+
+
+## Prerequisites
+
+OpenIndiana Hipster provides OpenSSL 3.x in `/usr/openssl/3` and GCC in the
+base package repository:
+
+    pkg install build-essential git
+
+Build Janet from source into `~/.local` or `/usr/local`.
+
+
+## Building jsec
+
+`project.janet` automatically detects Illumos (`(` (os/which) :illumos)=) and
+configures the required include and linker options:
+
+-   Headers: `-I/usr/openssl/3/include -D__EXTENSIONS__`
+-   Linker: `-L/usr/openssl/3/lib/amd64 -Wl,-R,/usr/openssl/3/lib/amd64 -lssl -lcrypto -lsocket -lnsl`
+
+    cd jsec
+    jpm clean && jpm build && jpm install
+
+
+## Running Tests
+
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:4,subprocess:4
+
+
+## Notes
+
+-   Illumos requires `-lsocket -lnsl` for network socket APIs
+-   `-D__EXTENSIONS__` is required for standard POSIX socket type declarations
 
 
 # Windows
@@ -354,8 +440,9 @@ Add vcpkg bin to PATH:
 
 All platforms use the same test runner:
 
-    # Full suite with parallel threads
-    janet test/runner.janet --verbosity 2 -j thread:4
+    # Full suite with parallel execution (fibers, threads, subprocesses)
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
     
     # Filter specific tests
     janet test/runner.janet --filter "tls"
@@ -403,11 +490,11 @@ All platforms use the same test runner:
 ## Known Issues
 
 
-### BSD Unix Socket Bug
+### macOS Apple Clang Warning
 
-**Status:** Fixed in Janet git master. Awaiting next stable release.
-
-**Workaround:** Build Janet from git master (as documented above).
+Janet 1.40.1 header macros emit `-Wcast-align` warnings under Apple Clang.
+These are benign upstream macro artifacts left unpatched to retain clean
+baseline compatibility with supported Janet 1.40.1.
 
 
 ## LibreSSL Compatibility

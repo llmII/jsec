@@ -53,8 +53,9 @@ New functionality or extended functionality **must** be appropriately tested for
 
 jsec uses the [assay](https://github.com/llmII/janet-assay) testing framework.
 
-    # Run unit, regression, and coverage tests (recommended for development)
-    janet test/runner.janet -f '{unit,regression,coverage}'
+    # Run unit, regression, and coverage tests (with parallel workers)
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
     
     # Run all tests (includes performance - takes hours)
     janet test/runner.janet

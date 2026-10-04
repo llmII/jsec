@@ -44,15 +44,15 @@ While a security audit is pending, the library maintains high standards for func
 Note that perf can be somewhat skewed by testing framework intricacies but it
 gives a bit of an idea.
 
-<div class="details" id="org9001d7e">
-<div class="summary" id="org683b95e">
+<div class="details" id="orga4ebffa">
+<div class="summary" id="org96c7666">
 <p>
 Sample perf9 run: 50 clients, 4 servers, 4 client-hosts, threaded mode, 30s duration
 </p>
 
 </div>
 
-<pre class="example" id="org9b01093">
+<pre class="example" id="org1348b77">
 ================================================================================
   Results by Protocol
 ================================================================================
@@ -418,8 +418,14 @@ Access to OpenSSL crypto functions for hashing, signing, and verification.
 
     (import jsec/crypto)
     
-    # Hashing
+    # Hashing (one-shot)
     (def hash (crypto/digest :sha256 "data"))
+    
+    # Streaming digest
+    (def ctx (crypto/digest-begin :sha256))
+    (crypto/digest-update ctx "chunk 1")
+    (crypto/digest-update ctx "chunk 2")
+    (def stream-hash (crypto/digest-finish ctx))
     
     # Signing (Ed25519)
     (def key (crypto/generate-key :ed25519))
@@ -446,8 +452,9 @@ Clean build:
 
 Run tests using the assay test runner directly (jpm test is deprecated):
 
-    # Run unit, regression, and coverage tests (excludes long-running performance)
-    janet test/runner.janet -f '{unit,regression,coverage}'
+    # Run unit, regression, and coverage tests in parallel
+    janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
     
     # Run with summary output
     janet test/runner.janet -f '{unit,regression,coverage}' --verbosity 1

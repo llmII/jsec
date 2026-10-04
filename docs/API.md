@@ -106,7 +106,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org17edcbf)).
+        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -250,6 +250,12 @@ Read up to `n` bytes from the TLS stream.
 -   **timeout**: Optional timeout in seconds
 
 **Returns**: Buffer with data, or `nil` on EOF.
+
+**Buffer Semantics**: When `buf` is provided, bytes read are appended starting
+from the buffer's initial length at the beginning of the operation, exactly
+matching Janet's standard `ev/read` semantics. This ensures reading into
+pre-filled or accumulating buffers does not prematurely report EOF or truncate
+prior contents.
 
 
 ### (ev/write stream data &opt timeout)
@@ -897,10 +903,62 @@ Free a BIO object and release its resources.
 
 Compute a cryptographic hash.
 
--   **algorithm**: String ("sha256", "sha384", "sha512", "sha1", "md5", etc.)
+-   **algorithm**: Keyword or string (`:sha256`, `:sha384`, `:sha512`, `:sha1`, `:md5`, etc.)
 -   **data**: Data to hash (string or buffer)
 
 **Returns**: Buffer with hash bytes.
+
+
+### (crypto/digest-begin algorithm)
+
+Begin an incremental cryptographic hash digest operation.
+
+-   **algorithm**: Keyword or string (`:sha256`, `:sha384`, `:sha512`, `:sha1`, `:md5`, etc.)
+
+**Returns**: A `jsec/digest-ctx` abstract object.
+
+
+### (crypto/digest-update ctx data)
+
+Append a chunk of data to an active digest context.
+
+-   **ctx**: Active `jsec/digest-ctx` object
+-   **data**: Chunk data to hash (string or buffer)
+
+**Returns**: `ctx` (allowing method or pipeline chaining).
+
+
+### (crypto/digest-finish ctx)
+
+Finalize the cryptographic digest, free the underlying OpenSSL context, and
+return the resulting digest bytes.
+
+-   **ctx**: Active `jsec/digest-ctx` object
+
+**Returns**: Binary string containing the raw digest bytes. Calling
+`crypto/digest-finish` closes the context; subsequent operations on `ctx`
+will raise an error.
+
+
+### (crypto/digest-close ctx)
+
+Explicitly close the digest context and release internal OpenSSL resources
+without finalizing the digest.
+
+-   **ctx**: `jsec/digest-ctx` object
+
+**Returns**: `nil`. Safe to call multiple times. If not called explicitly,
+underlying resources are freed automatically when `ctx` is garbage collected.
+
+**Streaming Digest Example**:
+
+    (import jsec/crypto)
+    
+    # Streaming hash computation without buffering entire payload
+    (def ctx (crypto/digest-begin :sha256))
+    (crypto/digest-update ctx "chunk 1")
+    (crypto/digest-update ctx "chunk 2")
+    (def digest (crypto/digest-finish ctx))
 
 
 ### (crypto/hmac algorithm key data)

@@ -49,6 +49,31 @@ janet test/runner.janet -f 'unit/TLS*'
 janet test/runner.janet -f 'unit' --verbosity 5
 #+end_src
 
+** Concurrency and Parallelism (-j)
+
+Because jsec runs a large matrix of configurations across tests, running
+matrix suites sequentially can be very slow. The test runner integrates with
+janet-assay's multi-level parallelism:
+
+#+begin_src bash
+# Combine fibers, OS threads, and subprocesses for maximum speed
+janet test/runner.janet -f '{unit,regression,coverage}' \
+  -j fiber:16,thread:6,subprocess:6
+
+# Threaded parallelism only
+janet test/runner.janet -f '{unit,regression,coverage}' -j thread:4
+
+# Subprocess parallelism only (maximum isolation)
+janet test/runner.janet -f '{unit,regression,coverage}' -j subprocess:4
+#+end_src
+
+The syntax is:
+- =-j N= - Run with N workers (default mode)
+- =-j fiber:F,thread:T,subprocess:S= - Configure concurrency at each level:
+  * *fiber*: Concurrency inside each event loop
+  * *thread*: Worker OS threads running isolated Janet heaps
+  * *subprocess*: Independent worker processes for complete memory isolation
+
 ** Filter Syntax
 
 The ~-f~ / ~--filter~ flag uses a unified filter syntax:
