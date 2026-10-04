@@ -44,15 +44,15 @@ While a security audit is pending, the library maintains high standards for func
 Note that perf can be somewhat skewed by testing framework intricacies but it
 gives a bit of an idea.
 
-<div class="details" id="orge038d42">
-<div class="summary" id="orga858624">
+<div class="details" id="org9001d7e">
+<div class="summary" id="org683b95e">
 <p>
 Sample perf9 run: 50 clients, 4 servers, 4 client-hosts, threaded mode, 30s duration
 </p>
 
 </div>
 
-<pre class="example" id="org921dc14">
+<pre class="example" id="org9b01093">
 ================================================================================
   Results by Protocol
 ================================================================================
@@ -110,7 +110,7 @@ Run command:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-bash"># TCP test
+<pre class="src src-bash"><code># TCP test
 janet test/runner.janet \
   -f 'performance/perf9/echo[protocol=:tcp,client-count=50,duration=30]&lt;parallel=:thread,server=4,client-host=4&gt;' \
   --json /tmp/perf-tcp.json
@@ -122,7 +122,7 @@ janet test/runner.janet \
 
 # Analyze results
 ./bin/perf9-analyze -n /tmp/perf-combined.json
-</pre>
+</code></pre>
 </div>
 
 </div>

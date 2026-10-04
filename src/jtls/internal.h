@@ -52,7 +52,8 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h> /* For X509_CHECK_FLAG_* hostname verification flags */
+/* For X509_CHECK_FLAG_* hostname verification flags */
+#include <openssl/x509v3.h>
 #include <string.h>
 #include <time.h> /* For clock_gettime, CLOCK_MONOTONIC */
 

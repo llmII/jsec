@@ -36,7 +36,7 @@
 -   Verified under macOS Tahoe 26.2 x86\_64 (Darwin 25.2.0, Janet 1.40.1, OpenSSL 3.x)
 -   Verified under OpenIndiana Hipster x86\_64 (SunOS 5.11 / Illumos, Janet 1.40.1, OpenSSL 3.5.9)
 -   Verified under Windows 11 x86\_64 (Janet 1.40.1, MSVC 2022, vcpkg OpenSSL 3.x, IOCP)
--   Note: Janet 1.40.1 headers emit `-Wcast-align` warnings under macOS Apple Clang for
+-   Note: Janet 1.40.1 headers emit -Wcast-align warnings under macOS Apple Clang for
     the time being; left unpatched to retain clean compatibility with supported Janet 1.40.1
 -   Cross-platform verification complete across all 11 target environments
 
