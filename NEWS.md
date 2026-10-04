@@ -25,7 +25,9 @@
 
 ### Platform Verification Note
 
--   Verified under Linux x86\_64 (Janet 1.40.1, OpenSSL 3.6.5)
+-   Verified under Linux Host x86\_64 (Janet 1.40.1, OpenSSL 3.6.5)
+-   Verified under Ubuntu 24.04 LTS x86\_64 (Janet 1.40.1, GCC 13.3.0, OpenSSL 3.0.13)
+-   Verified under Chimera Linux x86\_64 (musl libc, LLVM/Clang 22.1.8, OpenSSL 3.6.4, with -j fiber:16,thread:6,subprocess:6 assay parallelism)
 -   Verified under DragonFly BSD 6.4.2 x86\_64 (Janet 1.40.1, LibreSSL 3.6.1)
 -   Verified under FreeBSD 15.0-RELEASE x86\_64 (Janet 1.40.1, OpenSSL 3.5.4)
 -   Verified under OpenBSD 7.8 x86\_64 (Janet 1.40.1, LibreSSL 4.2.0)
@@ -36,7 +38,7 @@
 -   Verified under Windows 11 x86\_64 (Janet 1.40.1, MSVC 2022, vcpkg OpenSSL 3.x, IOCP)
 -   Note: Janet 1.40.1 headers emit `-Wcast-align` warnings under macOS Apple Clang for
     the time being; left unpatched to retain clean compatibility with supported Janet 1.40.1
--   Cross-platform verification complete across all 9 target environments
+-   Cross-platform verification complete across all 11 target environments
 
 
 ## 2025-12-27 - DTLS Cross-Platform Fixes
