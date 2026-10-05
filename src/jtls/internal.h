@@ -165,6 +165,8 @@ typedef struct ServerCTXCache ServerCTXCache;
  * - What type of operation (read/write/handshake/etc)
  * - Current I/O state (waiting for read/write/complete/error)
  * - Buffers for data transfer
+ * - Timeout deadline, used by jtls_schedule_async to arm the deadline
+ *   only when the fiber actually suspends
  * - Error messages
  *
  * Lifecycle:
@@ -197,6 +199,12 @@ struct TLSState {
     int32_t buf_start;         /* user_buf->count when read op began; n is
                                 * relative to this, matching ev/read append
                                 * semantics (never treat n as buffer total) */
+    double timeout;            /* Operation deadline in seconds; armed by
+                                * jtls_schedule_async only when the fiber
+                                * actually suspends */
+    uint8_t has_timeout;       /* 1 if timeout is a finite deadline to arm at
+                                * first suspension, 0 otherwise; narrow type,
+                                * and 0 from memset safely means "no deadline" */
     char error_msg[256];       /* Error message buffer */
 };
 

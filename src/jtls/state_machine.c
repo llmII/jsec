@@ -80,6 +80,7 @@
  */
 
 #include "internal.h"
+#include <math.h>
 
 /*============================================================================
  * KEYLOG CALLBACK
@@ -468,6 +469,11 @@ TLSIOState jtls_process_operation(TLSState *state) {
     }
 }
 
+/* Helper to check if timeout is infinite (avoids float comparison warning) */
+static inline int is_infinite_timeout(double timeout) {
+    return isinf(timeout) != 0;
+}
+
 /*============================================================================
  * SCHEDULE ASYNC OPERATION
  *============================================================================
@@ -504,7 +510,17 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          * State is embedded in TLSStream (read_state or write_state),
          * so no heap allocation needed. The TLSStream is GC-managed
          * and marked during JANET_ASYNC_EVENT_MARK, keeping the state alive.
+         *
+         * Arm the deadline here, at first suspension: if the operation
+         * completed synchronously the fiber would never suspend, sched_id
+         * would not advance, and a stale timer would later cancel an
+         * unrelated wait with a spurious "timeout". The is_async branch
+         * above must not re-arm - the fiber is already suspended with its
+         * original deadline still live.
          */
+        if (state->has_timeout && !is_infinite_timeout(state->timeout)) {
+            janet_addtimeout(state->timeout);
+        }
         janet_async_start(tls->transport, mode, jtls_async_callback, state);
     }
 }
