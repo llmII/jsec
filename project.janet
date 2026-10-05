@@ -381,3 +381,39 @@
                  "janet test/runner.janet"))
        (print "This target is a no-op for now."))
 (phony "leak-check" ["test/valgrind"])
+
+# ============================================================================
+# Hermetic In-Tree Toolchain (see docs/DEVELOPERS.org)
+# ============================================================================
+# These run bootstrap and tests through .work/toolchain/bin/{janet,jpm}, never
+# the host janet/jpm. First invocation may use `jpm run` as a dispatcher; the
+# actual build/test steps invoke the in-tree tools by path.
+
+(def- run-or-fail
+  (fn [args]
+    (def code (os/execute args :p))
+    (unless (zero? code)
+      (print "command failed (exit " code "): " (string/join args " "))
+      (os/exit code))))
+
+(def- toolchain-janet ".work/toolchain/bin/janet")
+(def- toolchain-jpm ".work/toolchain/bin/jpm")
+
+# Build the hermetic toolchain into .work/toolchain (idempotent).
+(phony "toolchain" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"]))
+
+# Toolchain acceptance gate: hermeticity + version match + build/load probe.
+(phony "test-toolchain" ["toolchain"]
+       (run-or-fail [toolchain-janet "test/test-toolchain.janet"]))
+
+# Build jsec and run the suite under the in-tree toolchain with the project's
+# default concurrency and suite selection (builds and tests itself).
+(phony "self-test" ["toolchain"]
+       (print "Building jsec under the in-tree toolchain...")
+       (run-or-fail [toolchain-jpm "build"])
+       (run-or-fail [toolchain-janet "test/test-toolchain.janet"])
+       (print "Running unit/regression/coverage under the in-tree toolchain...")
+       (run-or-fail [toolchain-janet "test/runner.janet"
+                     "-f" "{unit,regression,coverage}"
+                     "-j" "fiber:16,thread:6,subprocess:6"]))

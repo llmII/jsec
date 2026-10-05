@@ -357,6 +357,73 @@ fprintf(stderr, "OpenSSL error: %s\n", buf);
 - ~openssl s_server -cert cert.pem -key key.pem~ - Test client
 - ~wireshark~ - Packet inspection (can decrypt with SSLKEYLOGFILE)
 
+* Hermetic In-Tree Toolchain
+
+jsec develops and tests itself against a pinned Janet through a self-contained
+toolchain under ~.work/~, with no reliance on the host ~janet~ / ~jpm~. This
+keeps the compiled-module ABI consistent: a host ~jpm~ whose baked ~headerpath~
+points at a different Janet than the interpreter produces modules rejected at
+load with ~config mismatch - host X vs module Y~. Building through the in-tree
+toolchain removes that failure class and lets the repo test itself across many
+OSes from base build tools plus OpenSSL/LibreSSL dev libraries alone.
+
+The hermetic toolchain is a development/testing facility, not an install
+requirement.
+
+** When to use which
+
+a) *Developing and testing jsec* - Build and test from the project's source
+   directory using the hermetic in-tree toolchain (~.work/toolchain~). This is
+   what ~scripts/bootstrap-toolchain.sh~ and ~jpm run self-test~ provide. The
+   hermetic toolchain exists so the test suite is reproducible and not
+   contaminated by whatever ~janet~ / ~jpm~ happens to be installed. For this
+   case only, never use the host ~janet~ or ~jpm~ for jsec builds or tests;
+   always use the copies under ~.work/toolchain/bin/~.
+
+b) *Installing jsec as a dependency for use* - A normal install that goes
+   wherever the user's ~jpm~ is configured to install: ~.local~ under the home
+   directory for a per-user install, system directories when run as root, or
+   whatever ~modpath~ / ~binpath~ the user set. This is the ordinary ~jpm
+   install~ path and needs no ~.work/~ toolchain and no bootstrap. Nothing
+   about the hermetic toolchain is required for end users consuming jsec.
+
+** Bootstrap
+
+#+begin_src sh
+# Build the hermetic toolchain (Janet + jpm) into .work/toolchain/
+sh scripts/bootstrap-toolchain.sh
+
+# Build against a specific Janet rev (tag, branch, or githash) for a matrix
+sh scripts/bootstrap-toolchain.sh --janet-rev 7d672f43 \
+  --toolchain .work/toolchain/1.40.1
+#+end_src
+
+The script verifies host prerequisites (a C toolchain, ~ar~, ~make~, and
+OpenSSL/LibreSSL dev headers and libraries) and fails with a clear message when
+any are missing. It is idempotent and re-runnable; pass ~--force~ to rebuild or
+~--clean~ to start over. ~--help~ lists all options. The Janet and jpm revisions
+are parameters, so one script drives a per-version test matrix with each
+revision in its own ~--toolchain~ prefix.
+
+** Build and Test
+
+#+begin_src sh
+.work/toolchain/bin/jpm build            # build jsec under the in-tree toolchain
+
+# Toolchain acceptance test (standalone gate, run under the in-tree janet)
+.work/toolchain/bin/janet test/test-toolchain.janet
+
+# Full suite under the in-tree toolchain
+.work/toolchain/bin/janet test/runner.janet -f '{unit,regression,coverage}' \
+  -j fiber:16,thread:6,subprocess:6
+#+end_src
+
+~test/test-toolchain.janet~ is a standalone gate, not part of the assay matrix.
+It runs under the in-tree interpreter and asserts three properties: ~:syspath~
+is isolated (no ~.local~, no ~/usr/local~), the running Janet version matches
+the version in the resolved ~include/janet/janet.h~, and a freshly built native
+module loads without ~config mismatch~.
+
 * Common Pitfalls
 
 1. *Blocking in Event Loop* - Never use blocking OpenSSL calls
