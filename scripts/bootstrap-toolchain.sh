@@ -11,20 +11,35 @@ set -eu
 # points at a Janet different from the host interpreter, producing
 # `config mismatch - host A vs module B` at module load time.
 #
+# Hermeticity is established by the entry-point launchers and inherited by the
+# whole process tree. The committed launchers
+# (scripts/toolchain-launcher-{janet,jpm}.sh) self-locate via $0, unset every
+# JANET_* path override, prepend <prefix>/bin to PATH, and exec the matching
+# real binary under <prefix>/libexec/. Nothing else needs to know where
+# anything lives: janet is self-describing (its baked (dyn :syspath) is
+# <prefix>/lib/janet) and jpm's default-config.janet holds absolute paths.
+#
 # The Janet revision is a parameter (tag, branch, or githash) so one script can
 # drive a per-version matrix. Each rev can build into its own toolchain prefix
 # via --toolchain, so multiple Janets coexist under .work/.
 #
-# Layout produced (mirrors the reference toolchain convention):
-#   <prefix>/bin/janet
-#   <prefix>/bin/jpm
-#   <prefix>/include/janet/janet.h
-#   <prefix>/lib/libjanet.a  (and shared lib)
-#   <prefix>/lib/janet/      (installed modules, incl. jpm/)
+# Layout produced (default prefix, .work/):
+#   bin/janet        our self-locating POSIX-sh launcher (entry point)
+#   bin/jpm          our self-locating POSIX-sh launcher (entry point)
+#   libexec/janet    the real built janet binary (private)
+#   libexec/jpm      jpm's own generated script (private, non-executable)
+#   include/janet/janet.h
+#   lib/libjanet.a  (and shared lib)
+#   lib/janet/      (installed modules, incl. jpm/)
+#   build/          jpm :buildpath (project build output; lives under the
+#                   --toolchain prefix, so each Janet version is isolated)
 #
 # The in-tree jpm is bootstrapped AGAINST the in-tree janet with PREFIX and
-# JANET_*PATH pointing into <prefix>, so its baked default-config.janet resolves
-# :headerpath/:modpath/:binpath/:libpath inside the toolchain.
+# JANET_STRICT_MODPATH pointing it into <prefix>, so its baked
+# default-config.janet resolves :headerpath/:modpath/:binpath/:libpath inside
+# the toolchain. That generated config is then extended (structurally, never
+# string-patched) with the two keys jpm's generator cannot express, :janet and
+# :buildpath.
 #
 # Windows is a special case handled separately (see build-windows.bat / MSVC +
 # vcpkg, or MSYS2 MinGW); this script targets POSIX hosts (Linux, the BSDs,
@@ -51,9 +66,11 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(dirname -- "$SCRIPT_DIR")
 WORK_DIR="$ROOT_DIR/.work"
 SRC_DIR="$WORK_DIR/src"
-TOOLCHAIN_DIR="$WORK_DIR/toolchain"     # overridable via --toolchain
+TOOLCHAIN_DIR="$WORK_DIR"               # overridable via --toolchain
 SCRATCH_DIR="$WORK_DIR/scratch"
-STAMP_FILE="$WORK_DIR/TOOLCHAIN"
+
+LAUNCHER_JANET="$SCRIPT_DIR/toolchain-launcher-janet.sh"
+LAUNCHER_JPM="$SCRIPT_DIR/toolchain-launcher-jpm.sh"
 
 JANET_REV="$DEFAULT_JANET_REV"
 JPM_REV="$DEFAULT_JPM_REV"
@@ -77,6 +94,10 @@ Usage: scripts/bootstrap-toolchain.sh [OPTIONS]
 Build a hermetic in-tree Janet toolchain into a .work/ prefix for jsec.
 Idempotent and re-runnable. The host janet/jpm are NOT used for jsec builds.
 
+Hermeticity is established by the entry-point launchers copied into
+<prefix>/bin/: they self-locate, clear the JANET_* path overrides, put their
+own bin/ first on PATH, and exec the real binaries under <prefix>/libexec/.
+
 The Janet revision is selectable (tag, branch, or githash) so one script can
 drive a per-version test matrix. Pair --janet-rev with --toolchain to keep
 multiple Janet toolchains side by side under .work/.
@@ -84,15 +105,18 @@ multiple Janet toolchains side by side under .work/.
 Options:
   -h, --help             Show this help and exit
   -f, --force            Rebuild the toolchain even if it already exists
-  -c, --clean            Remove the toolchain prefix first, then rebuild
+  -c, --clean            Remove the toolchain under the prefix first (bin/,
+                         build/, include/, lib/, libexec/, share/), then
+                         rebuild. Keeps src/ and scratch/
       --local            Offline only: use local mirrors, never clone (error if
                          the requested rev is not in a local mirror)
       --janet-rev REV    Janet revision to build (tag/branch/githash).
                          Default: ${DEFAULT_JANET_REV} (janet 1.40.1)
       --jpm-rev REV      jpm revision to build (tag/branch/githash).
                          Default: ${DEFAULT_JPM_REV} (jpm 1.2.1)
-      --toolchain DIR    Output prefix. Default: .work/toolchain
-                         (e.g. .work/toolchain/1.40.1 for a matrix)
+      --toolchain DIR    Output prefix. Default: .work, so the toolchain
+                         lives directly in .work/{bin,build,include,lib,
+                         libexec,share} (e.g. .work/1.40.1 for a matrix)
 
 Environment:
   JANET_SRC   Local Janet source mirror  (default: ${JANET_SRC})
@@ -102,12 +126,16 @@ Environment:
   CC          C compiler (default: cc)
 
 Output under --toolchain:
-  bin/{janet,jpm}
+  bin/janet, bin/jpm       self-locating POSIX-sh launchers (entry points)
+  libexec/janet            the real built janet binary (private)
+  libexec/jpm              jpm's own generated script (private; only run as a
+                           script argument to libexec/janet, never executed)
   include/janet/janet.h
   lib/libjanet.a
-  lib/janet/                 (installed modules)
+  lib/janet/               (installed modules)
+  build/                   jpm :buildpath (project build output)
 
-Provenance is recorded in .work/TOOLCHAIN (revisions + built Janet version).
+Provenance is recorded in <prefix>/TOOLCHAIN (revisions + built Janet version).
 EOF
 }
 
@@ -132,10 +160,15 @@ case "$TOOLCHAIN_DIR" in
     /*) ;;
     *) TOOLCHAIN_DIR="$ROOT_DIR/$TOOLCHAIN_DIR" ;;
 esac
-JANET_BIN="$TOOLCHAIN_DIR/bin/janet"
-JPM_BIN="$TOOLCHAIN_DIR/bin/jpm"
+LIBEXEC_DIR="$TOOLCHAIN_DIR/libexec"
+JANET_BIN="$TOOLCHAIN_DIR/bin/janet"    # our launcher (public entry point)
+JPM_BIN="$TOOLCHAIN_DIR/bin/jpm"        # our launcher (public entry point)
+JANET_REAL="$LIBEXEC_DIR/janet"         # the real built janet binary (private)
+JPM_REAL="$LIBEXEC_DIR/jpm"             # jpm's own generated script (private)
 JANET_MODPATH="$TOOLCHAIN_DIR/lib/janet"
-JANET_HEADERPATH="$TOOLCHAIN_DIR/include/janet"
+JANET_INCLUDEDIR="$TOOLCHAIN_DIR/include/janet"
+BUILD_DIR="$TOOLCHAIN_DIR/build"        # jpm :buildpath (project build output)
+STAMP_FILE="$TOOLCHAIN_DIR/TOOLCHAIN"
 
 # --- Portable helpers ---------------------------------------------------------
 ncpu() { nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1; }
@@ -243,7 +276,7 @@ resolve_jpm_src() {
     [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but jpm rev $JPM_REV not found in local mirror ${JPM_SRC:-unset}."
     log "Cloning jpm rev $JPM_REV from $JPM_URL..."
     if is_sha "$JPM_REV"; then
-        git clone "$JPM_URL" "$dest" >/dev/null 2>&1 || die "clone of $JPM_URL failed."
+        git clone "$JPM_URL" "$dest" >/dev/null 2>&1 || die "clone of jpm rev $JPM_REV failed."
         git -C "$dest" checkout --quiet "$JPM_REV" || die "jpm rev $JPM_REV not found."
     else
         git clone --depth 1 --branch "$JPM_REV" "$JPM_URL" "$dest" >/dev/null 2>&1 || die "clone of jpm tag/branch $JPM_REV failed."
@@ -251,6 +284,48 @@ resolve_jpm_src() {
     echo "$JPM_REV" > "$dest/.jsec-rev"
     note "cloned jpm rev $JPM_REV from $JPM_URL"
     printf '%s' "$dest"
+}
+
+# Run a command under a clean environment (env -i): only PATH and HOME are
+# carried over, so a stale or hostile JANET_*/PREFIX export in the calling
+# shell cannot leak into the toolchain being generated. PATH leads with the
+# toolchain's own bin/ so `which janet` resolves to the launcher; the host
+# tool locations that follow are still needed for cc, make, ar and git.
+clean_env() {
+    env -i PATH="$TOOLCHAIN_DIR/bin:$PATH" HOME="$HOME" "$@"
+}
+
+# jpm's generate-config cannot express :janet (it emits the bare name "janet")
+# or :buildpath. Extend the generated default-config.janet structurally
+# (dofile -> put -> spit) with those two keys: :janet names our launcher so
+# jpm-spawned children re-enter the env-establishing entry point, and
+# :buildpath pins the project build output. Nothing in the generated file is
+# string-matched or patched.
+extend_default_config() {
+    _pp="$SCRATCH_DIR/.extend-config.janet"
+    cat > "$_pp" <<'EOF'
+(def cfg-path (os/getenv "PP_CONFIG"))
+(def janet-abs (os/getenv "PP_JANET"))
+(def build-abs (os/getenv "PP_BUILD"))
+
+(def env (dofile cfg-path))
+(def cfg (get-in env ['config :value]))
+(unless (table? cfg) (error "default-config.janet does not define config"))
+(put cfg :janet janet-abs)
+(put cfg :buildpath build-abs)
+(spit cfg-path
+      (string/format
+        "# Autogenerated by generate-config in jpm/make-config.janet\n(def config %.99m)"
+        cfg))
+EOF
+    if ! clean_env \
+           PP_CONFIG="$JANET_MODPATH/jpm/default-config.janet" \
+           PP_JANET="$JANET_BIN" \
+           PP_BUILD="$BUILD_DIR" \
+           "$JANET_REAL" "$_pp"; then
+        return 1
+    fi
+    note "extended jpm default-config.janet with :janet and :buildpath"
 }
 
 # Run a command, quiet on success; dump captured output and fail on error.
@@ -273,31 +348,71 @@ build_janet() {
         || die "Janet build failed (see output above)."
     run_logged make -C "$1" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" install \
         || die "Janet install into $TOOLCHAIN_DIR failed."
-    [ -x "$JANET_BIN" ] || die "Janet binary missing after install: $JANET_BIN"
-    note "built Janet -> $JANET_BIN ($("$JANET_BIN" -e '(print janet/version)'))"
+    [ -x "$TOOLCHAIN_DIR/bin/janet" ] || die "Janet binary missing after install: $TOOLCHAIN_DIR/bin/janet"
+    note "built Janet $(clean_env "$TOOLCHAIN_DIR/bin/janet" -e '(print janet/version)') -> $JANET_REAL"
+}
+
+# bin/ holds only our launchers; the real janet binary is private under libexec/.
+relocate_janet() {
+    log "Relocating the real Janet binary to libexec/..."
+    mkdir -p "$LIBEXEC_DIR"
+    mv "$TOOLCHAIN_DIR/bin/janet" "$JANET_REAL"
+    note "relocated janet binary -> $JANET_REAL"
 }
 
 bootstrap_jpm() {
     log "Bootstrapping jpm rev $JPM_REV against in-tree Janet..."
-    # Env vars force jpm's generated default-config.janet to point INTO the
-    # toolchain. This is the whole point: the baked headerpath must resolve to
-    # <prefix>/include/janet, never a host include dir.
+    # jpm's generate-config derives binpath/headerpath/libpath/manpath/modpath
+    # from PREFIX (JANET_STRICT_MODPATH pins modpath to lib/janet), so the
+    # generated default-config.janet points INTO the toolchain - the baked
+    # headerpath must resolve to <prefix>/include/janet, never a host include
+    # dir. clean_env applies here: hostile exports must not be baked into the
+    # generated config.
     _log="$SCRATCH_DIR/.last-make.log"
     if ! ( cd "$1" && \
+           clean_env \
            PREFIX="$TOOLCHAIN_DIR" \
-           JANET_BINPATH="$TOOLCHAIN_DIR/bin" \
-           JANET_MODPATH="$JANET_MODPATH" \
-           JANET_HEADERPATH="$JANET_HEADERPATH" \
-           JANET_LIBPATH="$TOOLCHAIN_DIR/lib" \
-           JANET_MANPATH="$TOOLCHAIN_DIR/share/man/man1" \
            JANET_STRICT_MODPATH=true \
-           "$JANET_BIN" bootstrap.janet ) >"$_log" 2>&1; then
+           "$JANET_REAL" bootstrap.janet ) >"$_log" 2>&1; then
         printf '%s\n' "--- output ---" >&2; cat "$_log" >&2; printf '%s\n' "--- end output ---" >&2
         die "jpm bootstrap failed (see output above)."
     fi
-    [ -x "$JPM_BIN" ] || die "jpm binary missing after bootstrap: $JPM_BIN"
+    [ -x "$TOOLCHAIN_DIR/bin/jpm" ] || die "jpm script missing after bootstrap: $TOOLCHAIN_DIR/bin/jpm"
     [ -f "$JANET_MODPATH/jpm/default-config.janet" ] || die "jpm default-config.janet missing under $JANET_MODPATH/jpm/"
-    note "bootstrapped jpm -> $JPM_BIN"
+    note "bootstrapped jpm -> $JPM_REAL"
+}
+
+# bin/ holds only our launchers; jpm's own generated script is private too.
+# bin/jpm passes it to libexec/janet as a script argument, so its execute bit
+# is dropped: direct execution is not an entry point.
+relocate_jpm() {
+    log "Relocating jpm's generated script to libexec/..."
+    mkdir -p "$LIBEXEC_DIR"
+    mv "$TOOLCHAIN_DIR/bin/jpm" "$JPM_REAL"
+    chmod -x "$JPM_REAL"
+    note "relocated jpm script -> $JPM_REAL"
+}
+
+# Our committed launchers are relocatable repo source: copied, never generated.
+# The janet launcher goes in BEFORE jpm's bootstrap: jpm's auto-shebang picks
+# <binpath>/janet when that exists, so the generated libexec/jpm script then
+# names the launcher and every execution path re-enters it.
+install_janet_launcher() {
+    log "Installing the janet launcher into bin/..."
+    [ -f "$LAUNCHER_JANET" ] || die "launcher source missing: $LAUNCHER_JANET"
+    mkdir -p "$TOOLCHAIN_DIR/bin"
+    cp "$LAUNCHER_JANET" "$JANET_BIN"
+    chmod +x "$JANET_BIN"
+    note "installed launcher -> $JANET_BIN"
+}
+
+install_jpm_launcher() {
+    log "Installing the jpm launcher into bin/..."
+    [ -f "$LAUNCHER_JPM" ] || die "launcher source missing: $LAUNCHER_JPM"
+    mkdir -p "$TOOLCHAIN_DIR/bin"
+    cp "$LAUNCHER_JPM" "$JPM_BIN"
+    chmod +x "$JPM_BIN"
+    note "installed launcher -> $JPM_BIN"
 }
 
 write_stamp() {
@@ -315,11 +430,10 @@ print_summary() {
     log "Hermetic toolchain ready at $TOOLCHAIN_DIR"
     info "janet:      $("$JANET_BIN" -e '(print janet/version)' 2>/dev/null)  (syspath: $("$JANET_BIN" -e '(print (dyn :syspath))' 2>/dev/null))"
     info "jpm:        $JPM_BIN"
-    info "headerpath: $JANET_HEADERPATH"
+    info "libexec:    $JANET_REAL , $JPM_REAL"
+    info "headerpath: $JANET_INCLUDEDIR"
     info "modpath:    $JANET_MODPATH"
-    if [ -f "$JANET_MODPATH/jpm/default-config.janet" ]; then
-        info "jpm baked :headerpath -> $(grep -o ':headerpath "[^"]*"' "$JANET_MODPATH/jpm/default-config.janet" | sed 's/:headerpath //')"
-    fi
+    info "buildpath:  $BUILD_DIR"
     if [ -n "$ACTIONS" ]; then
         log "Actions taken:"
         printf '%s' "$ACTIONS"
@@ -328,8 +442,13 @@ print_summary() {
 }
 
 have_toolchain() {
-    [ -x "$JANET_BIN" ] && [ -x "$JPM_BIN" ] && \
-        [ -f "$JANET_HEADERPATH/janet.h" ] && \
+    # Complete toolchain = the relocated real binaries + our launchers +
+    # headers + jpm's generated config. The stamp (written only after a fully
+    # successful run) is checked separately. libexec/jpm is checked with -f:
+    # it is non-executable by design (a script argument to libexec/janet).
+    [ -x "$JANET_REAL" ] && [ -f "$JPM_REAL" ] && \
+        [ -x "$JANET_BIN" ] && [ -x "$JPM_BIN" ] && \
+        [ -f "$JANET_INCLUDEDIR/janet.h" ] && \
         [ -f "$JANET_MODPATH/jpm/default-config.janet" ]
 }
 
@@ -349,10 +468,16 @@ info "jpm rev:   $JPM_REV"
 
 if [ "$CLEAN" -eq 1 ]; then
     log "Cleaning $TOOLCHAIN_DIR..."
-    rm -rf "$TOOLCHAIN_DIR"
+    # The default prefix is .work/ itself, which also holds the project's own
+    # src/ and scratch/: keep those. build/ is the toolchain's disposable
+    # build output and goes too - stale objects from a different Janet are
+    # what the per-toolchain buildpath exists to exclude.
+    rm -rf "$TOOLCHAIN_DIR/bin" "$TOOLCHAIN_DIR/build" "$TOOLCHAIN_DIR/include" \
+           "$TOOLCHAIN_DIR/lib" "$TOOLCHAIN_DIR/libexec" "$TOOLCHAIN_DIR/share"
+    rm -f "$STAMP_FILE"
 fi
 
-mkdir -p "$SRC_DIR" "$TOOLCHAIN_DIR" "$SCRATCH_DIR"
+mkdir -p "$SRC_DIR" "$TOOLCHAIN_DIR" "$SCRATCH_DIR" "$BUILD_DIR"
 
 if [ "$FORCE" -eq 0 ] && have_toolchain; then
     cur=$("$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)
@@ -366,9 +491,18 @@ if [ "$FORCE" -eq 0 ] && have_toolchain; then
     log "Toolchain present for a different Janet rev (${stamped:-unknown} -> $JANET_REV); rebuilding."
 fi
 
+# Rebuilding now: drop the stamp first so an interrupted rebuild cannot look
+# complete on the next run (the stamp is written only after full success).
+rm -f "$STAMP_FILE"
+
 resolve_janet_src
 build_janet "$RESOLVED_SRC"
+relocate_janet
+install_janet_launcher
 resolve_jpm_src
 bootstrap_jpm "$RESOLVED_SRC"
+relocate_jpm
+install_jpm_launcher
+extend_default_config
 write_stamp
 print_summary

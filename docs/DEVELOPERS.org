@@ -373,12 +373,12 @@ requirement.
 ** When to use which
 
 a) *Developing and testing jsec* - Build and test from the project's source
-   directory using the hermetic in-tree toolchain (~.work/toolchain~). This is
-   what ~scripts/bootstrap-toolchain.sh~ and ~jpm run self-test~ provide. The
+   directory using the hermetic in-tree toolchain (~.work/~). This is what
+   ~scripts/bootstrap-toolchain.sh~ and ~jpm run self-test~ provide. The
    hermetic toolchain exists so the test suite is reproducible and not
    contaminated by whatever ~janet~ / ~jpm~ happens to be installed. For this
    case only, never use the host ~janet~ or ~jpm~ for jsec builds or tests;
-   always use the copies under ~.work/toolchain/bin/~.
+   always use the copies under ~.work/bin/~.
 
 b) *Installing jsec as a dependency for use* - A normal install that goes
    wherever the user's ~jpm~ is configured to install: ~.local~ under the home
@@ -387,15 +387,41 @@ b) *Installing jsec as a dependency for use* - A normal install that goes
    install~ path and needs no ~.work/~ toolchain and no bootstrap. Nothing
    about the hermetic toolchain is required for end users consuming jsec.
 
+** Which tool you invoke
+
+Hermeticity is a property of which binary you invoke, not of environment you
+set. Two rules cover it:
+
+1. Which ~jpm~ you invoke decides the install destination. System ~jpm
+   install~ goes to system directories; a user-level ~jpm~ goes to the user's
+   ~.local~ / XDG tree; ~.work/bin/jpm install~ lands inside the project
+   (~.work/lib/janet~ and ~.work/bin~), because that ~jpm~ has those paths
+   baked in and ignores ~JANET_*~ overrides from the environment. No flags.
+
+2. Which ~janet~ you invoke decides which interpreter the whole process tree
+   uses. ~.work/bin/~ holds only self-locating POSIX-sh launchers. Each
+   launcher establishes the environment for the whole process tree - it unsets
+   every ~JANET_*~ path override and prepends its own ~bin/~ to ~PATH~ - then
+   execs the matching real binary. The real binaries live in ~.work/libexec/~
+   and are private: ~libexec/janet~ is the built interpreter, ~libexec/jpm~ is
+   jpm's own script. Everything they spawn (assay workers, ~jpm~
+   sub-invocations) resolves ~janet~ / ~jpm~ back to the launchers through
+   that ~PATH~. Invoking the host ~janet~ / ~jpm~ is your own configuration.
+
+Putting ~.work/bin~ on your ~PATH~ is optional and works: every ~janet~ and
+~jpm~ in that shell is then the toolchain's. It is not required - invoking
+~.work/bin/janet~ and ~.work/bin/jpm~ by path is equally hermetic, because the
+launchers establish the environment and the whole process tree inherits it.
+
 ** Bootstrap
 
 #+begin_src sh
-# Build the hermetic toolchain (Janet + jpm) into .work/toolchain/
+# Build the hermetic toolchain (Janet + jpm) into .work/
 sh scripts/bootstrap-toolchain.sh
 
 # Build against a specific Janet rev (tag, branch, or githash) for a matrix
 sh scripts/bootstrap-toolchain.sh --janet-rev 7d672f43 \
-  --toolchain .work/toolchain/1.40.1
+  --toolchain .work/1.40.1
 #+end_src
 
 The script verifies host prerequisites (a C toolchain, ~ar~, ~make~, and
@@ -408,21 +434,21 @@ revision in its own ~--toolchain~ prefix.
 ** Build and Test
 
 #+begin_src sh
-.work/toolchain/bin/jpm build            # build jsec under the in-tree toolchain
+# one-time per fresh toolchain: fetch/build the test dependencies (assay, spork)
+.work/bin/jpm deps
 
-# Toolchain acceptance test (standalone gate, run under the in-tree janet)
-.work/toolchain/bin/janet test/test-toolchain.janet
+.work/bin/jpm build            # build jsec under the in-tree toolchain
+.work/bin/jpm install          # install jsec into the in-tree tree
 
 # Full suite under the in-tree toolchain
-.work/toolchain/bin/janet test/runner.janet -f '{unit,regression,coverage}' \
+.work/bin/janet test/runner.janet -f '{unit,regression,coverage}' \
   -j fiber:16,thread:6,subprocess:6
 #+end_src
 
-~test/test-toolchain.janet~ is a standalone gate, not part of the assay matrix.
-It runs under the in-tree interpreter and asserts three properties: ~:syspath~
-is isolated (no ~.local~, no ~/usr/local~), the running Janet version matches
-the version in the resolved ~include/janet/janet.h~, and a freshly built native
-module loads without ~config mismatch~.
+~jpm build~ and ~jpm install~ stay separate tasks and need no flags: the
+in-tree ~jpm~ already points at ~.work/lib/janet~ and ~.work/bin~. A fresh
+build + install round-trip keeps the interpreter and headers in step, so
+skew surfaces as ~config mismatch~ at module load in the normal suite.
 
 * Common Pitfalls
 
