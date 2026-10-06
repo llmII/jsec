@@ -88,6 +88,7 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
  */
 
 DTLSResult dtls_do_handshake(SSL *ssl) {
+    ERR_clear_error();
     int ret = SSL_do_handshake(ssl);
     if (ret == 1) {
         return DTLS_RESULT_OK;
@@ -97,6 +98,7 @@ DTLSResult dtls_do_handshake(SSL *ssl) {
 
 DTLSResult dtls_do_read(SSL *ssl, uint8_t *buf, int32_t len,
                         int32_t *out_len) {
+    ERR_clear_error();
     int ret = SSL_read(ssl, buf, len);
     if (ret > 0) {
         *out_len = ret;
@@ -108,6 +110,7 @@ DTLSResult dtls_do_read(SSL *ssl, uint8_t *buf, int32_t len,
 
 DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
                          int32_t *out_len) {
+    ERR_clear_error();
     int ret = SSL_write(ssl, buf, len);
     if (ret > 0) {
         *out_len = ret;
@@ -118,6 +121,7 @@ DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
 }
 
 DTLSResult dtls_do_shutdown(SSL *ssl) {
+    ERR_clear_error();
     int ret = SSL_shutdown(ssl);
     if (ret == 1) {
         /* Bidirectional shutdown complete */
