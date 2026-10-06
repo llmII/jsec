@@ -1,0 +1,2 @@
+*.o,*.obj,*.a,*.lib,*.so,*.so.*,*.dylib,*.dll,*.exe,*.pdb,*.gcda,*.gcno,*.gcov,
+build/*,jpm_tree/*,.work/*,*.tmp,*~,*.orig,*.rej,*.bak,.DS_Store

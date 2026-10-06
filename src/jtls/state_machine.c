@@ -80,6 +80,12 @@
  */
 
 #include "internal.h"
+#include <math.h>
+
+/* Cap on bytes read per iteration, matching Janet's ev/chunk rate
+ * (core/ev.c). Bounds buffer growth to the data actually read, not the
+ * request size. */
+#define JSEC_READ_CHUNK 4096
 
 /*============================================================================
  * KEYLOG CALLBACK
@@ -250,19 +256,19 @@ TLSIOState jtls_process_operation(TLSState *state) {
                 int read_size = state->bytes_requested -
                                 (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested < 0) {
-                    read_size = 65536; /* Read in 64KB chunks if no limit */
+                    read_size = JSEC_READ_CHUNK; /* unbounded: fixed slices */
                 } else if (read_size <= 0) {
                     return TLS_IO_COMPLETE;
                 }
+                int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
+                                                       : read_size;
 
-                /* Ensure buffer has capacity for existing data + new data to
-                 * read */
-                janet_buffer_ensure(state->user_buf,
-                                    state->user_buf->count + read_size, 2);
+                /* want bounds both ensured capacity and SSL_read length */
+                janet_buffer_extra(state->user_buf, want);
 
                 ret = SSL_read(tls->ssl,
                                state->user_buf->data + state->user_buf->count,
-                               read_size);
+                               want);
 
                 if (ret > 0) {
                     check_record_handshake_time(tls);
@@ -301,16 +307,15 @@ TLSIOState jtls_process_operation(TLSState *state) {
                 if (remaining <= 0) {
                     return TLS_IO_COMPLETE;
                 }
+                int want = remaining > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
+                                                       : remaining;
 
-                /* Ensure buffer has capacity for existing data + remaining
-                 * bytes to read
-                 */
-                janet_buffer_ensure(state->user_buf,
-                                    state->user_buf->count + remaining, 2);
+                /* want bounds both ensured capacity and SSL_read length */
+                janet_buffer_extra(state->user_buf, want);
 
                 ret = SSL_read(tls->ssl,
                                state->user_buf->data + state->user_buf->count,
-                               remaining);
+                               want);
 
                 if (ret > 0) {
                     check_record_handshake_time(tls);
@@ -468,6 +473,11 @@ TLSIOState jtls_process_operation(TLSState *state) {
     }
 }
 
+/* Helper to check if timeout is infinite (avoids float comparison warning) */
+static inline int is_infinite_timeout(double timeout) {
+    return isinf(timeout) != 0;
+}
+
 /*============================================================================
  * SCHEDULE ASYNC OPERATION
  *============================================================================
@@ -504,7 +514,17 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          * State is embedded in TLSStream (read_state or write_state),
          * so no heap allocation needed. The TLSStream is GC-managed
          * and marked during JANET_ASYNC_EVENT_MARK, keeping the state alive.
+         *
+         * Arm the deadline here, at first suspension: if the operation
+         * completed synchronously the fiber would never suspend, sched_id
+         * would not advance, and a stale timer would later cancel an
+         * unrelated wait with a spurious "timeout". The is_async branch
+         * above must not re-arm - the fiber is already suspended with its
+         * original deadline still live.
          */
+        if (state->has_timeout && !is_infinite_timeout(state->timeout)) {
+            janet_addtimeout(state->timeout);
+        }
         janet_async_start(tls->transport, mode, jtls_async_callback, state);
     }
 }
@@ -824,16 +844,25 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     read_size = 65536;
                 }
 
-                /* Ensure buffer has capacity for existing data + new data to
-                 * read */
-                janet_buffer_ensure(state->user_buf,
-                                    state->user_buf->count + read_size, 2);
-
-                int ret = SSL_read(
-                    tls->ssl, state->user_buf->data + state->user_buf->count,
-                    read_size);
-                if (ret > 0) {
+                /* Drain pending data in bounded slices so the buffer
+                 * grows with data read, not read_size; want bounds both
+                 * the ensured capacity and the SSL_read length */
+                int ret = 0;
+                while (read_size > 0) {
+                    int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
+                                                          : read_size;
+                    janet_buffer_extra(state->user_buf, want);
+                    ret = SSL_read(
+                        tls->ssl,
+                        state->user_buf->data + state->user_buf->count,
+                        want);
+                    if (ret <= 0) {
+                        break;
+                    }
                     state->user_buf->count += ret;
+                    read_size -= ret;
+                }
+                if (ret > 0) {
                     /* Return successfully read data */
                     janet_schedule(fiber, janet_wrap_buffer(state->user_buf));
                     fiber->ev_state = NULL;

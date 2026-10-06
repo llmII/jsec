@@ -256,7 +256,7 @@
 
 (phony "clean" []
        (print "Cleaning build artifacts...")
-       (rmdir-recursive "build")
+       (rmdir-recursive (dyn :buildpath "build"))
        (rmdir-recursive "jpm_tree")
        # Remove generated markdown files
        (each f (find-files-by-suffixes "." [".md"])
@@ -381,3 +381,36 @@
                  "janet test/runner.janet"))
        (print "This target is a no-op for now."))
 (phony "leak-check" ["test/valgrind"])
+
+# ============================================================================
+# Hermetic In-Tree Toolchain (see docs/DEVELOPERS.org)
+# ============================================================================
+# These run bootstrap and tests through .work/bin/{janet,jpm}, never the host
+# janet/jpm. First invocation may use `jpm run` as a dispatcher; the actual
+# build/test steps invoke the in-tree tools by path.
+
+(def- run-or-fail
+  (fn [args]
+    (def code (os/execute args :p))
+    (unless (zero? code)
+      (print "command failed (exit " code "): " (string/join args " "))
+      (os/exit code))))
+
+(def- toolchain-janet ".work/bin/janet")
+(def- toolchain-jpm ".work/bin/jpm")
+
+# Build the hermetic toolchain into .work/ (idempotent).
+(phony "toolchain" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"]))
+
+# Build jsec and run the suite under the in-tree toolchain with the project's
+# default concurrency and suite selection (builds and tests itself).
+(phony "self-test" ["toolchain"]
+       (print "Building jsec under the in-tree toolchain...")
+       (run-or-fail [toolchain-jpm "build"])
+       (print "Installing jsec under the in-tree toolchain...")
+       (run-or-fail [toolchain-jpm "install"])
+       (print "Running unit/regression/coverage under the in-tree toolchain...")
+       (run-or-fail [toolchain-janet "test/runner.janet"
+                     "-f" "{unit,regression,coverage}"
+                     "-j" "fiber:16,thread:6,subprocess:6"]))

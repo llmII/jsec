@@ -117,13 +117,10 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
+    state->timeout = timeout;
+    state->has_timeout = !is_infinite_timeout(timeout);
     /* write_data, write_len, write_offset unused for reads - not zeroed */
     /* error_msg only written on error via snprintf - not pre-zeroed */
-
-    /* Add timeout before starting async operation */
-    if (!is_infinite_timeout(timeout)) {
-        janet_addtimeout(timeout);
-    }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         if (buffer->count == state->buf_start && bytes_to_read > 0) {
@@ -164,11 +161,8 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
-
-    /* Add timeout before starting async operation */
-    if (!is_infinite_timeout(timeout)) {
-        janet_addtimeout(timeout);
-    }
+    state->timeout = timeout;
+    state->has_timeout = !is_infinite_timeout(timeout);
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_buffer(buffer);
@@ -211,12 +205,9 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     state->write_len = bytes.len;
     state->write_offset =
         0; /* Only write field that must be explicitly set */
+    state->timeout = timeout;
+    state->has_timeout = !is_infinite_timeout(timeout);
     /* user_buf, bytes_requested unused for writes - not zeroed */
-
-    /* Add timeout before starting async operation */
-    if (!is_infinite_timeout(timeout)) {
-        janet_addtimeout(timeout);
-    }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_nil();
@@ -278,6 +269,9 @@ Janet cfun_close(int32_t argc, Janet *argv) {
     TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_CLOSE;
+    /* No deadline - must not inherit one from a prior timed write */
+    state->timeout = 0;
+    state->has_timeout = 0;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_nil();
@@ -316,6 +310,9 @@ Janet cfun_shutdown(int32_t argc, Janet *argv) {
     TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_SHUTDOWN;
+    /* No deadline - must not inherit one from a prior timed write */
+    state->timeout = 0;
+    state->has_timeout = 0;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_nil();
