@@ -793,7 +793,10 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #endif
 
         case JANET_ASYNC_EVENT_DEINIT:
-            /* Nothing to do */
+            /* Clear ev_state before janet_async_end frees it to prevent
+             * free of interior pointer (state is embedded in TLSStream,
+             * not heap-allocated) */
+            fiber->ev_state = NULL;
             break;
 
 #ifdef JANET_WINDOWS
