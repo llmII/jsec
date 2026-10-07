@@ -56,10 +56,13 @@ DEFAULT_JPM_REV="2430dec269f485473502bcdc2049ee332bc63908"    # jpm 1.2.1
 JANET_URL="${JANET_URL:-https://github.com/janet-lang/janet.git}"
 JPM_URL="${JPM_URL:-https://github.com/janet-lang/jpm.git}"
 
-# Offline source mirrors (override via env). Used to avoid network when they
-# contain the requested rev; otherwise the rev is cloned from the URL above.
-JANET_SRC="${JANET_SRC:-/home/llmII/workspace/personal/dev/janet/code/contributing/janet}"
-JPM_SRC="${JPM_SRC:-/data/services/agentic/usr/projects/agentic-ng/.work/src/jpm}"
+# Local source mirrors are OPT-IN ONLY (--janet-src/--jpm-src or JANET_SRC/
+# JPM_SRC); there are no built-in mirror paths and none are probed by default.
+# With no opt-in, both sources are fetched at --janet-rev/--jpm-rev from
+# JANET_URL/JPM_URL into .work/src/, so the bootstrap never consults jpm/janet
+# trees or binaries on the host system.
+JANET_SRC="${JANET_SRC:-}"
+JPM_SRC="${JPM_SRC:-}"
 
 # --- Locations (SCRIPT_DIR via $0; POSIX-safe) --------------------------------
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -108,21 +111,29 @@ Options:
   -c, --clean            Remove the toolchain under the prefix first (bin/,
                          build/, include/, lib/, libexec/, share/), then
                          rebuild. Keeps src/ and scratch/
-      --local            Offline only: use local mirrors, never clone (error if
-                         the requested rev is not in a local mirror)
+      --local            Offline only: never clone; the opted-in local mirrors
+                         must supply the requested revs (error otherwise)
       --janet-rev REV    Janet revision to build (tag/branch/githash).
                          Default: ${DEFAULT_JANET_REV} (janet 1.40.1)
+      --janet-src DIR    Opt-in local Janet source mirror (or set JANET_SRC).
+                         Off by default; with no mirror the rev is self-fetched
+                         from JANET_URL into .work/src/janet/
       --jpm-rev REV      jpm revision to build (tag/branch/githash).
                          Default: ${DEFAULT_JPM_REV} (jpm 1.2.1)
+      --jpm-src DIR      Opt-in local jpm source mirror (or set JPM_SRC).
+                         Off by default; with no mirror the rev is self-fetched
+                         from JPM_URL into .work/src/jpm/
       --toolchain DIR    Output prefix. Default: .work, so the toolchain
                          lives directly in .work/{bin,build,include,lib,
                          libexec,share} (e.g. .work/1.40.1 for a matrix)
 
 Environment:
-  JANET_SRC   Local Janet source mirror  (default: ${JANET_SRC})
-  JPM_SRC     Local jpm source mirror    (default: ${JPM_SRC})
-  JANET_URL   Janet git URL for cloning  (default: ${JANET_URL})
-  JPM_URL     jpm git URL for cloning    (default: ${JPM_URL})
+  JANET_SRC   Opt-in local Janet source mirror (default: empty, never probed;
+              see --janet-src)
+  JPM_SRC     Opt-in local jpm source mirror (default: empty, never probed;
+              see --jpm-src)
+  JANET_URL   Janet git URL for self-fetch   (default: ${JANET_URL})
+  JPM_URL     jpm git URL for self-fetch     (default: ${JPM_URL})
   CC          C compiler (default: cc)
 
 Output under --toolchain:
@@ -147,8 +158,12 @@ while [ $# -gt 0 ]; do
         --local)        LOCAL_ONLY=1; shift ;;
         --janet-rev)    [ $# -ge 2 ] || die "--janet-rev needs a value"; JANET_REV=$2; shift 2 ;;
         --janet-rev=*)  JANET_REV=${1#*=}; shift ;;
+        --janet-src)    [ $# -ge 2 ] || die "--janet-src needs a value"; JANET_SRC=$2; shift 2 ;;
+        --janet-src=*)  JANET_SRC=${1#*=}; shift ;;
         --jpm-rev)      [ $# -ge 2 ] || die "--jpm-rev needs a value"; JPM_REV=$2; shift 2 ;;
         --jpm-rev=*)    JPM_REV=${1#*=}; shift ;;
+        --jpm-src)      [ $# -ge 2 ] || die "--jpm-src needs a value"; JPM_SRC=$2; shift 2 ;;
+        --jpm-src=*)    JPM_SRC=${1#*=}; shift ;;
         --toolchain)    [ $# -ge 2 ] || die "--toolchain needs a value"; TOOLCHAIN_DIR=$2; shift 2 ;;
         --toolchain=*)  TOOLCHAIN_DIR=${1#*=}; shift ;;
         *) die "unknown option: $1 (try --help)" ;;
@@ -206,8 +221,10 @@ copy_src() {
     fi
 }
 
-# Resolve Janet source at JANET_REV into $SRC_DIR/janet. Honors the offline
-# mirror when it contains the requested rev; otherwise clones that exact rev.
+# Resolve Janet source at JANET_REV into $SRC_DIR/janet. Default is a
+# self-fetch: clone that exact rev from JANET_URL into .work/src/janet/. A
+# local mirror is consulted only when opted in (--janet-src / JANET_SRC);
+# with --local the mirror is mandatory and the network is never touched.
 resolve_janet_src() {
     dest="$SRC_DIR/janet"
     if [ -f "$dest/Makefile" ] && [ "$(cat "$dest/.jsec-rev" 2>/dev/null || echo)" = "$JANET_REV" ]; then
@@ -216,25 +233,28 @@ resolve_janet_src() {
     fi
     rm -rf "$dest"; mkdir -p "$dest"
 
-    if [ -n "${JANET_SRC:-}" ] && [ -d "$JANET_SRC" ] && [ -f "$JANET_SRC/Makefile" ]; then
-        if [ "$LOCAL_ONLY" -eq 1 ] || [ "$JANET_REV" = "$DEFAULT_JANET_REV" ]; then
-            log "Copying local Janet source from $JANET_SRC..."
-            copy_src "$JANET_SRC" "$dest"
-            echo "$JANET_REV" > "$dest/.jsec-rev"
-            note "copied Janet rev $JANET_REV from $JANET_SRC"
-            RESOLVED_SRC="$dest"; return 0
-        fi
+    if [ -n "${JANET_SRC:-}" ]; then
+        [ -d "$JANET_SRC" ] || die "Janet mirror $JANET_SRC does not exist."
         if git -C "$JANET_SRC" cat-file -e "$JANET_REV^{commit}" 2>/dev/null; then
-            log "Copying local Janet mirror and checking out rev $JANET_REV..."
-            copy_src "$JANET_SRC" "$dest"
+            log "Extracting Janet rev $JANET_REV from local mirror $JANET_SRC..."
             git -C "$JANET_SRC" archive "$JANET_REV" | ( cd "$dest" && tar xf - )
             echo "$JANET_REV" > "$dest/.jsec-rev"
             note "checked out Janet rev $JANET_REV from $JANET_SRC"
             RESOLVED_SRC="$dest"; return 0
         fi
+        if [ ! -e "$JANET_SRC/.git" ] && [ -f "$JANET_SRC/Makefile" ]; then
+            # Plain tree without git metadata: the caller asserts it holds
+            # JANET_REV. This is the offline case --local exists for.
+            log "Copying local Janet tree from $JANET_SRC..."
+            copy_src "$JANET_SRC" "$dest"
+            echo "$JANET_REV" > "$dest/.jsec-rev"
+            note "copied Janet rev $JANET_REV (as asserted) from $JANET_SRC"
+            RESOLVED_SRC="$dest"; return 0
+        fi
+        [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but Janet rev $JANET_REV not found in mirror $JANET_SRC."
     fi
 
-    [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but Janet rev $JANET_REV not found in local mirror ${JANET_SRC:-unset}."
+    [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but no Janet mirror given (--janet-src or JANET_SRC)."
     log "Cloning Janet rev $JANET_REV from $JANET_URL..."
     if is_sha "$JANET_REV"; then
         git clone "$JANET_URL" "$dest" >/dev/null 2>&1 || die "clone of $JANET_URL failed."
@@ -244,9 +264,13 @@ resolve_janet_src() {
     fi
     echo "$JANET_REV" > "$dest/.jsec-rev"
     note "cloned Janet rev $JANET_REV from $JANET_URL"
-    printf '%s' "$dest"
+    RESOLVED_SRC="$dest"
 }
 
+# Resolve jpm source at JPM_REV into $SRC_DIR/jpm. Default is a self-fetch:
+# clone that exact rev from JPM_URL into .work/src/jpm/. A local mirror is
+# consulted only when opted in (--jpm-src / JPM_SRC); with --local the mirror
+# is mandatory and the network is never touched.
 resolve_jpm_src() {
     dest="$SRC_DIR/jpm"
     if [ -f "$dest/bootstrap.janet" ] && [ "$(cat "$dest/.jsec-rev" 2>/dev/null || echo)" = "$JPM_REV" ]; then
@@ -255,35 +279,38 @@ resolve_jpm_src() {
     fi
     rm -rf "$dest"; mkdir -p "$dest"
 
-    if [ -n "${JPM_SRC:-}" ] && [ -d "$JPM_SRC" ] && [ -f "$JPM_SRC/bootstrap.janet" ]; then
-        if [ "$LOCAL_ONLY" -eq 1 ] || [ "$JPM_REV" = "$DEFAULT_JPM_REV" ]; then
-            log "Copying local jpm source from $JPM_SRC..."
-            copy_src "$JPM_SRC" "$dest"
-            echo "$JPM_REV" > "$dest/.jsec-rev"
-            note "copied jpm rev $JPM_REV from $JPM_SRC"
-            RESOLVED_SRC="$dest"; return 0
-        fi
+    if [ -n "${JPM_SRC:-}" ]; then
+        [ -d "$JPM_SRC" ] || die "jpm mirror $JPM_SRC does not exist."
         if git -C "$JPM_SRC" cat-file -e "$JPM_REV^{commit}" 2>/dev/null; then
-            log "Copying local jpm mirror and checking out rev $JPM_REV..."
-            copy_src "$JPM_SRC" "$dest"
+            log "Extracting jpm rev $JPM_REV from local mirror $JPM_SRC..."
             git -C "$JPM_SRC" archive "$JPM_REV" | ( cd "$dest" && tar xf - )
             echo "$JPM_REV" > "$dest/.jsec-rev"
             note "checked out jpm rev $JPM_REV from $JPM_SRC"
             RESOLVED_SRC="$dest"; return 0
         fi
+        if [ ! -e "$JPM_SRC/.git" ] && [ -f "$JPM_SRC/bootstrap.janet" ]; then
+            # Plain tree without git metadata: the caller asserts it holds
+            # JPM_REV. This is the offline case --local exists for.
+            log "Copying local jpm tree from $JPM_SRC..."
+            copy_src "$JPM_SRC" "$dest"
+            echo "$JPM_REV" > "$dest/.jsec-rev"
+            note "copied jpm rev $JPM_REV (as asserted) from $JPM_SRC"
+            RESOLVED_SRC="$dest"; return 0
+        fi
+        [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but jpm rev $JPM_REV not found in mirror $JPM_SRC."
     fi
 
-    [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but jpm rev $JPM_REV not found in local mirror ${JPM_SRC:-unset}."
+    [ "$LOCAL_ONLY" -eq 1 ] && die "--local requested but no jpm mirror given (--jpm-src or JPM_SRC)."
     log "Cloning jpm rev $JPM_REV from $JPM_URL..."
     if is_sha "$JPM_REV"; then
         git clone "$JPM_URL" "$dest" >/dev/null 2>&1 || die "clone of jpm rev $JPM_REV failed."
-        git -C "$dest" checkout --quiet "$JPM_REV" || die "jpm rev $JPM_REV not found."
+        git -C "$dest" checkout --quiet "$JPM_REV" || die "jpm rev $JPM_REV not found in $JPM_URL."
     else
         git clone --depth 1 --branch "$JPM_REV" "$JPM_URL" "$dest" >/dev/null 2>&1 || die "clone of jpm tag/branch $JPM_REV failed."
     fi
     echo "$JPM_REV" > "$dest/.jsec-rev"
     note "cloned jpm rev $JPM_REV from $JPM_URL"
-    printf '%s' "$dest"
+    RESOLVED_SRC="$dest"
 }
 
 # Run a command under a clean environment (env -i): only PATH and HOME are

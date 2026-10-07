@@ -199,6 +199,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
     TLSStream *tls = state->tls;
     int ret, ssl_err;
 
+    ERR_clear_error();
+
     switch (state->op) {
         /*====================================================================
          * HANDSHAKE OPERATION
@@ -793,7 +795,10 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #endif
 
         case JANET_ASYNC_EVENT_DEINIT:
-            /* Nothing to do */
+            /* Clear ev_state before janet_async_end frees it to prevent
+             * free of interior pointer (state is embedded in TLSStream,
+             * not heap-allocated) */
+            fiber->ev_state = NULL;
             break;
 
 #ifdef JANET_WINDOWS
@@ -847,6 +852,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 /* Drain pending data in bounded slices so the buffer
                  * grows with data read, not read_size; want bounds both
                  * the ensured capacity and the SSL_read length */
+                ERR_clear_error();
                 int ret = 0;
                 while (read_size > 0) {
                     int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
