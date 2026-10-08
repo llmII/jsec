@@ -181,6 +181,9 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
 
     /* Get status */
     const char *status_str = janet_to_string_or_keyword(argv[2]);
+    if (!status_str) {
+        ca_panic_param("status must be a string or keyword");
+    }
     int status;
     if (strcmp(status_str, "good") == 0) {
         status = V_OCSP_CERTSTATUS_GOOD;

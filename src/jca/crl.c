@@ -24,6 +24,9 @@ CARevocationReason ca_keyword_to_reason(Janet kw) {
     }
 
     const char *str = janet_to_string_or_keyword(kw);
+    if (!str) {
+        ca_panic_param("revocation reason must be a string or keyword");
+    }
 
     if (strcmp(str, "unspecified") == 0) return CA_REVOKE_UNSPECIFIED;
     if (strcmp(str, "key-compromise") == 0) return CA_REVOKE_KEY_COMPROMISE;
