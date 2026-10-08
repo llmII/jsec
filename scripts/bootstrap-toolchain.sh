@@ -49,8 +49,8 @@ set -eu
 # --- Default pinned revisions -------------------------------------------------
 # This increment pins one Janet. The rev is a githash so it is exact and
 # reproducible; pass --janet-rev <tag|branch|githash> to build a different Janet
-# (e.g. --janet-rev 7d672f43 or --janet-rev 7810724e) for the version matrix.
-DEFAULT_JANET_REV="7d672f43fcd572965c8b63c61dd835d6e680ac1d"  # janet 1.40.1
+# (e.g. --janet-rev 8b6d56ed or --janet-rev 7810724e) for the version matrix.
+DEFAULT_JANET_REV="8b6d56edae8c1eb5ae19b024087a065b6918b9ef"  # janet 1.41.1
 DEFAULT_JPM_REV="2430dec269f485473502bcdc2049ee332bc63908"    # jpm 1.2.1
 
 JANET_URL="${JANET_URL:-https://github.com/janet-lang/janet.git}"
@@ -114,7 +114,7 @@ Options:
       --local            Offline only: never clone; the opted-in local mirrors
                          must supply the requested revs (error otherwise)
       --janet-rev REV    Janet revision to build (tag/branch/githash).
-                         Default: ${DEFAULT_JANET_REV} (janet 1.40.1)
+                         Default: ${DEFAULT_JANET_REV} (janet 1.41.1)
       --janet-src DIR    Opt-in local Janet source mirror (or set JANET_SRC).
                          Off by default; with no mirror the rev is self-fetched
                          from JANET_URL into .work/src/janet/
@@ -125,7 +125,7 @@ Options:
                          from JPM_URL into .work/src/jpm/
       --toolchain DIR    Output prefix. Default: .work, so the toolchain
                          lives directly in .work/{bin,build,include,lib,
-                         libexec,share} (e.g. .work/1.40.1 for a matrix)
+                         libexec,share} (e.g. .work/1.41.1 for a matrix)
 
 Environment:
   JANET_SRC   Opt-in local Janet source mirror (default: empty, never probed;
