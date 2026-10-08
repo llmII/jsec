@@ -420,8 +420,8 @@ launchers establish the environment and the whole process tree inherits it.
 sh scripts/bootstrap-toolchain.sh
 
 # Build against a specific Janet rev (tag, branch, or githash) for a matrix
-sh scripts/bootstrap-toolchain.sh --janet-rev 7d672f43 \
-  --toolchain .work/1.40.1
+sh scripts/bootstrap-toolchain.sh --janet-rev 8b6d56ed \
+  --toolchain .work/1.41.1
 #+end_src
 
 The script verifies host prerequisites (a C toolchain, ~ar~, ~make~, and
