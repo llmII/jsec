@@ -103,6 +103,9 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
                 janet_buffer_push_cstring(san_buf, (const char *)san);
             }
 
+            /* Null-terminate */
+            janet_buffer_push_u8(san_buf, 0);
+
             X509_EXTENSION *ext = X509V3_EXT_conf_nid(
                 NULL, NULL, NID_subject_alt_name, (char *)san_buf->data);
             if (ext) {
