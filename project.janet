@@ -399,18 +399,67 @@
 (def- toolchain-janet ".work/bin/janet")
 (def- toolchain-jpm ".work/bin/jpm")
 
+# Poll-backend toolchain: Janet built with JANET_EV_NO_EPOLL + JANET_EV_NO_KQUEUE
+# so the poll(2) fallback is active. Lives beside the default .work/ toolchain
+# so both can coexist at the same Janet rev (see docs/DEVELOPERS.org).
+(def- poll-toolchain-janet ".work/poll/bin/janet")
+(def- poll-toolchain-jpm ".work/poll/bin/jpm")
+
+# A toolchain's installed module tree (the janet binary's baked syspath).
+(def- toolchain-modpath ".work/lib/janet")
+(def- poll-toolchain-modpath ".work/poll/lib/janet")
+
+# Ensure a toolchain's module tree holds the test dependencies (assay, spork).
+# jpm build/install do NOT install dependencies, and without them
+# test/runner.janet cannot import assay and its workers cannot run - so the run
+# would be meaningless. Install only when missing so a populated tree is left
+# alone (idempotent, no network/clone on re-runs).
+(defn- ensure-test-deps [jpm-bin modpath]
+  (def missing (filter |(not (os/stat (string modpath "/" $)))
+                       ["assay" "spork"]))
+  (unless (empty? missing)
+    (print "Installing test dependencies ("
+           (string/join missing ", ") ")...")
+    (flush)
+    (run-or-fail [jpm-bin "deps"])))
+
+# Build jsec and run the unit/regression/coverage suite (perf excluded) under a
+# toolchain's janet/jpm with the project's default concurrency and suite
+# selection (builds and tests itself). Shared by self-test (epoll) and
+# self-test-poll (poll) so the two are directly comparable: same flags, same
+# output shape, same exit semantics.
+(defn- run-self-test-suite [janet-bin jpm-bin modpath]
+  (ensure-test-deps jpm-bin modpath)
+  (print "Building jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [jpm-bin "build"])
+  (print "Installing jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [jpm-bin "install"])
+  (print "Running unit/regression/coverage under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [janet-bin "test/runner.janet"
+                "-f" "{unit,regression,coverage}"
+                "-j" "fiber:16,thread:6,subprocess:6"]))
+
 # Build the hermetic toolchain into .work/ (idempotent).
 (phony "toolchain" []
        (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"]))
 
-# Build jsec and run the suite under the in-tree toolchain with the project's
-# default concurrency and suite selection (builds and tests itself).
+# Build the poll-backend hermetic toolchain into .work/poll/ (idempotent).
+(phony "toolchain-poll" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--ev-backend" "poll" "--toolchain" ".work/poll"]))
+
+# Build jsec and run the suite under the default (epoll) in-tree toolchain.
 (phony "self-test" ["toolchain"]
-       (print "Building jsec under the in-tree toolchain...")
-       (run-or-fail [toolchain-jpm "build"])
-       (print "Installing jsec under the in-tree toolchain...")
-       (run-or-fail [toolchain-jpm "install"])
-       (print "Running unit/regression/coverage under the in-tree toolchain...")
-       (run-or-fail [toolchain-janet "test/runner.janet"
-                     "-f" "{unit,regression,coverage}"
-                     "-j" "fiber:16,thread:6,subprocess:6"]))
+       (run-self-test-suite toolchain-janet toolchain-jpm toolchain-modpath))
+
+# Explicit epoll alias for symmetry with self-test-poll (self-test already
+# builds the default epoll toolchain).
+(phony "self-test-epoll" ["self-test"])
+
+# Build jsec and run the suite under the poll-backend in-tree toolchain.
+(phony "self-test-poll" ["toolchain-poll"]
+       (run-self-test-suite poll-toolchain-janet poll-toolchain-jpm
+                            poll-toolchain-modpath))
