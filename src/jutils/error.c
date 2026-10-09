@@ -14,11 +14,7 @@
  * is only valid until the next call to this function from the same thread.
  * Use immediately or copy if needed across multiple calls.
  */
-#ifdef JANET_WINDOWS
-static __declspec(thread) char error_buf[512];
-#else
-static _Thread_local char error_buf[512];
-#endif
+static JANET_THREAD_LOCAL char error_buf[512];
 
 const char *get_ssl_error_string(void) {
     unsigned long err = ERR_get_error();
