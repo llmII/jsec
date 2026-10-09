@@ -118,6 +118,34 @@ static inline void check_record_handshake_time(TLSStream *tls) {
 }
 
 /*============================================================================
+ * HELPER: Resolve an EOF-shaped peer close for an operation
+ *============================================================================
+ * SSL_ERROR_ZERO_RETURN and SSL_ERROR_SYSCALL with ret 0 or sock_err 0
+ * all mean the peer closed cleanly. That legitimately ends only the
+ * read-style operations: a write still holding bytes would silently drop
+ * them, and a handshake that never reached TLS_CONN_READY has failed.
+ * Returns TLS_IO_COMPLETE where completion is honest, otherwise fills
+ * state->error_msg and returns TLS_IO_ERROR.
+ */
+static TLSIOState handle_eof_close(TLSState *state, const char *op_name) {
+    if (state->op == TLS_OP_WRITE && state->write_offset < state->write_len) {
+        snprintf(state->error_msg, sizeof(state->error_msg),
+                 "%s error: connection closed with %d of %d bytes unwritten",
+                 op_name, state->write_len - state->write_offset,
+                 state->write_len);
+        return TLS_IO_ERROR;
+    }
+    if (state->op == TLS_OP_HANDSHAKE &&
+        state->tls->conn_state != TLS_CONN_READY) {
+        snprintf(state->error_msg, sizeof(state->error_msg),
+                 "%s error: connection closed before the handshake completed",
+                 op_name);
+        return TLS_IO_ERROR;
+    }
+    return TLS_IO_COMPLETE;
+}
+
+/*============================================================================
  * HELPER: Handle SSL error and determine next I/O state
  *============================================================================
  * Common SSL error handling logic extracted from operation handlers.
@@ -130,13 +158,14 @@ static inline void check_record_handshake_time(TLSStream *tls) {
  *   op_name      - Name of operation for error messages (e.g., "Read",
  * "Write") has_data     - True if we have partial data that can be returned
  *   tls          - TLS stream (for updating conn_state on shutdown)
+ *   sock_err     - Socket errno captured before SSL_get_error ran
  *
  * Returns:
  *   Appropriate TLSIOState based on the error
  */
 static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
                                    const char *op_name, int has_data,
-                                   TLSStream *tls) {
+                                   TLSStream *tls, int sock_err) {
     switch (ssl_err) {
         case SSL_ERROR_WANT_READ:
             return has_data ? TLS_IO_COMPLETE : TLS_IO_WANT_READ;
@@ -147,16 +176,15 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
         case SSL_ERROR_ZERO_RETURN:
             /* Clean shutdown received from peer */
             if (tls) tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
-            return TLS_IO_COMPLETE;
+            return handle_eof_close(state, op_name);
 
         case SSL_ERROR_SYSCALL: {
-            int sock_err = jsec_socket_errno;
             if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
                 return has_data ? TLS_IO_COMPLETE : TLS_IO_WANT_BOTH;
             }
             if (ret == 0 || sock_err == 0) {
-                /* EOF - not an error for read operations */
-                return TLS_IO_COMPLETE;
+                /* EOF: a clean close cannot complete every operation */
+                return handle_eof_close(state, op_name);
             }
 #ifdef JANET_WINDOWS
             /* Windows: format socket error code */
@@ -227,9 +255,10 @@ TLSIOState jtls_process_operation(TLSState *state) {
                 return TLS_IO_COMPLETE;
             }
 
+            int sock_err = jsec_socket_errno;
             ssl_err = SSL_get_error(tls->ssl, ret);
-            return handle_ssl_error(ssl_err, ret, state, "Handshake", 0,
-                                    NULL);
+            return handle_ssl_error(ssl_err, ret, state, "Handshake", 0, NULL,
+                                    sock_err);
         }
 
         /*====================================================================
@@ -284,11 +313,12 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     }
                     /* Keep reading until WANT_READ */
                 } else {
+                    int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
                     int has_data =
                         (state->user_buf->count > state->buf_start);
                     return handle_ssl_error(ssl_err, ret, state, "Read",
-                                            has_data, tls);
+                                            has_data, tls, sock_err);
                 }
             }
         }
@@ -330,6 +360,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     }
                     /* Continue reading - unlike READ, don't return early */
                 } else {
+                    int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
 
                     /* WANT_READ/WANT_BOTH: retry immediately if we just read
@@ -342,7 +373,6 @@ TLSIOState jtls_process_operation(TLSState *state) {
                         return TLS_IO_WANT_READ;
                     }
                     if (ssl_err == SSL_ERROR_SYSCALL) {
-                        int sock_err = jsec_socket_errno;
                         if (sock_err == JSEC_EAGAIN ||
                             sock_err == JSEC_EWOULDBLOCK) {
                             if (just_read_data) {
@@ -355,7 +385,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     /* Other errors use standard handler (no has_data for
                      * chunk) */
                     return handle_ssl_error(ssl_err, ret, state, "Chunk read",
-                                            0, tls);
+                                            0, tls, sock_err);
                 }
             }
         }
@@ -389,9 +419,10 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     }
                     /* Continue writing more */
                 } else {
+                    int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
                     return handle_ssl_error(ssl_err, ret, state, "Write", 0,
-                                            NULL);
+                                            NULL, sock_err);
                 }
             }
 
