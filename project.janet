@@ -12,6 +12,52 @@
   :version "0.1.0")
 
 # ============================================================================
+# Janet Version Floor
+# ============================================================================
+# jsec needs Janet 1.41.1 or newer (janet PR 1683, merge d3f5b541): that
+# release fixes a unix-socket connect hang on edge-triggered kqueue where
+# connect() completing synchronously still scheduled an async writability
+# wait that never fires, so older Janets hang rather than fail. Hard floor -
+# no override.
+
+(def jsec-min-janet-version "1.41.1")
+
+# janet/version is a string on 1.41.1+, and may be a callable on older
+# Janets; handle both shapes. Call it through a parameter - a direct
+# (janet/version) is a compile error when the value is the 1.41.1+ string,
+# even in the untaken branch.
+(def- jsec-janet-version
+  (string (if (string? janet/version)
+            janet/version
+            ((fn [f] (f)) janet/version))))
+
+# [major minor patch] of a dotted version, -/+ suffixes dropped and missing
+# components read as 0; nil when the string does not conform.
+(defn- jsec-version-tuple [v]
+  (def parts
+    (string/split "." (first (string/split "+" (first (string/split "-" v))))))
+  (when (and (<= 1 (length parts) 3)
+             (all |(and (not (empty? $)) (string/check-set "0123456789" $))
+                  parts))
+    (take 3 [;(map scan-number parts) 0 0])))
+
+(defn- jsec-version-at-least? [v floor]
+  (def a (jsec-version-tuple v))
+  (def b (jsec-version-tuple floor))
+  (and a b (>= (compare a b) 0)))
+
+(unless (jsec-version-at-least? jsec-janet-version jsec-min-janet-version)
+  (errorf (string "jsec requires Janet %s or newer, refusing to run against "
+                  "Janet %s. Janet 1.41.1 fixes a unix-socket connect hang on "
+                  "edge-triggered kqueue (janet PR 1683, merge d3f5b541): "
+                  "connect() completing synchronously still scheduled an "
+                  "async writability wait that never fires, so older Janets "
+                  "hang rather than fail. Upgrade Janet, or build through the "
+                  "hermetic in-tree toolchain (docs/DEVELOPERS.org); there is "
+                  "no override.")
+          jsec-min-janet-version jsec-janet-version))
+
+# ============================================================================
 # Platform Detection
 # ============================================================================
 
@@ -399,18 +445,67 @@
 (def- toolchain-janet ".work/bin/janet")
 (def- toolchain-jpm ".work/bin/jpm")
 
+# Poll-backend toolchain: Janet built with JANET_EV_NO_EPOLL + JANET_EV_NO_KQUEUE
+# so the poll(2) fallback is active. Lives beside the default .work/ toolchain
+# so both can coexist at the same Janet rev (see docs/DEVELOPERS.org).
+(def- poll-toolchain-janet ".work/poll/bin/janet")
+(def- poll-toolchain-jpm ".work/poll/bin/jpm")
+
+# A toolchain's installed module tree (the janet binary's baked syspath).
+(def- toolchain-modpath ".work/lib/janet")
+(def- poll-toolchain-modpath ".work/poll/lib/janet")
+
+# Ensure a toolchain's module tree holds the test dependencies (assay, spork).
+# jpm build/install do NOT install dependencies, and without them
+# test/runner.janet cannot import assay and its workers cannot run - so the run
+# would be meaningless. Install only when missing so a populated tree is left
+# alone (idempotent, no network/clone on re-runs).
+(defn- ensure-test-deps [jpm-bin modpath]
+  (def missing (filter |(not (os/stat (string modpath "/" $)))
+                       ["assay" "spork"]))
+  (unless (empty? missing)
+    (print "Installing test dependencies ("
+           (string/join missing ", ") ")...")
+    (flush)
+    (run-or-fail [jpm-bin "deps"])))
+
+# Build jsec and run the unit/regression/coverage suite (perf excluded) under a
+# toolchain's janet/jpm with the project's default concurrency and suite
+# selection (builds and tests itself). Shared by self-test (epoll) and
+# self-test-poll (poll) so the two are directly comparable: same flags, same
+# output shape, same exit semantics.
+(defn- run-self-test-suite [janet-bin jpm-bin modpath]
+  (ensure-test-deps jpm-bin modpath)
+  (print "Building jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [jpm-bin "build"])
+  (print "Installing jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [jpm-bin "install"])
+  (print "Running unit/regression/coverage under the in-tree toolchain...")
+  (flush)
+  (run-or-fail [janet-bin "test/runner.janet"
+                "-f" "{unit,regression,coverage}"
+                "-j" "fiber:16,thread:6,subprocess:6"]))
+
 # Build the hermetic toolchain into .work/ (idempotent).
 (phony "toolchain" []
        (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"]))
 
-# Build jsec and run the suite under the in-tree toolchain with the project's
-# default concurrency and suite selection (builds and tests itself).
+# Build the poll-backend hermetic toolchain into .work/poll/ (idempotent).
+(phony "toolchain-poll" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--ev-backend" "poll" "--toolchain" ".work/poll"]))
+
+# Build jsec and run the suite under the default (epoll) in-tree toolchain.
 (phony "self-test" ["toolchain"]
-       (print "Building jsec under the in-tree toolchain...")
-       (run-or-fail [toolchain-jpm "build"])
-       (print "Installing jsec under the in-tree toolchain...")
-       (run-or-fail [toolchain-jpm "install"])
-       (print "Running unit/regression/coverage under the in-tree toolchain...")
-       (run-or-fail [toolchain-janet "test/runner.janet"
-                     "-f" "{unit,regression,coverage}"
-                     "-j" "fiber:16,thread:6,subprocess:6"]))
+       (run-self-test-suite toolchain-janet toolchain-jpm toolchain-modpath))
+
+# Explicit epoll alias for symmetry with self-test-poll (self-test already
+# builds the default epoll toolchain).
+(phony "self-test-epoll" ["self-test"])
+
+# Build jsec and run the suite under the poll-backend in-tree toolchain.
+(phony "self-test-poll" ["toolchain-poll"]
+       (run-self-test-suite poll-toolchain-janet poll-toolchain-jpm
+                            poll-toolchain-modpath))

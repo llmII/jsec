@@ -23,6 +23,15 @@ set -eu
 # drive a per-version matrix. Each rev can build into its own toolchain prefix
 # via --toolchain, so multiple Janets coexist under .work/.
 #
+# The Janet event-loop backend is selectable via --ev-backend: epoll (default;
+# the platform's native backend - epoll on Linux, kqueue on the BSDs/macOS) or
+# poll (the portable poll(2) fallback, forced with JANET_EV_NO_EPOLL and
+# JANET_EV_NO_KQUEUE). The backend is a compile-time define only, so poll and
+# epoll builds of one rev SHARE the rev-keyed source cache under .work/src/;
+# the in-tree build output is per-backend and dropped on switch (see
+# build_janet). Pair --ev-backend with --toolchain to keep a poll toolchain
+# beside an epoll one at the same rev.
+#
 # Layout produced (default prefix, .work/):
 #   bin/janet        our self-locating POSIX-sh launcher (entry point)
 #   bin/jpm          our self-locating POSIX-sh launcher (entry point)
@@ -77,6 +86,7 @@ LAUNCHER_JPM="$SCRIPT_DIR/toolchain-launcher-jpm.sh"
 
 JANET_REV="$DEFAULT_JANET_REV"
 JPM_REV="$DEFAULT_JPM_REV"
+EV_BACKEND="epoll"
 FORCE=0
 CLEAN=0
 LOCAL_ONLY=0
@@ -126,6 +136,15 @@ Options:
       --toolchain DIR    Output prefix. Default: .work, so the toolchain
                          lives directly in .work/{bin,build,include,lib,
                          libexec,share} (e.g. .work/1.41.1 for a matrix)
+      --ev-backend BACK  Janet event-loop backend: epoll or poll.
+                          Default: epoll - the platform's native backend
+                          (epoll on Linux, kqueue on the BSDs/macOS), today
+                          behaviour unchanged. poll forces the portable
+                          poll(2) fallback (JANET_EV_NO_EPOLL, and
+                          JANET_EV_NO_KQUEUE so the choice also holds on
+                          BSD/macOS). Poll and epoll builds of one rev share
+                          the source cache but not build output; give each
+                          its own --toolchain prefix (e.g. .work/poll)
 
 Environment:
   JANET_SRC   Opt-in local Janet source mirror (default: empty, never probed;
@@ -146,7 +165,8 @@ Output under --toolchain:
   lib/janet/               (installed modules)
   build/                   jpm :buildpath (project build output)
 
-Provenance is recorded in <prefix>/TOOLCHAIN (revisions + built Janet version).
+Provenance is recorded in <prefix>/TOOLCHAIN (revisions, built Janet version,
+ev backend).
 EOF
 }
 
@@ -166,9 +186,23 @@ while [ $# -gt 0 ]; do
         --jpm-src=*)    JPM_SRC=${1#*=}; shift ;;
         --toolchain)    [ $# -ge 2 ] || die "--toolchain needs a value"; TOOLCHAIN_DIR=$2; shift 2 ;;
         --toolchain=*)  TOOLCHAIN_DIR=${1#*=}; shift ;;
+        --ev-backend)   [ $# -ge 2 ] || die "--ev-backend needs a value"; EV_BACKEND=$2; shift 2 ;;
+        --ev-backend=*) EV_BACKEND=${1#*=}; shift ;;
         *) die "unknown option: $1 (try --help)" ;;
     esac
 done
+
+# Map --ev-backend onto the janet.h gates. JANET_EV_NO_EPOLL suppresses the
+# Linux epoll backend and JANET_EV_NO_KQUEUE the BSD/macOS kqueue backend, so
+# the poll(2) fallback (janet.h: Use poll as last resort) is selected on
+# every POSIX host. epoll passes no defines - the platform's native backend,
+# exactly the previous behaviour. Extra defines ride the make CFLAGS; the
+# build keeps the caller's CFLAGS (or janet's -O2 -g default) and appends.
+case "$EV_BACKEND" in
+    epoll) EV_DEFINES="" ;;
+    poll)  EV_DEFINES="-DJANET_EV_NO_EPOLL -DJANET_EV_NO_KQUEUE" ;;
+    *) die "--ev-backend must be poll or epoll (got: $EV_BACKEND)" ;;
+esac
 
 # Make toolchain path absolute and derive dependents.
 case "$TOOLCHAIN_DIR" in
@@ -365,18 +399,45 @@ run_logged() {
     return 1
 }
 
+# Run make in the Janet source tree. With no ev-backend defines (the epoll
+# default) the invocation is exactly the historical one. With defines (poll)
+# they ride CFLAGS, preserving the caller's CFLAGS when set and janet's own
+# -O2 -g default otherwise.
+janet_make() {
+    _src="$1"; shift
+    if [ -n "$EV_DEFINES" ]; then
+        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
+            "CFLAGS=${CFLAGS:--O2 -g} $EV_DEFINES" "$@"
+    else
+        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" "$@"
+    fi
+}
+
 build_janet() {
-    log "Building Janet rev $JANET_REV into $TOOLCHAIN_DIR..."
+    log "Building Janet rev $JANET_REV (ev-backend: $EV_BACKEND) into $TOOLCHAIN_DIR..."
+    # The source tree under .work/src is rev-keyed and shared across ev
+    # backends: the backend is a compile-time define and the tree is identical.
+    # The tree's own build/ output is NOT shareable - objects built for one
+    # backend would satisfy make's dependency check for the other and silently
+    # keep the wrong binary. Track the backend that produced it in .jsec-ev and
+    # drop it on switch, so a poll build and an epoll build of one rev can
+    # share source but never build output.
+    _last_ev=$(cat "$1/.jsec-ev" 2>/dev/null || echo)
+    if [ "$_last_ev" != "$EV_BACKEND" ] && [ -d "$1/build" ]; then
+        rm -rf "$1/build"
+        note "cleared in-tree Janet build output (was ev-backend ${_last_ev:-unset}, now $EV_BACKEND)"
+    fi
+    echo "$EV_BACKEND" > "$1/.jsec-ev"
     # PREFIX/JANET_PATH must be set for the BUILD step too: the default syspath is
     # baked into the amalgam at generation time. An ambient PREFIX (or JANET_PATH)
     # in the environment would otherwise leak a foreign path into (dyn :syspath),
     # breaking hermeticity. Command-line make vars override any ambient value.
-    run_logged make -C "$1" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" -j"$(ncpu)" \
+    janet_make "$1" -j"$(ncpu)" \
         || die "Janet build failed (see output above)."
-    run_logged make -C "$1" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" install \
+    janet_make "$1" install \
         || die "Janet install into $TOOLCHAIN_DIR failed."
     [ -x "$TOOLCHAIN_DIR/bin/janet" ] || die "Janet binary missing after install: $TOOLCHAIN_DIR/bin/janet"
-    note "built Janet $(clean_env "$TOOLCHAIN_DIR/bin/janet" -e '(print janet/version)') -> $JANET_REAL"
+    note "built Janet $(clean_env "$TOOLCHAIN_DIR/bin/janet" -e '(print janet/version)') (ev-backend $EV_BACKEND) -> $JANET_REAL"
 }
 
 # bin/ holds only our launchers; the real janet binary is private under libexec/.
@@ -448,6 +509,7 @@ write_stamp() {
         echo "janet-rev: $JANET_REV"
         echo "janet-version: $("$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)"
         echo "jpm-rev: $JPM_REV"
+        echo "ev-backend: $EV_BACKEND"
         echo "toolchain-prefix: $TOOLCHAIN_DIR"
         echo "built-at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } > "$STAMP_FILE"
@@ -457,6 +519,7 @@ print_summary() {
     log "Hermetic toolchain ready at $TOOLCHAIN_DIR"
     info "janet:      $("$JANET_BIN" -e '(print janet/version)' 2>/dev/null)  (syspath: $("$JANET_BIN" -e '(print (dyn :syspath))' 2>/dev/null))"
     info "jpm:        $JPM_BIN"
+    info "ev-backend: $EV_BACKEND"
     info "libexec:    $JANET_REAL , $JPM_REAL"
     info "headerpath: $JANET_INCLUDEDIR"
     info "modpath:    $JANET_MODPATH"
@@ -492,6 +555,7 @@ info "C compiler: $(command -v "$CC") ($("$CC" --version 2>/dev/null | head -1))
 info "SSL dev: ok (openssl/libretls)"
 info "Janet rev: $JANET_REV"
 info "jpm rev:   $JPM_REV"
+info "ev backend: $EV_BACKEND"
 
 if [ "$CLEAN" -eq 1 ]; then
     log "Cleaning $TOOLCHAIN_DIR..."
@@ -509,13 +573,16 @@ mkdir -p "$SRC_DIR" "$TOOLCHAIN_DIR" "$SCRATCH_DIR" "$BUILD_DIR"
 if [ "$FORCE" -eq 0 ] && have_toolchain; then
     cur=$("$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)
     stamped=$(grep '^janet-rev:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
-    if [ "$stamped" = "$JANET_REV" ]; then
-        log "Toolchain already present (Janet $cur, rev $JANET_REV) at $TOOLCHAIN_DIR; nothing to do."
+    stamped_ev=$(grep '^ev-backend:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
+    # Stamps predating the ev-backend key were all epoll builds.
+    [ -n "$stamped_ev" ] || stamped_ev="epoll"
+    if [ "$stamped" = "$JANET_REV" ] && [ "$stamped_ev" = "$EV_BACKEND" ]; then
+        log "Toolchain already present (Janet $cur, rev $JANET_REV, ev-backend $EV_BACKEND) at $TOOLCHAIN_DIR; nothing to do."
         info "Use --force to rebuild or --clean to start over."
         print_summary
         exit 0
     fi
-    log "Toolchain present for a different Janet rev (${stamped:-unknown} -> $JANET_REV); rebuilding."
+    log "Toolchain present for rev ${stamped:-unknown} / ev-backend $stamped_ev; requested $JANET_REV / $EV_BACKEND; rebuilding."
 fi
 
 # Rebuilding now: drop the stamp first so an interrupted rebuild cannot look

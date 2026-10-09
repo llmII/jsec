@@ -367,6 +367,8 @@ load with ~config mismatch - host X vs module Y~. Building through the in-tree
 toolchain removes that failure class and lets the repo test itself across many
 OSes from base build tools plus OpenSSL/LibreSSL dev libraries alone.
 
+~project.janet~ now hard-fails below Janet 1.41.1 (~jsec-min-janet-version~).
+
 The hermetic toolchain is a development/testing facility, not an install
 requirement.
 
@@ -422,6 +424,9 @@ sh scripts/bootstrap-toolchain.sh
 # Build against a specific Janet rev (tag, branch, or githash) for a matrix
 sh scripts/bootstrap-toolchain.sh --janet-rev 8b6d56ed \
   --toolchain .work/1.41.1
+
+# Build a poll-backend Janet alongside the default epoll one
+sh scripts/bootstrap-toolchain.sh --ev-backend poll --toolchain .work/poll
 #+end_src
 
 The script verifies host prerequisites (a C toolchain, ~ar~, ~make~, and
@@ -430,6 +435,20 @@ any are missing. It is idempotent and re-runnable; pass ~--force~ to rebuild or
 ~--clean~ to start over. ~--help~ lists all options. The Janet and jpm revisions
 are parameters, so one script drives a per-version test matrix with each
 revision in its own ~--toolchain~ prefix.
+
+~--ev-backend poll|epoll~ (default ~epoll~) selects Janet's event-loop backend.
+~epoll~ is the platform's native backend (epoll on Linux, kqueue on the
+BSDs/macOS) and is what the script has always built. ~poll~ forces the portable
+~poll(2)~ fallback at compile time by defining ~JANET_EV_NO_EPOLL~ (and
+~JANET_EV_NO_KQUEUE~, so the choice also holds on the BSDs/macOS). Use a poll
+build to demonstrate defects that edge-triggered readiness masking keeps
+invisible on epoll: ~poll(2)~ has no edge mode and reports readiness on every
+wait. The backend is a compile-time define only, so poll and epoll builds of
+one rev share the rev-keyed source cache under ~.work/src/~ but never each
+other's build output (the in-tree build tree is dropped when the backend
+switches). Give each backend its own ~--toolchain~ prefix - e.g. ~.work/poll~
+beside ~.work/~ - and read the selected backend from the ~ev-backend:~ line of
+the ~TOOLCHAIN~ stamp under the prefix.
 
 ** Build and Test
 
@@ -449,6 +468,33 @@ revision in its own ~--toolchain~ prefix.
 in-tree ~jpm~ already points at ~.work/lib/janet~ and ~.work/bin~. A fresh
 build + install round-trip keeps the interpreter and headers in step, so
 skew surfaces as ~config mismatch~ at module load in the normal suite.
+
+The same flow is wrapped by task entry points in ~project.janet~, so no manual
+~PATH~ / module-path / toolchain-prefix assembly is required. Each builds and
+installs jsec under a toolchain and then runs the identical ~test/runner.janet~
+invocation (~-f '{unit,regression,coverage}' -j fiber:16,thread:6,subprocess:6~;
+perf is excluded), so the two event-loop backends stay directly comparable:
+
+#+begin_src sh
+# unit + regression + coverage under the default epoll toolchain in .work/
+jpm run self-test
+
+# the identical suite under a poll-backend Janet, building or reusing one in
+# .work/poll/ via scripts/bootstrap-toolchain.sh --ev-backend poll --toolchain .work/poll
+jpm run self-test-poll
+
+# explicit epoll alias for symmetry with self-test-poll
+jpm run self-test-epoll
+#+end_src
+
+~self-test-poll~ bootstraps a poll-backend Janet into ~.work/poll/~ (idempotent;
+reuses the prefix when already present) and runs the suite against it. The test
+workers spawn ~janet~ from that toolchain's ~bin/~ (through ~PATH~) and resolve
+~assay~ / ~spork~ / ~jsec~ from its ~lib/janet~ module tree (the interpreter's
+baked syspath), so the whole run is hermetic to the chosen event-loop backend.
+Both tasks share the same flags, output shape, and exit status; diffing their
+logs surfaces backend-specific differences, and on a healthy tree the suite
+counts match exactly.
 
 * Common Pitfalls
 
