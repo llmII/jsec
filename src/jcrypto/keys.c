@@ -131,7 +131,10 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
 
     if (argc > 1 && !janet_checktype(argv[1], JANET_NIL)) {
         JanetByteView pwd = janet_getbytes(argv, 1);
-        password = (const char *)pwd.bytes;
+        JanetBuffer *pwd_buf = janet_buffer(pwd.len + 1);
+        janet_buffer_push_bytes(pwd_buf, pwd.bytes, pwd.len);
+        janet_buffer_push_u8(pwd_buf, 0);
+        password = (const char *)pwd_buf->data;
     }
 
     BIO *bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
@@ -300,8 +303,10 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
 
     /* Check if encrypted by looking for "ENCRYPTED" in PEM header */
     int encrypted = 0;
-    const char *data = (const char *)key_data.bytes;
-    if (strstr(data, "ENCRYPTED") != NULL) {
+    JanetBuffer *key_buf = janet_buffer(key_data.len + 1);
+    janet_buffer_push_bytes(key_buf, key_data.bytes, key_data.len);
+    janet_buffer_push_u8(key_buf, 0);
+    if (strstr((const char *)key_buf->data, "ENCRYPTED") != NULL) {
         encrypted = 1;
     }
     janet_table_put(info, janet_ckeywordv("encrypted"),

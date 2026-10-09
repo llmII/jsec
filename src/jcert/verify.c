@@ -145,8 +145,10 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
     JanetArray *chain_arr = NULL;
     JanetArray *trusted_arr = NULL;
     const char *trusted_dir = NULL;
+    size_t trusted_dir_len = 0;
     const char *purpose_str = NULL;
     const char *hostname = NULL;
+    size_t hostname_len = 0;
     time_t verify_time = 0;
     int use_verify_time = 0;
     int check_crl = 0;
@@ -215,6 +217,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             trusted_dir = (const char *)bv.bytes;
+            trusted_dir_len = bv.len;
         }
 
         /* :purpose */
@@ -232,6 +235,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
             hostname = (const char *)bv.bytes;
+            hostname_len = bv.len;
         }
 
         /* :time */
@@ -286,11 +290,15 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
 
     /* Load trusted directory if specified */
     if (trusted_dir) {
+        JanetBuffer *dir_buf = janet_buffer(trusted_dir_len + 1);
+        janet_buffer_push_bytes(dir_buf, (const uint8_t *)trusted_dir,
+                                trusted_dir_len);
+        janet_buffer_push_u8(dir_buf, 0);
 #if JSEC_HAS_X509_STORE_LOAD_PATH
-        X509_STORE_load_path(store, trusted_dir);
+        X509_STORE_load_path(store, (const char *)dir_buf->data);
 #else
         /* LibreSSL fallback: use X509_STORE_load_locations */
-        X509_STORE_load_locations(store, NULL, trusted_dir);
+        X509_STORE_load_locations(store, NULL, (const char *)dir_buf->data);
 #endif
     }
 
@@ -375,8 +383,12 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         /* If hostname verification requested, do it separately */
         if (hostname) {
             /* OpenSSL 1.1.0+ has X509_check_host */
-            if (X509_check_host(cert, hostname, strlen(hostname), 0, NULL) !=
-                1) {
+            JanetBuffer *host_buf = janet_buffer(hostname_len + 1);
+            janet_buffer_push_bytes(host_buf, (const uint8_t *)hostname,
+                                    hostname_len);
+            janet_buffer_push_u8(host_buf, 0);
+            if (X509_check_host(cert, (const char *)host_buf->data,
+                                hostname_len, 0, NULL) != 1) {
                 janet_table_put(ret, janet_ckeywordv("valid"),
                                 janet_wrap_boolean(0));
                 janet_table_put(ret, janet_ckeywordv("error"),
