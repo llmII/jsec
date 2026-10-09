@@ -12,6 +12,52 @@
   :version "0.1.0")
 
 # ============================================================================
+# Janet Version Floor
+# ============================================================================
+# jsec needs Janet 1.41.1 or newer (janet PR 1683, merge d3f5b541): that
+# release fixes a unix-socket connect hang on edge-triggered kqueue where
+# connect() completing synchronously still scheduled an async writability
+# wait that never fires, so older Janets hang rather than fail. Hard floor -
+# no override.
+
+(def jsec-min-janet-version "1.41.1")
+
+# janet/version is a string on 1.41.1+, and may be a callable on older
+# Janets; handle both shapes. Call it through a parameter - a direct
+# (janet/version) is a compile error when the value is the 1.41.1+ string,
+# even in the untaken branch.
+(def- jsec-janet-version
+  (string (if (string? janet/version)
+            janet/version
+            ((fn [f] (f)) janet/version))))
+
+# [major minor patch] of a dotted version, -/+ suffixes dropped and missing
+# components read as 0; nil when the string does not conform.
+(defn- jsec-version-tuple [v]
+  (def parts
+    (string/split "." (first (string/split "+" (first (string/split "-" v))))))
+  (when (and (<= 1 (length parts) 3)
+             (all |(and (not (empty? $)) (string/check-set "0123456789" $))
+                  parts))
+    (take 3 [;(map scan-number parts) 0 0])))
+
+(defn- jsec-version-at-least? [v floor]
+  (def a (jsec-version-tuple v))
+  (def b (jsec-version-tuple floor))
+  (and a b (>= (compare a b) 0)))
+
+(unless (jsec-version-at-least? jsec-janet-version jsec-min-janet-version)
+  (errorf (string "jsec requires Janet %s or newer, refusing to run against "
+                  "Janet %s. Janet 1.41.1 fixes a unix-socket connect hang on "
+                  "edge-triggered kqueue (janet PR 1683, merge d3f5b541): "
+                  "connect() completing synchronously still scheduled an "
+                  "async writability wait that never fires, so older Janets "
+                  "hang rather than fail. Upgrade Janet, or build through the "
+                  "hermetic in-tree toolchain (docs/DEVELOPERS.org); there is "
+                  "no override.")
+          jsec-min-janet-version jsec-janet-version))
+
+# ============================================================================
 # Platform Detection
 # ============================================================================
 

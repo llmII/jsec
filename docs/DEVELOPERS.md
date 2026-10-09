@@ -419,6 +419,8 @@ load with `config mismatch - host X vs module Y`. Building through the in-tree
 toolchain removes that failure class and lets the repo test itself across many
 OSes from base build tools plus OpenSSL/LibreSSL dev libraries alone.
 
+`project.janet` now hard-fails below Janet 1.41.1 (`jsec-min-janet-version`).
+
 The hermetic toolchain is a development/testing facility, not an install
 requirement.
 
