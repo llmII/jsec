@@ -51,6 +51,9 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
             janet_buffer_push_cstring(san_buf, ",");
         }
         const char *entry = janet_to_string_or_keyword(san_arr->data[i]);
+        if (!entry) {
+            ca_panic_param(":san entry must be a string or keyword");
+        }
         janet_buffer_push_cstring(san_buf, entry);
     }
 
@@ -120,11 +123,18 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             key_usage = janet_to_string_or_keyword(v);
+            if (!key_usage) {
+                ca_panic_param(":key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "extended-key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             extended_key_usage = janet_to_string_or_keyword(v);
+            if (!extended_key_usage) {
+                ca_panic_param(
+                    ":extended-key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "san");
@@ -143,6 +153,10 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "basic-constraints");
         if (!janet_checktype(v, JANET_NIL)) {
             basic_constraints = janet_to_string_or_keyword(v);
+            if (!basic_constraints) {
+                ca_panic_param(
+                    ":basic-constraints must be a string or keyword");
+            }
         }
     }
 
@@ -299,6 +313,9 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
         Janet v = ca_opts_get(opts, "common-name");
         if (!janet_checktype(v, JANET_NIL)) {
             common_name = janet_to_string_or_keyword(v);
+            if (!common_name) {
+                ca_panic_param(":common-name must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "san");
@@ -326,21 +343,34 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             key_usage = janet_to_string_or_keyword(v);
+            if (!key_usage) {
+                ca_panic_param(":key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "extended-key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             extended_key_usage = janet_to_string_or_keyword(v);
+            if (!extended_key_usage) {
+                ca_panic_param(
+                    ":extended-key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "organization");
         if (!janet_checktype(v, JANET_NIL)) {
             organization = janet_to_string_or_keyword(v);
+            if (!organization) {
+                ca_panic_param(":organization must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "country");
         if (!janet_checktype(v, JANET_NIL)) {
             country = janet_to_string_or_keyword(v);
+            if (!country) {
+                ca_panic_param(":country must be a string or keyword");
+            }
         }
     }
 

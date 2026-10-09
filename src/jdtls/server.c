@@ -16,6 +16,7 @@
  */
 
 #include "internal.h"
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
@@ -313,7 +314,16 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         janet_checktype(opts, JANET_STRUCT)) {
         Janet t = janet_get(opts, janet_ckeywordv("session-timeout"));
         if (!janet_checktype(t, JANET_NIL)) {
-            server->session_timeout = janet_unwrap_number(t);
+            if (!janet_checktype(t, JANET_NUMBER)) {
+                dtls_panic_param("invalid :session-timeout %v: expected a "
+                                 "finite non-negative number of seconds", t);
+            }
+            double timeout = janet_unwrap_number(t);
+            if (!isfinite(timeout) || timeout < 0.0) {
+                dtls_panic_param("invalid :session-timeout %v: expected a "
+                                 "finite non-negative number of seconds", t);
+            }
+            server->session_timeout = timeout;
         }
     }
 

@@ -196,6 +196,9 @@ EVP_PKEY *ca_generate_keypair(Janet key_type) {
     const char *type_str = "ec-p256"; /* default */
     if (!janet_checktype(key_type, JANET_NIL)) {
         type_str = janet_to_string_or_keyword(key_type);
+        if (!type_str) {
+            ca_panic_param(":key-type must be a string or keyword");
+        }
     }
 
     if (strcmp(type_str, "ec-p256") == 0 || strcmp(type_str, "ec") == 0) {
@@ -370,6 +373,9 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
         Janet v = ca_opts_get(opts, "common-name");
         if (!janet_checktype(v, JANET_NIL)) {
             common_name = janet_to_string_or_keyword(v);
+            if (!common_name) {
+                ca_panic_param(":common-name must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "days-valid");
@@ -395,11 +401,17 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "organization");
         if (!janet_checktype(v, JANET_NIL)) {
             organization = janet_to_string_or_keyword(v);
+            if (!organization) {
+                ca_panic_param(":organization must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "country");
         if (!janet_checktype(v, JANET_NIL)) {
             country = janet_to_string_or_keyword(v);
+            if (!country) {
+                ca_panic_param(":country must be a string or keyword");
+            }
         }
     }
 
@@ -511,6 +523,9 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
         Janet v = ca_opts_get(opts, "common-name");
         if (!janet_checktype(v, JANET_NIL)) {
             common_name = janet_to_string_or_keyword(v);
+            if (!common_name) {
+                ca_panic_param(":common-name must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "days-valid");
@@ -541,11 +556,17 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "organization");
         if (!janet_checktype(v, JANET_NIL)) {
             organization = janet_to_string_or_keyword(v);
+            if (!organization) {
+                ca_panic_param(":organization must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "country");
         if (!janet_checktype(v, JANET_NIL)) {
             country = janet_to_string_or_keyword(v);
+            if (!country) {
+                ca_panic_param(":country must be a string or keyword");
+            }
         }
     }
 
