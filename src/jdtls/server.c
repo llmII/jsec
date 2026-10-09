@@ -337,7 +337,11 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         janet_checktype(opts, JANET_STRUCT)) {
         security = janet_get(opts, janet_ckeywordv("security"));
     }
-    apply_security_options(server->ctx, security, 1); /* is_dtls = 1 */
+    if (!apply_security_options(server->ctx, security, 1)) {
+        SSL_CTX_free(server->ctx);
+        server->ctx = NULL;
+        dtls_panic_ssl("failed to apply security options");
+    }
 
     /* Load certificate and key (required for server) */
     if (janet_checktype(opts, JANET_TABLE) ||
