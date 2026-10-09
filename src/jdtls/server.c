@@ -241,53 +241,62 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
 
-    /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for IOCP */
-#ifdef JANET_WINDOWS
-    jsec_socket_t fd =
-        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (fd == JSEC_INVALID_SOCKET) {
-        dtls_panic_socket("failed to create socket");
-    }
-#else
-    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd == JSEC_INVALID_SOCKET) {
-        dtls_panic_socket("failed to create socket");
-    }
-#endif
-
-    /* Set socket options */
-    int yes = 1;
-#ifdef JANET_WINDOWS
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
-#else
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-#endif
-
-    /* Set non-blocking */
-    /* Set non-blocking */
-#ifdef JANET_WINDOWS
-    unsigned long mode = 1;
-    ioctlsocket(fd, FIONBIO, &mode);
-#else
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
-
     /* Bind */
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)(uint16_t)port);
 
-    if (strcmp(host, "0.0.0.0") == 0 || strlen(host) == 0) {
-        addr.sin_addr.s_addr = INADDR_ANY;
-    } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        jsec_close_socket(fd);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo *ai = NULL;
+    const char *node = strlen(host) == 0 ? "0.0.0.0" : host;
+    if (getaddrinfo(node, port_str, &hints, &ai) != 0) {
         dtls_panic_param("invalid address: %s", host);
     }
 
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
+
+    struct addrinfo *rp;
+    for (rp = ai; rp != NULL; rp = rp->ai_next) {
+        /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for
+         * IOCP */
+#ifdef JANET_WINDOWS
+        fd = WSASocketW(rp->ai_family, rp->ai_socktype, rp->ai_protocol,
+                        NULL, 0, WSA_FLAG_OVERLAPPED);
+#else
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+#endif
+        if (fd == JSEC_INVALID_SOCKET) continue;
+
+        /* Set socket options */
+        int yes = 1;
+#ifdef JANET_WINDOWS
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes,
+                   sizeof(yes));
+#else
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#endif
+
+        /* Set non-blocking */
+#ifdef JANET_WINDOWS
+        unsigned long mode = 1;
+        ioctlsocket(fd, FIONBIO, &mode);
+#else
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+
         jsec_close_socket(fd);
+        fd = JSEC_INVALID_SOCKET;
+    }
+    freeaddrinfo(ai);
+
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("bind failed");
     }
 
@@ -347,7 +356,11 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         janet_checktype(opts, JANET_STRUCT)) {
         security = janet_get(opts, janet_ckeywordv("security"));
     }
-    apply_security_options(server->ctx, security, 1); /* is_dtls = 1 */
+    if (!apply_security_options(server->ctx, security, 1)) {
+        SSL_CTX_free(server->ctx);
+        server->ctx = NULL;
+        dtls_panic_ssl("failed to apply security options");
+    }
 
     /* Load certificate and key (required for server) */
     if (janet_checktype(opts, JANET_TABLE) ||

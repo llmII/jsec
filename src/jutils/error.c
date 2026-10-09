@@ -20,5 +20,6 @@ const char *get_ssl_error_string(void) {
     unsigned long err = ERR_get_error();
     if (err == 0) return "No SSL error";
     ERR_error_string_n(err, error_buf, sizeof(error_buf));
+    ERR_clear_error();
     return error_buf;
 }

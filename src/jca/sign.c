@@ -64,6 +64,14 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
                      (const char *)san_buf->data);
 }
 
+static void strip_extension(X509 *cert, int nid) {
+    int idx;
+    while ((idx = X509_get_ext_by_NID(cert, nid, -1)) >= 0) {
+        X509_EXTENSION *old = X509_delete_ext(cert, idx);
+        X509_EXTENSION_free(old);
+    }
+}
+
 /*
  * =============================================================================
  * :sign-csr / ca/sign - Sign a CSR
@@ -213,6 +221,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         if (exts) {
             for (int i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
                 X509_EXTENSION *ext = sk_X509_EXTENSION_value(exts, i);
+                int nid = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
+                if (nid != NID_subject_alt_name && nid != NID_ext_key_usage)
+                    continue;
                 X509_add_ext(cert, ext, -1);
             }
             sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
@@ -220,13 +231,17 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Add standard extensions */
+    strip_extension(cert, NID_basic_constraints);
     ca_add_extension(cert, ca->cert, NID_basic_constraints,
                      basic_constraints);
+    strip_extension(cert, NID_subject_key_identifier);
     ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
+    strip_extension(cert, NID_authority_key_identifier);
     ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
                      "keyid:always");
 
     /* Add key usage if specified */
+    strip_extension(cert, NID_key_usage);
     if (key_usage) {
         ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
     } else {
@@ -237,12 +252,14 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
     /* Add extended key usage if specified */
     if (extended_key_usage) {
+        strip_extension(cert, NID_ext_key_usage);
         ca_add_extension(cert, ca->cert, NID_ext_key_usage,
                          extended_key_usage);
     }
 
     /* Add SAN if specified */
     if (san_arr && san_arr->count > 0) {
+        strip_extension(cert, NID_subject_alt_name);
         add_san_entries(cert, ca->cert, san_arr);
     }
 

@@ -20,7 +20,10 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     JanetByteView pfx_data = janet_getbytes(argv, 0);
     JanetByteView password_bv = janet_getbytes(argv, 1);
-    const char *password = (const char *)password_bv.bytes;
+    JanetBuffer *password_buf = janet_buffer(password_bv.len + 1);
+    janet_buffer_push_bytes(password_buf, password_bv.bytes, password_bv.len);
+    janet_buffer_push_u8(password_buf, 0);
+    const char *password = (const char *)password_buf->data;
 
     /* Parse PKCS#12 structure */
     BIO *bio = BIO_new_mem_buf(pfx_data.bytes, (int)pfx_data.len);
@@ -126,6 +129,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
 
     const char *password = NULL;
     const char *friendly_name = NULL;
+    JanetByteView password_bv = {0};
+    JanetByteView name_bv = {0};
     JanetArray *chain_arr = NULL;
 
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
@@ -145,8 +150,7 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
             opts ? janet_table_get(opts, janet_ckeywordv("password"))
                  : janet_struct_get(opts_struct, janet_ckeywordv("password"));
         if (!janet_checktype(val, JANET_NIL)) {
-            JanetByteView pwd = janet_getbytes(&val, 0);
-            password = (const char *)pwd.bytes;
+            password_bv = janet_getbytes(&val, 0);
         }
 
         /* :friendly-name */
@@ -154,8 +158,7 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
                    : janet_struct_get(opts_struct,
                                       janet_ckeywordv("friendly-name"));
         if (!janet_checktype(val, JANET_NIL)) {
-            JanetByteView name = janet_getbytes(&val, 0);
-            friendly_name = (const char *)name.bytes;
+            name_bv = janet_getbytes(&val, 0);
         }
 
         /* :chain */
@@ -172,6 +175,20 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
                 }
             }
         }
+    }
+
+    if (password_bv.bytes) {
+        JanetBuffer *password_buf = janet_buffer(password_bv.len + 1);
+        janet_buffer_push_bytes(password_buf, password_bv.bytes,
+                                password_bv.len);
+        janet_buffer_push_u8(password_buf, 0);
+        password = (const char *)password_buf->data;
+    }
+    if (name_bv.bytes) {
+        JanetBuffer *name_buf = janet_buffer(name_bv.len + 1);
+        janet_buffer_push_bytes(name_buf, name_bv.bytes, name_bv.len);
+        janet_buffer_push_u8(name_buf, 0);
+        friendly_name = (const char *)name_buf->data;
     }
 
     if (!password || strlen(password) == 0) {

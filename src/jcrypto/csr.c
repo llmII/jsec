@@ -111,6 +111,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
             if (ext) {
                 sk_X509_EXTENSION_push(exts, ext);
                 X509_REQ_add_extensions(req, exts);
+            } else {
+                ERR_clear_error();
             }
             sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
         }
