@@ -78,6 +78,7 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
          */
     }
 
+    ERR_clear_error();
     BIO_free(bio);
     return 1;
 }
@@ -126,6 +127,7 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
         X509_free(cert);
     }
 
+    ERR_clear_error();
     BIO_free(bio);
     return 1;
 }

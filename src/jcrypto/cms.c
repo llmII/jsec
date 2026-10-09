@@ -94,6 +94,7 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
             X509_STORE_add_cert(store, trust_cert);
             X509_free(trust_cert);
         }
+        ERR_clear_error();
         BIO_free(trust_bio);
         flags = CMS_BINARY; /* Enable full verification */
     }
@@ -327,6 +328,7 @@ Janet cfun_cms_certs_only(int32_t argc, Janet *argv) {
                NULL) {
             sk_X509_push(certs, cert);
         }
+        ERR_clear_error();
         BIO_free(cert_bio);
     } else if (janet_checktype(certs_arg, JANET_ARRAY) ||
                janet_checktype(certs_arg, JANET_TUPLE)) {
@@ -340,6 +342,7 @@ Janet cfun_cms_certs_only(int32_t argc, Janet *argv) {
             BIO_free(cert_bio);
             if (cert) sk_X509_push(certs, cert);
         }
+        ERR_clear_error();
     }
 
     if (sk_X509_num(certs) == 0) {

@@ -147,6 +147,7 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
         int reason = ERR_GET_REASON(err);
         /* EVP_R_BAD_DECRYPT = 100 in OpenSSL */
         if (reason == 100) {
+            ERR_clear_error();
             crypto_panic_param(
                 "incorrect password or encrypted key requires password");
         }
@@ -323,6 +324,7 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
 
     if (!pkey) {
         /* Reset BIO and try loading as public key */
+        ERR_clear_error();
         BIO_free(bio);
         bio = BIO_new_mem_buf(key_data.bytes, (int)key_data.len);
         pkey = PEM_read_bio_PUBKEY(bio, NULL, jutils_no_password_cb, NULL);
@@ -332,6 +334,7 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
 
     if (!pkey) {
         /* Can't load key */
+        ERR_clear_error();
         janet_table_put(info, janet_ckeywordv("type"),
                         janet_ckeywordv("unknown"));
         return janet_wrap_table(info);

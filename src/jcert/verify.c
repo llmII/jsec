@@ -282,6 +282,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                 X509_free(trusted);
             }
         }
+        ERR_clear_error();
     }
 
     /* Load trusted directory if specified */
@@ -303,6 +304,8 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
             if (crl) {
                 X509_STORE_add_crl(store, crl);
                 X509_CRL_free(crl);
+            } else {
+                ERR_clear_error();
             }
         }
     }
@@ -331,6 +334,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                 sk_X509_push(chain, intermediate);
             }
         }
+        ERR_clear_error();
     }
 
     /* Initialize context */
