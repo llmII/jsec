@@ -141,10 +141,6 @@ EVP_PKEY *ca_pem_to_key(Janet pem) {
         PEM_read_bio_PrivateKey(bio, NULL, jutils_no_password_cb, NULL);
     BIO_free(bio);
 
-    if (!key) {
-        ca_panic_ssl("failed to parse private key PEM");
-    }
-
     return key;
 }
 
@@ -315,6 +311,10 @@ Janet cfun_ca_create(int32_t argc, Janet *argv) {
     /* Load cert and key */
     X509 *cert = ca_pem_to_x509(cert_pem);
     EVP_PKEY *key = ca_pem_to_key(key_pem);
+    if (!key) {
+        X509_free(cert);
+        ca_panic_ssl("failed to parse private key PEM");
+    }
 
     /* Verify key matches cert */
     if (!X509_check_private_key(cert, key)) {

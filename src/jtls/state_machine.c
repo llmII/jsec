@@ -403,11 +403,27 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * the socket buffer fills up.
          */
         case TLS_OP_WRITE: {
+            /* Re-derive the byte view from the source object on every
+             * attempt: the fiber may have suspended across WANT_WRITE and
+             * a buffer source may have been reallocated while parked
+             * (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER makes a moved base
+             * pointer legal, but the pointer must be fresh). The span of
+             * the operation was fixed at entry - a source whose length
+             * changed mid-write fails cleanly with a TLS I/O error rather
+             * than reading out-of-bounds memory or delivering bytes the
+             * caller never handed to write. */
+            const uint8_t *bytes;
+            int32_t src_len;
+            if (!janet_bytes_view(state->write_src, &bytes, &src_len) ||
+                src_len != state->write_len || src_len < state->write_offset) {
+                snprintf(state->error_msg, sizeof(state->error_msg),
+                         "Write error: write source changed during write");
+                return TLS_IO_ERROR;
+            }
             while (state->write_offset < state->write_len) {
                 int remaining = state->write_len - state->write_offset;
 
-                ret = SSL_write(tls->ssl,
-                                state->write_data + state->write_offset,
+                ret = SSL_write(tls->ssl, bytes + state->write_offset,
                                 remaining);
 
                 if (ret > 0) {
@@ -823,6 +839,14 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 janet_mark(janet_wrap_abstract(state->tls));
                 if (state->user_buf) {
                     janet_mark(janet_wrap_buffer(state->user_buf));
+                }
+                if (state->op == TLS_OP_WRITE) {
+                    /* Keep the write source alive while the write is
+                     * parked. Guarded on the operation because
+                     * write_state also carries close/shutdown/handshake
+                     * operations that never set write_src and must not
+                     * mark a stale value left by an earlier write. */
+                    janet_mark(state->write_src);
                 }
             }
             break;

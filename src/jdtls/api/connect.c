@@ -40,7 +40,14 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Port can be string or integer */
     if (janet_checktype(argv[1], JANET_STRING)) {
-        port = atoi((const char *)janet_unwrap_string(argv[1]));
+        const char *port_str = (const char *)janet_unwrap_string(argv[1]);
+        char *endptr;
+        long port_val = strtol(port_str, &endptr, 10);
+        if (endptr == port_str || *endptr != '\0' || port_val < 0 ||
+            port_val > 65535) {
+            dtls_panic_param("invalid port: %s", port_str);
+        }
+        port = (int)port_val;
     } else {
         port = janet_getinteger(argv, 1);
     }

@@ -509,22 +509,33 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         /* Fall through - handshake complete, may have application data */
     }
 
-    /* Read application data from established session */
+    /* Read application data from established session, sized from the
+     * datagram: SSL_peek runs before any buffer growth (nothing is
+     * reserved with no data available), and once a decrypted datagram is
+     * pending its exact size drives the growth and the read, so a
+     * datagram of any size is delivered intact. */
     if (session->state == DTLS_STATE_ESTABLISHED) {
-        int nread = SSL_read(session->ssl, out_buf->data + out_buf->count,
-                             out_buf->capacity - out_buf->count);
-
-        if (nread > 0) {
-            out_buf->count += nread;
-            /* Return address (data is in buffer per Janet convention) */
-            DTLSAddress *ret_addr =
-                janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
-            memcpy(ret_addr, peer_addr, sizeof(DTLSAddress));
-            return janet_wrap_abstract(ret_addr);
+        uint8_t dummy;
+        ERR_clear_error();
+        int ret = SSL_peek(session->ssl, &dummy, 1);
+        if (ret > 0) {
+            int32_t avail = (int32_t)SSL_pending(session->ssl);
+            if (avail < 1) avail = 1;
+            janet_buffer_extra(out_buf, avail);
+            ERR_clear_error();
+            ret = SSL_read(session->ssl, out_buf->data + out_buf->count, avail);
+            if (ret > 0) {
+                out_buf->count += ret;
+                /* Return address (data is in buffer per Janet convention) */
+                DTLSAddress *ret_addr =
+                    janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
+                memcpy(ret_addr, peer_addr, sizeof(DTLSAddress));
+                return janet_wrap_abstract(ret_addr);
+            }
         }
 
         /* Handle peer close */
-        if (SSL_get_error(session->ssl, nread) == SSL_ERROR_ZERO_RETURN) {
+        if (SSL_get_error(session->ssl, ret) == SSL_ERROR_ZERO_RETURN) {
             SSL_shutdown(session->ssl);
             send_dtls_packet(server->transport,
                              session); /* Send close_notify */
@@ -758,8 +769,8 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    /* Ensure buffer capacity */
-    janet_buffer_ensure(buf, buf->count + nbytes, 2);
+    /* No pre-allocation: process_datagram grows buf by the datagram's
+     * own decrypted size, so nothing is reserved before data arrives */
 
     /* Get timeout - can be number or table/struct with :timeout */
     double timeout = -1;
