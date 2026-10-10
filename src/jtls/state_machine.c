@@ -535,7 +535,9 @@ static inline int is_infinite_timeout(double timeout) {
  * Parameters:
  *   fiber    - The fiber running the operation
  *   tls      - The TLS stream
- *   state    - Operation state (embedded in TLSStream, not heap-allocated)
+ *   state    - Operation state. On the synchronous path this is the
+ *              embedded TLSStream read_state or write_state; on first
+ *              suspension it is copied to a heap block (see below).
  *   mode     - What to wait for (read, write, or both)
  *   is_async - True if already in async mode (need to switch modes)
  */
@@ -549,9 +551,11 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          * This happens when an operation was waiting for read but now
          * needs to wait for write (or vice versa).
          *
-         * The state pointer is already stored in fiber->ev_state and
-         * points to the embedded state in TLSStream. We just need to
-         * end the current registration and start a new one.
+         * The state pointer is the heap copy made at first suspension
+         * and is already stored in fiber->ev_state. Steal it across
+         * janet_async_end (the NULL discipline) so the end does not
+         * free it, then hand the same block to the new registration -
+         * the copy is reused across mode switches, never re-allocated.
          */
         fiber->ev_state = NULL;
         janet_async_end(fiber);
@@ -559,10 +563,18 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
                                 jtls_async_callback, state);
     } else {
         /*
-         * First time entering async mode.
-         * State is embedded in TLSStream (read_state or write_state),
-         * so no heap allocation needed. The TLSStream is GC-managed
-         * and marked during JANET_ASYNC_EVENT_MARK, keeping the state alive.
+         * First time entering async mode. state is still the embedded
+         * TLSStream read_state or write_state here, but the runtime owns
+         * the ev_state pointer and frees it with janet_free (the
+         * janet.h async contract), so handing over the interior pointer
+         * would make the fiber-deinit free site free into the middle of
+         * the GC-managed TLSStream block. Copy the state to a heap
+         * block and register the copy instead: synchronous operations
+         * never reach this branch and stay zero-allocation, and the
+         * copy is freed by janet_async_end on completion or by fiber
+         * teardown when the process exits with the operation parked.
+         * The TLSStream is GC-managed and marked during
+         * JANET_ASYNC_EVENT_MARK, keeping the copy's tls link alive.
          *
          * Arm the deadline here, at first suspension: if the operation
          * completed synchronously the fiber would never suspend, sched_id
@@ -574,7 +586,13 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
         if (state->has_timeout && !is_infinite_timeout(state->timeout)) {
             janet_addtimeout(state->timeout);
         }
-        janet_async_start(tls->transport, mode, jtls_async_callback, state);
+        TLSState *async_state = janet_malloc(sizeof(TLSState));
+        if (NULL == async_state) {
+            JANET_OUT_OF_MEMORY;
+        }
+        *async_state = *state;
+        janet_async_start(tls->transport, mode, jtls_async_callback,
+                          async_state);
     }
 }
 
@@ -672,10 +690,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                 }
 
                 janet_schedule(fiber, result);
-                /* Clear ev_state before janet_async_end to prevent
-                 * double-free (state is embedded in TLSStream, not
-                 * heap-allocated) */
-                fiber->ev_state = NULL;
+                /* Leave ev_state set so janet_async_end frees the heap
+                 * copy made at first suspension */
                 janet_async_end(fiber);
             }
             return 1;
@@ -741,10 +757,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
 
             if (is_async) {
                 janet_cancel(fiber, janet_cstringv(state->error_msg));
-                /* Clear ev_state before janet_async_end to prevent
-                 * double-free (state is embedded in TLSStream, not
-                 * heap-allocated) */
-                fiber->ev_state = NULL;
+                /* Leave ev_state set so janet_async_end frees the heap
+                 * copy made at first suspension */
                 janet_async_end(fiber);
             } else {
                 janet_panic(state->error_msg);
@@ -757,10 +771,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                      "Unknown I/O state: %d", io_state);
             if (is_async) {
                 janet_cancel(fiber, janet_cstringv(state->error_msg));
-                /* Clear ev_state before janet_async_end to prevent
-                 * double-free (state is embedded in TLSStream, not
-                 * heap-allocated) */
-                fiber->ev_state = NULL;
+                /* Leave ev_state set so janet_async_end frees the heap
+                 * copy made at first suspension */
                 janet_async_end(fiber);
             } else {
                 janet_panic(state->error_msg);
@@ -773,21 +785,24 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
  * HELPER: Clear pending tracking for one operation
  *============================================================================
  * jtls_attempt_io records the operation fiber in the pending_read or
- * pending_write slot (:553, :555) and clears it only on completion (:582,
- * :584) or error (:688, :690). A registration that ends any other way -
- * a cancelled operation through the DEINIT case, or the hangup and
- * close/error completions - clears through here. A slot left stale feeds
- * the cooperative-mode decision at :646 a reader that is gone, so a write
- * that needs READ stays registered for WRITE readiness only and re-enters
- * the state machine on every writable report.
+ * pending_write slot and clears it only on completion or error. A
+ * registration that ends any other way - a cancelled operation through
+ * the DEINIT case, or the hangup and close/error completions - clears
+ * through here. A slot left stale feeds the cooperative-mode decision a
+ * reader that is gone, so a write that needs READ stays registered for
+ * WRITE readiness only and re-enters the state machine on every writable
+ * report.
  *
- * The state pointer identifies the slot: read_state and write_state are
- * embedded in TLSStream and one-to-one with pending_read and pending_write
- * on the same object, so a pointer comparison against &tls->read_state or
- * &tls->write_state is exact and needs no fiber identity, even with a read
- * and a write in flight at once. jtls_schedule_async steals the state
- * before janet_async_end on a mode switch, so its DEINIT has no state and
- * must leave the slots alone; callers keep the if (state) guard for that.
+ * The slot is identified by operation role: read and chunk operations
+ * record into pending_read, write operations into pending_write, so the
+ * op field of the state names the slot exactly even with a read and a
+ * write in flight at once. Role matching is required because the state
+ * that reaches this helper is the heap copy made at first suspension (see
+ * jtls_schedule_async), so a pointer comparison against the embedded
+ * read_state or write_state in TLSStream would never match and every slot
+ * would go stale. jtls_schedule_async steals the state before
+ * janet_async_end on a mode switch, so its DEINIT has no state and must
+ * leave the slots alone; callers keep the if (state) guard for that.
  *
  * The earlier fiber comparison was removed because it never matched in
  * practice: jtls_attempt_io records janet_current_fiber() in the slot, but
@@ -796,14 +811,14 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
  * objects, and a try body is always a child fiber (try expands to
  * fiber/new plus resume), so the helper was handed the root fiber while
  * the slot held the child and nothing was ever cleared. Do not reintroduce
- * a fiber comparison; use the state pointer role.
+ * a fiber comparison; use the operation role.
  */
 void clear_pending_for(TLSState *state) {
     TLSStream *tls = state->tls;
-    if (state == &tls->read_state) {
+    if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
         tls->pending_read = NULL;
     }
-    if (state == &tls->write_state) {
+    if (state->op == TLS_OP_WRITE) {
         tls->pending_write = NULL;
     }
 }
@@ -817,7 +832,7 @@ void clear_pending_for(TLSState *state) {
  * Events:
  *   MARK  - GC is running, mark any Janet values we hold
  *   INIT  - Async operation starting (do nothing)
- *   DEINIT - Async operation ending (clear pending tracking, drop ev_state)
+ *   DEINIT - Async operation ending (clear pending tracking)
  *   READ  - Socket is readable
  *   WRITE - Socket is writable
  *   CLOSE - Socket was closed
@@ -875,7 +890,8 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (status == SOCKET_ERROR &&
                     WSAGetLastError() != WSA_IO_PENDING) {
                     janet_cancel(fiber, janet_cstringv("Socket I/O error"));
-                    fiber->ev_state = NULL;
+                    /* Leave ev_state set so janet_async_end frees the heap
+                     * copy made at first suspension */
                     janet_async_end(fiber);
                     return;
                 }
@@ -890,14 +906,13 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
         case JANET_ASYNC_EVENT_DEINIT:
             /* External cancellation ends here with this fiber's pending slot
-             * (set at :553 or :555) still held. Clear it while the embedded
-             * state is reachable through ev_state, then NULL that field:
-             * janet_async_end frees ev_state as a heap pointer, and the state
-             * is embedded in TLSStream, so the interior pointer aborts. */
+             * still held. Clear it while the state is reachable through
+             * ev_state, then leave ev_state set: the state is the heap copy
+             * from first suspension and janet_async_end frees it right after
+             * this event returns, completing the registration teardown. */
             if (state) {
                 clear_pending_for(state);
             }
-            fiber->ev_state = NULL;
             break;
 
 #ifdef JANET_WINDOWS
@@ -939,7 +954,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                                        : janet_wrap_nil());
                     }
                     clear_pending_for(state);
-                    fiber->ev_state = NULL;
                     janet_async_end(fiber);
                     return;
                 }
@@ -972,7 +986,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     /* Return successfully read data */
                     janet_schedule(fiber, janet_wrap_buffer(state->user_buf));
                     clear_pending_for(state);
-                    fiber->ev_state = NULL;
                     janet_async_end(fiber);
                     return;
                 } else {
@@ -986,7 +999,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
                         clear_pending_for(state);
-                        fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     } else if (ssl_err == SSL_ERROR_SYSCALL &&
@@ -998,7 +1010,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
                         clear_pending_for(state);
-                        fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     } else if (ssl_err == SSL_ERROR_SSL) {
@@ -1006,7 +1017,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         janet_cancel(fiber,
                                      janet_cstringv(get_ssl_error_string()));
                         clear_pending_for(state);
-                        fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     } else if (state->user_buf->count > state->buf_start) {
@@ -1014,7 +1024,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         janet_schedule(fiber,
                                        janet_wrap_buffer(state->user_buf));
                         clear_pending_for(state);
-                        fiber->ev_state = NULL;
                         janet_async_end(fiber);
                         return;
                     }
@@ -1032,7 +1041,6 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (state) {
                 clear_pending_for(state);
                 janet_cancel(fiber, janet_cstringv("Connection closed"));
-                fiber->ev_state = NULL;
                 janet_async_end(fiber);
             }
             break;
