@@ -8,7 +8,9 @@
 # Both tickets cite the same two calls - one fix closes both. Each carries
 # its own named guard below: f1ba4f59a1 guards request-sized growth, and
 # a1c896672f guards the per-read-iteration doubling that the growth factor
-# of 2 applies on top of it.
+# of 2 applies on top of it. A third guard pins non-truncation: a datagram
+# larger than 4096 bytes must arrive intact through both dtls read and
+# dtls/recv-from.
 #
 # Mechanism (this tree, ticket branch off 0.2.0 at 599e82e288):
 #   - cfun_dtls_read grows the caller-supplied buffer by the REQUEST size
@@ -84,7 +86,11 @@
 #       anything bounded by the data,
 #   (d) under fixed code (growth bounded to the bytes read, as on the jtls
 #       path) every delta stays under 1024 kB, the delivered-data checks
-#       still pass, and both tests pass.
+#       still pass, and both tests pass,
+#   (e) [non-truncation] an 8000-byte datagram - larger than the 4096-byte
+#       JSEC_READ_CHUNK a truncating fix shape caps at - is delivered
+#       intact by dtls read and by dtls/recv-from: exactly 8000 bytes,
+#       byte-for-byte.
 #
 # Proof contract: under the defect each test fails with exactly the
 # predicted symptom named in its final assertion - f1ba4f59a1 with "dtls
@@ -96,6 +102,12 @@
 # kB (capacity must follow data delivered, not the request)" - and nothing
 # else: no crash, no hang, no unrelated error. Under fixed code both tests
 # pass.
+#
+# The non-truncation guard is green under the allocation defect (which
+# over-allocates but still delivers whole datagrams) and under the fix,
+# and goes red only under a fix shape that caps reads at JSEC_READ_CHUNK
+# 4096 - the truncation the 2026-10-10 ruling rejects. It pins the
+# deliverable: an 8000-byte datagram arrives intact on both paths.
 (use assay)
 (import jsec/tls :as tls)
 (import ../helpers :prefix "")
@@ -223,6 +235,10 @@
 (def max-growth-kb 1024)
 (def payload (string/repeat "A" 100))
 (def loop-rounds 4)
+# 8000-byte datagram for the non-truncation guard: larger than the
+# 4096-byte JSEC_READ_CHUNK a truncating fix shape caps at.
+(def big-payload (string/repeat "B" 8000))
+(def big-bytes 8000)
 
 (def-suite :name "DTLS Read Allocation Regression"
   :description "Tickets f1ba4f59a1 and a1c896672f: DTLS read buffers grow by request size and double capacity per read iteration"
@@ -448,4 +464,100 @@
                             "kB (capacity must follow data delivered, not the "
                             "request)")
                     (or delta -1) loop-rounds total-delivered
-                    max-growth-kb)))))))
+                    max-growth-kb))))))
+
+  # Third guard - non-truncation. Named for what it guards: a datagram
+  # larger than 4096 bytes must be delivered intact, i.e. never truncated
+  # to a JSEC_READ_CHUNK-sized slice, through both dtls read and
+  # dtls/recv-from.
+  (def-test "dtls read and recv-from deliver 8000-byte datagrams intact (non-truncation)"
+    :timeout 20
+
+    (with [server (tls/listen "127.0.0.1" "0" {:datagram true
+                                               :cert (certs :cert)
+                                               :key (certs :key)})]
+      (let [[_ port] (:localname server)
+            primed (ev/chan 1)
+            big-sent (ev/chan 1)
+            start-recv-window (ev/chan 1)
+            recv-result (ev/chan 1)]
+
+        # Server fiber: three rounds.
+        #   1. handshake + "Ping1" -> "pong" primes the session.
+        #   2. "Ping2" -> the 8000-byte datagram for the client read.
+        #   3. the recv-from of the client's own 8000-byte datagram.
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def addr1 (:recv-from server 1024 (buffer/new 1024)))
+                (when addr1 (:send-to server addr1 "pong"))
+                (ev/give primed true)
+                (def addr2 (:recv-from server 1024 (buffer/new 1024)))
+                (when addr2 (:send-to server addr2 big-payload))
+                (ev/give big-sent true)
+                (ev/take start-recv-window)
+                (def recv-buf (buffer/new 0))
+                (def addr3 (:recv-from server request-bytes recv-buf))
+                (ev/give recv-result
+                         {:addr addr3
+                          :data (string recv-buf)}))
+              ([err] (ev/give primed (string "server error: " err))))))
+
+        (def conn (tls/connect "127.0.0.1" (string port)
+                               {:datagram true :verify false}))
+        # Force close - see the f1ba4f59a1 guard above.
+        (defer (:close conn true)
+
+          # Priming round. Completes the handshake on both sides so the
+          # measured exchanges below contain no handshake traffic.
+          (:write conn "Ping1")
+          (def r1 (:read conn 1024))
+          (assert r1 "priming read should return the pong payload")
+          (assert (= "pong" (string r1))
+                  "priming read should receive the pong payload")
+          (def primed-val (ev/take primed))
+          (assert (= true primed-val)
+                  (string/format "server setup failed: %v" primed-val))
+
+          # The client read of the 8000-byte datagram: one datagram, a
+          # 16 MiB request into a fresh buffer. A truncating fix shape
+          # delivers 4096 bytes here; the non-truncating datagram-driven
+          # sizing delivers the datagram whole.
+          (:write conn "Ping2")
+          (def sent-val (ev/take big-sent))
+          (assert (= true sent-val)
+                  (string/format "server payload round failed: %v" sent-val))
+          (def read-buf (buffer/new 0))
+          (def result (:read conn request-bytes read-buf))
+
+          # The recv-from of the client's own 8000-byte datagram: same
+          # intact-delivery requirement on the server path.
+          (ev/give start-recv-window true)
+          (ev/sleep 0.1)
+          (:write conn big-payload)
+          (def recv (ev/take recv-result))
+
+          # Intact delivery: exactly 8000 bytes, byte-for-byte, on both
+          # paths.
+          (assert (buffer? result) "dtls read should return a buffer")
+          (assert (= big-bytes (length result))
+                  (string/format
+                    (string "dtls read should deliver the %d-byte datagram "
+                            "intact, got %d bytes")
+                    big-bytes (length result)))
+          (assert (= big-payload (string result))
+                  (string "dtls read data should match the 8000-byte "
+                          "payload sent by the server"))
+          (assert (recv :addr)
+                  "recv-from should return the peer address")
+          (assert (= big-bytes (length (recv :data)))
+                  (string/format
+                    (string "recv-from should deliver the %d-byte datagram "
+                            "intact, got %d bytes")
+                    big-bytes (length (recv :data))))
+          (assert (= big-payload (recv :data))
+                  (string "recv-from data should match the 8000-byte "
+                          "payload sent by the client"))))))
+)
+

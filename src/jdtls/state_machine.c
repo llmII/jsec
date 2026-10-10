@@ -96,18 +96,6 @@ DTLSResult dtls_do_handshake(SSL *ssl) {
     return dtls_ssl_result(ssl, ret);
 }
 
-DTLSResult dtls_do_read(SSL *ssl, uint8_t *buf, int32_t len,
-                        int32_t *out_len) {
-    ERR_clear_error();
-    int ret = SSL_read(ssl, buf, len);
-    if (ret > 0) {
-        *out_len = ret;
-        return DTLS_RESULT_OK;
-    }
-    *out_len = 0;
-    return dtls_ssl_result(ssl, ret);
-}
-
 DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
                          int32_t *out_len) {
     ERR_clear_error();
@@ -415,15 +403,9 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case DTLS_OP_READ: {
-                    int32_t nread = 0;
                     result = dtls_do_read(
-                        data->ssl,
-                        data->state.buffer->data + data->state.buffer->count,
-                        data->state.nbytes - data->state.buffer->count,
-                        &nread);
-                    if (nread > 0) {
-                        data->state.buffer->count += nread;
-                    }
+                        data->ssl, data->state.buffer,
+                        data->state.nbytes - data->state.buffer->count);
                     if (result == DTLS_RESULT_OK ||
                         data->state.buffer->count > 0) {
                         /* Return what we have */
@@ -564,7 +546,7 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
     memset(data, 0, sizeof(DTLSAsyncData));
 
     data->state.op = DTLS_OP_READ;
-    data->state.buffer = janet_buffer(nbytes);
+    data->state.buffer = janet_buffer(0);
     data->state.nbytes = nbytes;
     data->state.timeout = timeout;
     data->ssl = ssl;
@@ -572,12 +554,7 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
     data->owner = owner;
 
     /* Try initial read */
-    int32_t nread = 0;
-    DTLSResult result =
-        dtls_do_read(ssl, data->state.buffer->data, nbytes, &nread);
-    if (nread > 0) {
-        data->state.buffer->count = nread;
-    }
+    DTLSResult result = dtls_do_read(ssl, data->state.buffer, nbytes);
 
     if (result == DTLS_RESULT_OK) {
         /* Completed synchronously - still go through async machinery

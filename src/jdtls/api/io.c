@@ -12,6 +12,35 @@ extern void dtls_client_start_async_write(DTLSClient *client,
                                           JanetByteView data, int mode);
 
 /*
+ * dtls_do_read - read one datagram into buf, sized from the datagram.
+ *
+ * SSL_peek runs before any buffer growth: with no decrypted datagram
+ * available the buffer grows by nothing. Once one is available,
+ * SSL_pending reports its exact size and the buffer grows by exactly
+ * what the read consumes, so a datagram of any size is delivered intact
+ * and capacity tracks data, not the request.
+ */
+DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
+    uint8_t dummy;
+    ERR_clear_error();
+    int pk = SSL_peek(ssl, &dummy, 1);
+    if (pk <= 0) {
+        return dtls_ssl_result(ssl, pk);
+    }
+    int32_t avail = (int32_t)SSL_pending(ssl);
+    if (avail < 1) avail = 1;
+    int32_t to_read = (n < 0 || n > avail) ? avail : n;
+    janet_buffer_extra(buf, to_read);
+    ERR_clear_error();
+    int ret = SSL_read(ssl, buf->data + buf->count, to_read);
+    if (ret > 0) {
+        buf->count += ret;
+        return DTLS_RESULT_OK;
+    }
+    return dtls_ssl_result(ssl, ret);
+}
+
+/*
  * (dtls/read client n &opt buf timeout)
  *
  * Read up to n bytes from DTLS client.
@@ -31,22 +60,15 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
         dtls_panic_io("DTLS client not connected");
     }
 
-    /* Get or create buffer */
-    JanetBuffer *buf;
-    if (argc > 2 && janet_checktype(argv[2], JANET_BUFFER)) {
-        buf = janet_getbuffer(argv, 2);
-        janet_buffer_ensure(buf, buf->count + n, 2);
-    } else {
-        buf = janet_buffer(n);
-    }
+    /* Get or create buffer; an omitted user buffer starts at capacity 0
+     * so nothing is reserved before SSL_peek succeeds */
+    JanetBuffer *buf = janet_optbuffer(argv, argc, 2, 0);
 
     /* Try initial read */
-    int32_t nread = 0;
-    DTLSResult result =
-        dtls_do_read(client->ssl, buf->data + buf->count, n, &nread);
+    int32_t before = buf->count;
+    DTLSResult result = dtls_do_read(client->ssl, buf, n);
 
-    if (nread > 0) {
-        buf->count += nread;
+    if (buf->count > before) {
         return janet_wrap_buffer(buf);
     }
 

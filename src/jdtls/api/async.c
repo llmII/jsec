@@ -180,13 +180,11 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case CLIENT_OP_READ: {
-                    int32_t nread = 0;
+                    int32_t before = state->buffer->count;
                     result = dtls_do_read(
-                        client->ssl,
-                        state->buffer->data + state->buffer->count,
-                        state->nbytes - state->buffer->count, &nread);
-                    if (nread > 0) {
-                        state->buffer->count += nread;
+                        client->ssl, state->buffer,
+                        state->nbytes - state->buffer->count);
+                    if (state->buffer->count > before) {
                         /* For datagrams, return after first successful read
                          */
                         retval = janet_wrap_buffer(state->buffer);

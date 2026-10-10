@@ -335,9 +335,8 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret);
 /* Process handshake step */
 DTLSResult dtls_do_handshake(SSL *ssl);
 
-/* Process read step */
-DTLSResult dtls_do_read(SSL *ssl, uint8_t *buf, int32_t len,
-                        int32_t *out_len);
+/* Process read step: datagram-driven sizing into buf (see api/io.c) */
+DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n);
 
 /* Process write step */
 DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
