@@ -109,7 +109,7 @@
                         "untouched and fails EADDRINUSE); it %s "
                         "(unlink at src/jtls/api/server.c:448)")
                 path (describe-path path)))
-      (assert (= file-content (slurp path))
+      (assert (= file-content (string (slurp path)))
               (string/format
                 (string "the pre-existing regular file at %s must keep "
                         "its original content (Janet net/listen leaves "
