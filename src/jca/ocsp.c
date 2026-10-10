@@ -276,6 +276,8 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
                         /* Try alternative format YYYYMMDDHHMMSSZ */
                         if (!ASN1_TIME_set_string_X509(revtime, timestr)) {
                             ASN1_TIME_free(revtime);
+                            OCSP_CERTID_free(certid);
+                            OCSP_BASICRESP_free(basic);
                             ca_panic_param(
                                 "invalid revocation-time format: %s",
                                 timestr);
@@ -283,6 +285,8 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
                     }
                 } else {
                     ASN1_TIME_free(revtime);
+                    OCSP_CERTID_free(certid);
+                    OCSP_BASICRESP_free(basic);
                     ca_panic_param("revocation-time must be a number (unix "
                                    "timestamp) or string (ISO 8601)");
                 }

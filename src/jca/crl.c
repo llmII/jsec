@@ -18,30 +18,50 @@
  * =============================================================================
  */
 
-CARevocationReason ca_keyword_to_reason(Janet kw) {
+static int ca_try_keyword_to_reason(Janet kw, CARevocationReason *out) {
     if (janet_checktype(kw, JANET_NIL)) {
-        return CA_REVOKE_UNSPECIFIED;
+        *out = CA_REVOKE_UNSPECIFIED;
+        return 1;
     }
 
     const char *str = janet_to_string_or_keyword(kw);
 
-    if (strcmp(str, "unspecified") == 0) return CA_REVOKE_UNSPECIFIED;
-    if (strcmp(str, "key-compromise") == 0) return CA_REVOKE_KEY_COMPROMISE;
-    if (strcmp(str, "ca-compromise") == 0) return CA_REVOKE_CA_COMPROMISE;
-    if (strcmp(str, "affiliation-changed") == 0)
-        return CA_REVOKE_AFFILIATION_CHANGED;
-    if (strcmp(str, "superseded") == 0) return CA_REVOKE_SUPERSEDED;
-    if (strcmp(str, "cessation-of-operation") == 0)
-        return CA_REVOKE_CESSATION_OF_OPERATION;
-    if (strcmp(str, "certificate-hold") == 0)
-        return CA_REVOKE_CERTIFICATE_HOLD;
-    if (strcmp(str, "remove-from-crl") == 0) return CA_REVOKE_REMOVE_FROM_CRL;
-    if (strcmp(str, "privilege-withdrawn") == 0)
-        return CA_REVOKE_PRIVILEGE_WITHDRAWN;
-    if (strcmp(str, "aa-compromise") == 0) return CA_REVOKE_AA_COMPROMISE;
+    CARevocationReason reason;
+    if (strcmp(str, "unspecified") == 0) {
+        reason = CA_REVOKE_UNSPECIFIED;
+    } else if (strcmp(str, "key-compromise") == 0) {
+        reason = CA_REVOKE_KEY_COMPROMISE;
+    } else if (strcmp(str, "ca-compromise") == 0) {
+        reason = CA_REVOKE_CA_COMPROMISE;
+    } else if (strcmp(str, "affiliation-changed") == 0) {
+        reason = CA_REVOKE_AFFILIATION_CHANGED;
+    } else if (strcmp(str, "superseded") == 0) {
+        reason = CA_REVOKE_SUPERSEDED;
+    } else if (strcmp(str, "cessation-of-operation") == 0) {
+        reason = CA_REVOKE_CESSATION_OF_OPERATION;
+    } else if (strcmp(str, "certificate-hold") == 0) {
+        reason = CA_REVOKE_CERTIFICATE_HOLD;
+    } else if (strcmp(str, "remove-from-crl") == 0) {
+        reason = CA_REVOKE_REMOVE_FROM_CRL;
+    } else if (strcmp(str, "privilege-withdrawn") == 0) {
+        reason = CA_REVOKE_PRIVILEGE_WITHDRAWN;
+    } else if (strcmp(str, "aa-compromise") == 0) {
+        reason = CA_REVOKE_AA_COMPROMISE;
+    } else {
+        return 0;
+    }
 
-    ca_panic_param("unknown revocation reason: %s", str);
-    return CA_REVOKE_UNSPECIFIED; /* unreachable */
+    *out = reason;
+    return 1;
+}
+
+CARevocationReason ca_keyword_to_reason(Janet kw) {
+    CARevocationReason reason;
+    if (!ca_try_keyword_to_reason(kw, &reason)) {
+        ca_panic_param("unknown revocation reason: %s",
+                       janet_to_string_or_keyword(kw));
+    }
+    return reason;
 }
 
 Janet ca_reason_to_keyword(CARevocationReason reason) {
@@ -239,7 +259,12 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
             }
 
             int64_t serial = janet_getinteger64(&serial_v, 0);
-            CARevocationReason reason = ca_keyword_to_reason(reason_v);
+            CARevocationReason reason;
+            if (!ca_try_keyword_to_reason(reason_v, &reason)) {
+                X509_CRL_free(crl);
+                ca_panic_param("unknown revocation reason: %s",
+                               janet_to_string_or_keyword(reason_v));
+            }
 
             X509_REVOKED *revoked = X509_REVOKED_new();
             ASN1_INTEGER *asn_serial = ASN1_INTEGER_new();
