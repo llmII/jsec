@@ -7,7 +7,8 @@
 
 /* External declarations */
 extern void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                         int32_t nbytes, int mode);
+                                         int32_t nbytes, int32_t buf_start,
+                                         int mode);
 extern void dtls_client_start_async_write(DTLSClient *client,
                                           JanetByteView data, int mode);
 
@@ -40,6 +41,10 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
         buf = janet_buffer(n);
     }
 
+    /* buffer->count when the read op began; n is relative to this,
+     * matching ev/read append semantics (never treat n as buffer total) */
+    int32_t buf_start = buf->count;
+
     /* Try initial read */
     int32_t nread = 0;
     DTLSResult result =
@@ -51,13 +56,14 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     }
 
     if (result == DTLS_RESULT_EOF) {
-        return buf->count > 0 ? janet_wrap_buffer(buf) : janet_wrap_nil();
+        return buf->count > buf_start ? janet_wrap_buffer(buf)
+                                      : janet_wrap_nil();
     }
 
     /* Need to wait */
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
-    dtls_client_start_async_read(client, buf, n, mode);
+    dtls_client_start_async_read(client, buf, n, buf_start, mode);
     return janet_wrap_nil(); /* Will be replaced by async result */
 }
 

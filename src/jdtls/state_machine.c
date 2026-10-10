@@ -419,21 +419,23 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     result = dtls_do_read(
                         data->ssl,
                         data->state.buffer->data + data->state.buffer->count,
-                        data->state.nbytes - data->state.buffer->count,
+                        data->state.nbytes -
+                            (data->state.buffer->count -
+                             data->state.buf_start),
                         &nread);
                     if (nread > 0) {
                         data->state.buffer->count += nread;
                     }
                     if (result == DTLS_RESULT_OK ||
-                        data->state.buffer->count > 0) {
+                        data->state.buffer->count > data->state.buf_start) {
                         /* Return what we have */
                         retval = janet_wrap_buffer(data->state.buffer);
                         result = DTLS_RESULT_OK;
                     } else if (result == DTLS_RESULT_EOF) {
-                        if (data->state.buffer->count > 0) {
+                        if (data->state.buffer->count > data->state.buf_start) {
                             retval = janet_wrap_buffer(data->state.buffer);
                         }
-                        /* EOF with no data = nil */
+                        /* EOF with no data this call = nil */
                     }
                     break;
                 }
@@ -566,6 +568,7 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
     data->state.op = DTLS_OP_READ;
     data->state.buffer = janet_buffer(nbytes);
     data->state.nbytes = nbytes;
+    data->state.buf_start = data->state.buffer->count;
     data->state.timeout = timeout;
     data->ssl = ssl;
     data->transport = transport;
@@ -573,10 +576,13 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
 
     /* Try initial read */
     int32_t nread = 0;
-    DTLSResult result =
-        dtls_do_read(ssl, data->state.buffer->data, nbytes, &nread);
+    DTLSResult result = dtls_do_read(
+        ssl, data->state.buffer->data + data->state.buffer->count,
+        data->state.nbytes -
+            (data->state.buffer->count - data->state.buf_start),
+        &nread);
     if (nread > 0) {
-        data->state.buffer->count = nread;
+        data->state.buffer->count += nread;
     }
 
     if (result == DTLS_RESULT_OK) {

@@ -294,6 +294,9 @@ typedef struct {
     JanetBuffer *buffer;      /* Buffer for read operations */
     JanetByteView write_data; /* Data for write operations */
     int32_t nbytes;           /* Requested bytes for read */
+    int32_t buf_start;        /* buffer->count when read op began; n is
+                               * relative to this, matching ev/read append
+                               * semantics (never treat n as buffer total) */
     double timeout;           /* Operation timeout */
     int flags;                /* Operation flags */
     DTLSAddress *out_addr;    /* Output address for recv-from */
@@ -415,7 +418,7 @@ void jdtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 int dtls_client_start_handshake(DTLSClient *client);
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int mode);
+                                  int32_t nbytes, int32_t buf_start, int mode);
 void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
                                    int mode);
 void dtls_client_start_async_close(DTLSClient *client, int mode);
