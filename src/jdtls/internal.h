@@ -415,9 +415,9 @@ void jdtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 int dtls_client_start_handshake(DTLSClient *client);
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int mode);
+                                  int32_t nbytes, int mode, double timeout);
 void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
-                                   int mode);
+                                   int mode, double timeout);
 void dtls_client_start_async_close(DTLSClient *client, int mode);
 
 /* close.c */

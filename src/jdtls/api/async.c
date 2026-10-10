@@ -329,7 +329,7 @@ int dtls_client_start_handshake(DTLSClient *client) {
 
 /* Helper to create and start async read */
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int mode) {
+                                  int32_t nbytes, int mode, double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
@@ -337,19 +337,31 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
     state->nbytes = nbytes;
     state->op = CLIENT_OP_READ;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    /* Arm once here, at initial suspension: the deadline is absolute
+     * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
+     * callback must not re-arm it. */
+    if (timeout >= 0) {
+        janet_addtimeout(timeout);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }
 
 /* Helper to create and start async write */
 void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
-                                   int mode) {
+                                   int mode, double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->write_data = data;
     state->op = CLIENT_OP_WRITE;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    /* Arm once here, at initial suspension: the deadline is absolute
+     * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
+     * callback must not re-arm it. */
+    if (timeout >= 0) {
+        janet_addtimeout(timeout);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }
