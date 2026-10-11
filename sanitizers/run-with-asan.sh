@@ -34,7 +34,8 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 export PATH="$TOOLCHAIN_DIR/bin:$PATH"
-export ASAN_OPTIONS="suppressions=$SCRIPT_DIR/asan.supp:detect_leaks=0:halt_on_error=$HALT:print_stacktrace=1:fast_unwind_on_malloc=0:exitcode=23:log_path=$LOG_DIR/san.log"
+export JSEC_SANITIZER="asan"
+export ASAN_OPTIONS="suppressions=$SCRIPT_DIR/asan.supp:detect_leaks=0:halt_on_error=$HALT:print_stacktrace=1:exitcode=23:log_path=$LOG_DIR/san.log"
 
 rc=0
 case "${1:-}" in

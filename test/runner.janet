@@ -14,7 +14,9 @@
 # Ensure assay subprocess workers (both suite workers and nested combo/participant
 # subprocess workers) are waited on via os/proc-wait during :shutdown/:close so
 # Janet's proc GC does not send SIGKILL while a child worker is still running
-# its exit/atexit handlers (e.g. LeakSanitizer heap scanning).
+# its exit/atexit handlers (e.g. LeakSanitizer heap scanning). When running
+# under a sanitizer, also scale per-test :timeout budgets by 3x to account for
+# sanitizer instrumentation and DWARF malloc unwinding overhead.
 (def- reap-hook-code
   ```
   (let [wm (require "assay/worker")
@@ -47,6 +49,24 @@
                       (reap self))))
              h)))
       nil)
+  (when (or (os/getenv "JSEC_SANITIZER")
+            (os/getenv "ASAN_OPTIONS")
+            (os/getenv "LSAN_OPTIONS")
+            (os/getenv "UBSAN_OPTIONS"))
+    (let [cm (require "assay/core")
+          ee (get cm 'execute-tests)
+          orig-exec (ee :value)]
+      (unless (get cm :jsec-san-timeout-installed)
+        (put cm :jsec-san-timeout-installed true)
+        (put ee :value
+             (fn [suite-state config &opt worker-state]
+               (when-let [tests (get suite-state :tests)]
+                 (each ti tests
+                   (when (and (number? (get ti :timeout))
+                              (not (get ti :jsec-san-scaled)))
+                     (put ti :jsec-san-scaled true)
+                     (put ti :timeout (* 3 (get ti :timeout))))))
+               (orig-exec suite-state config worker-state))))))
   ```)
 
 (eval-string reap-hook-code)

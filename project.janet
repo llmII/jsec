@@ -502,20 +502,24 @@
 
 (defn- san-test-env [sanitizer log-prefix]
   (def cwd (os/cwd))
-  (def halt (if (os/getenv "JSEC_SAN_HALT") "1" "0"))
+  (def halt (if (= (os/getenv "JSEC_SAN_HALT") "1") "1" "0"))
   (def detect-leaks
     (if (or (= sanitizer "asan") (= sanitizer "ubsan")) "0" "1"))
+  (def fast-unwind (if (= detect-leaks "1") ":fast_unwind_on_malloc=0" ""))
+  (def lsan-exitcode (if (= halt "1") "23" "0"))
   (def asan-supp (string cwd "/sanitizers/asan.supp"))
   (def lsan-supp (string cwd "/sanitizers/lsan.supp"))
   (def ubsan-supp (string cwd "/sanitizers/ubsan.supp"))
   {"JSEC_SANITIZER" sanitizer
    "ASAN_OPTIONS" (string "detect_leaks=" detect-leaks
                           ":halt_on_error=" halt
-                          ":print_stacktrace=1:fast_unwind_on_malloc=0"
+                          ":print_stacktrace=1" fast-unwind
                           ":exitcode=23"
                           ":suppressions=" asan-supp
                           ":log_path=" log-prefix)
-   "LSAN_OPTIONS" (string "exitcode=23:print_suppressions=0"
+   "LSAN_OPTIONS" (string "exitcode=" lsan-exitcode
+                          ":print_suppressions=0"
+                          ":print_stacktrace=1:fast_unwind_on_malloc=0"
                           ":suppressions=" lsan-supp
                           ":log_path=" log-prefix)
    "UBSAN_OPTIONS" (string "halt_on_error=" halt
