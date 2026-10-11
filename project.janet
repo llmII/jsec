@@ -67,12 +67,31 @@
 (def- illumos? (= (os/which) :illumos))
 
 # ============================================================================
-# Build Configuration (from environment)
+# Build Configuration (from environment or active toolchain stamp)
 # ============================================================================
 
+(defn- detect-toolchain-sanitizer []
+  (when-let [syspath (dyn :syspath)
+             stamp-path (string syspath "/../../TOOLCHAIN")
+             _ (os/stat stamp-path)
+             content (slurp stamp-path)]
+    (var found nil)
+    (each line (string/split "\n" content)
+      (when (string/has-prefix? "sanitizer:" line)
+        (def v (string/trim (string/slice line (length "sanitizer:"))))
+        (when (and (not (empty? v)) (not= v "none"))
+          (set found v))))
+    found))
+
+(def- toolchain-san (detect-toolchain-sanitizer))
+(def- san-env (or (os/getenv "JSEC_SANITIZER")
+                  (when (os/getenv "JSEC_SAN") "san")
+                  toolchain-san))
+
 (def- debug? (os/getenv "JSEC_DEBUG"))
-(def- asan? (os/getenv "JSEC_ASAN"))
-(def- ubsan? (os/getenv "JSEC_UBSAN"))
+(def- asan? (or (os/getenv "JSEC_ASAN") (= san-env "asan") (= san-env "san")))
+(def- lsan? (or (os/getenv "JSEC_LSAN") (= san-env "lsan")))
+(def- ubsan? (or (os/getenv "JSEC_UBSAN") (= san-env "ubsan") (= san-env "san")))
 (def- verbose? (os/getenv "JSEC_DEBUG_VERBOSE"))
 
 # ============================================================================
@@ -153,26 +172,51 @@
      # Sign conversion (can catch subtle bugs)
      "-Wsign-compare"]))
 
-# Sanitizer flags (Unix only)
-(defn- build-sanitizer-flags []
+# Sanitizer flags (Unix only) - decoupled from JSEC_DEBUG so sanitizer
+# toolchains (.work/{asan,lsan,ubsan,san}) and JSEC_{ASAN,LSAN,UBSAN,SAN}=1
+# apply sanitizer compile/link flags directly.
+(defn- build-sanitizer-list []
   (if windows?
     @[]
     (let [sanitizers @[]]
       (when asan? (array/push sanitizers "address"))
+      (when (and lsan? (not asan?)) (array/push sanitizers "leak"))
       (when ubsan? (array/push sanitizers "undefined"))
-      (if (empty? sanitizers)
-        @[]
-        @[(string "-fsanitize=" (string/join sanitizers ","))]))))
+      sanitizers)))
+
+(defn- build-sanitizer-recover-list []
+  (if windows?
+    @[]
+    (let [recover @[]]
+      (when asan? (array/push recover "address"))
+      (when ubsan? (array/push recover "undefined"))
+      recover)))
+
+(def- sanitizer-cflags
+  (let [sanitizers (build-sanitizer-list)
+        recover (build-sanitizer-recover-list)]
+    (if (empty? sanitizers)
+      @[]
+      (let [flags @["-O1" "-g3" "-fno-omit-frame-pointer"
+                    "-fno-optimize-sibling-calls"
+                    (string "-fsanitize=" (string/join sanitizers ","))]]
+        (unless (empty? recover)
+          (array/push flags
+                      (string "-fsanitize-recover="
+                              (string/join recover ","))))
+        flags))))
+
+(def- sanitizer-lflags
+  (let [sanitizers (build-sanitizer-list)]
+    (if (empty? sanitizers)
+      @[]
+      @[(string "-fsanitize=" (string/join sanitizers ","))])))
 
 (def- debug-cflags
   (if windows?
     @["/Zi" "/Od" "/DJSEC_DEBUG"]
     (let [base @["-g3" "-Og" "-fno-omit-frame-pointer"
-                 "-fstack-protector-strong" "-DJSEC_DEBUG"]
-          san-flags (build-sanitizer-flags)]
-      (when (not (empty? san-flags))
-        (array/push base ;san-flags)
-        (array/push base "-fsanitize-recover=all"))
+                 "-fstack-protector-strong" "-DJSEC_DEBUG"]]
       (when verbose?
         (array/push base "-DJSEC_DEBUG_VERBOSE"))
       base)))
@@ -180,7 +224,7 @@
 (def- debug-lflags
   (if windows?
     @["/DEBUG"]
-    (build-sanitizer-flags)))
+    @[]))
 
 (def- platform-cflags
   (cond
@@ -210,14 +254,15 @@
     ["-lssl" "-lcrypto"]))
 
 (def- build-cflags
-  (if debug?
-    [;standard-cflags ;debug-cflags ;platform-cflags]
-    [;standard-cflags ;platform-cflags]))
+  [;standard-cflags
+   ;(if debug? debug-cflags [])
+   ;sanitizer-cflags
+   ;platform-cflags])
 
 (def- build-lflags
-  (if debug?
-    [;platform-lflags ;debug-lflags]
-    platform-lflags))
+  [;platform-lflags
+   ;(if debug? debug-lflags [])
+   ;sanitizer-lflags])
 
 # Windows DLL handling
 (when windows?
@@ -410,15 +455,6 @@
                       f "-f" "org-md-export-to-markdown"] :p))
        (print "Release preparation complete."))
 
-# Test with sanitizers - placeholder (requires debug build)
-(phony "test/sanitized" []
-       (print
-         (string "Note: Sanitizer testing requires "
-                 "JSEC_DEBUG=1 JSEC_ASAN=1 jpm build first."))
-       (print "Then run: janet test/runner.janet")
-       (print "This target is a no-op for now."))
-(phony "test-sanitized" ["test/sanitized"])
-
 # Leak check with valgrind - placeholder
 (phony "test/valgrind" []
        (print "Note: Valgrind leak checking requires a debug build.")
@@ -435,12 +471,14 @@
 # janet/jpm. First invocation may use `jpm run` as a dispatcher; the actual
 # build/test steps invoke the in-tree tools by path.
 
-(def- run-or-fail
-  (fn [args]
-    (def code (os/execute args :p))
-    (unless (zero? code)
-      (print "command failed (exit " code "): " (string/join args " "))
-      (os/exit code))))
+(defn- run-or-fail [args &opt extra-env]
+  (def code
+    (if extra-env
+      (os/execute args :pe (merge (os/environ) extra-env))
+      (os/execute args :p)))
+  (unless (zero? code)
+    (print "command failed (exit " code "): " (string/join args " "))
+    (os/exit code)))
 
 (def- toolchain-janet ".work/bin/janet")
 (def- toolchain-jpm ".work/bin/jpm")
@@ -455,38 +493,113 @@
 (def- toolchain-modpath ".work/lib/janet")
 (def- poll-toolchain-modpath ".work/poll/lib/janet")
 
+(defn- san-build-env [sanitizer]
+  (when sanitizer
+    {"JSEC_SANITIZER" sanitizer
+     "ASAN_OPTIONS" "detect_leaks=0:halt_on_error=0"
+     "LSAN_OPTIONS" "detect_leaks=0"
+     "UBSAN_OPTIONS" "halt_on_error=0"}))
+
+(defn- san-test-env [sanitizer log-prefix]
+  (def cwd (os/cwd))
+  (def halt (if (os/getenv "JSEC_SAN_HALT") "1" "0"))
+  (def detect-leaks
+    (if (or (= sanitizer "asan") (= sanitizer "ubsan")) "0" "1"))
+  (def asan-supp (string cwd "/sanitizers/asan.supp"))
+  (def lsan-supp (string cwd "/sanitizers/lsan.supp"))
+  (def ubsan-supp (string cwd "/sanitizers/ubsan.supp"))
+  {"JSEC_SANITIZER" sanitizer
+   "ASAN_OPTIONS" (string "detect_leaks=" detect-leaks
+                          ":halt_on_error=" halt
+                          ":print_stacktrace=1:fast_unwind_on_malloc=0"
+                          ":exitcode=23"
+                          ":suppressions=" asan-supp
+                          ":log_path=" log-prefix)
+   "LSAN_OPTIONS" (string "exitcode=23:print_suppressions=0"
+                          ":suppressions=" lsan-supp
+                          ":log_path=" log-prefix)
+   "UBSAN_OPTIONS" (string "halt_on_error=" halt
+                           ":print_stacktrace=1:exitcode=23"
+                           ":suppressions=" ubsan-supp
+                           ":log_path=" log-prefix)})
+
+(defn- collect-san-logs [log-dir]
+  (def logs @[])
+  (when (os/stat log-dir)
+    (each entry (sort (os/dir log-dir))
+      (when (string/has-prefix? "san.log." entry)
+        (def full (string log-dir "/" entry))
+        (def st (os/stat full))
+        (when (and st (> (st :size) 0))
+          (array/push logs full)))))
+  logs)
+
 # Ensure a toolchain's module tree holds the test dependencies (assay, spork).
 # jpm build/install do NOT install dependencies, and without them
 # test/runner.janet cannot import assay and its workers cannot run - so the run
 # would be meaningless. Install only when missing so a populated tree is left
 # alone (idempotent, no network/clone on re-runs).
-(defn- ensure-test-deps [jpm-bin modpath]
+(defn- ensure-test-deps [jpm-bin modpath &opt build-env]
   (def missing (filter |(not (os/stat (string modpath "/" $)))
                        ["assay" "spork"]))
   (unless (empty? missing)
     (print "Installing test dependencies ("
            (string/join missing ", ") ")...")
     (flush)
-    (run-or-fail [jpm-bin "deps"])))
+    (run-or-fail [jpm-bin "deps"] build-env)))
 
 # Build jsec and run the unit/regression/coverage suite (perf excluded) under a
 # toolchain's janet/jpm with the project's default concurrency and suite
-# selection (builds and tests itself). Shared by self-test (epoll) and
-# self-test-poll (poll) so the two are directly comparable: same flags, same
-# output shape, same exit semantics.
-(defn- run-self-test-suite [janet-bin jpm-bin modpath]
-  (ensure-test-deps jpm-bin modpath)
+# selection (builds and tests itself). Shared by self-test (epoll),
+# self-test-poll (poll), and self-test-{asan,lsan,ubsan,san} so all profiles
+# stay directly comparable: same flags, same output shape, same exit semantics.
+(defn- run-self-test-suite [janet-bin jpm-bin modpath &opt sanitizer prefix]
+  (def build-env (san-build-env sanitizer))
+  (ensure-test-deps jpm-bin modpath build-env)
   (print "Building jsec under the in-tree toolchain...")
   (flush)
-  (run-or-fail [jpm-bin "build"])
+  (run-or-fail [jpm-bin "build"] build-env)
   (print "Installing jsec under the in-tree toolchain...")
   (flush)
-  (run-or-fail [jpm-bin "install"])
+  (run-or-fail [jpm-bin "install"] build-env)
   (print "Running unit/regression/coverage under the in-tree toolchain...")
   (flush)
-  (run-or-fail [janet-bin "test/runner.janet"
-                "-f" "{unit,regression,coverage}"
-                "-j" "fiber:16,thread:6,subprocess:6"]))
+  (def runner-args [janet-bin "test/runner.janet"
+                    "-f" "{unit,regression,coverage}"
+                    "-j" "fiber:16,thread:6,subprocess:6"])
+  (if (nil? sanitizer)
+    (run-or-fail runner-args)
+    (let [tc-prefix (or prefix (string ".work/" sanitizer))
+          log-dir (string (os/cwd) "/" tc-prefix "/scratch/san-logs")
+          log-prefix (string log-dir "/san.log")]
+      (rmdir-recursive log-dir)
+      (os/mkdir (string (os/cwd) "/" tc-prefix "/scratch"))
+      (os/mkdir log-dir)
+      (def code (os/execute runner-args :pe
+                            (merge (os/environ)
+                                   (san-test-env sanitizer log-prefix))))
+      (ev/sleep 0.2)
+      (def logs (collect-san-logs log-dir))
+      (unless (empty? logs)
+        (print "\n=== Sanitizer findings (" (length logs)
+               " process log(s) in " log-dir ") ===")
+        (each f logs
+          (print "\n--- " f " ---")
+          (prin (slurp f)))
+        (flush)
+        (os/exit (if (zero? code) 23 code)))
+      (unless (zero? code)
+        (print "command failed (exit " code "): "
+               (string/join runner-args " "))
+        (os/exit code)))))
+
+(defn- run-sanitized-profile [sanitizer]
+  (def prefix (string ".work/" sanitizer))
+  (run-self-test-suite (string prefix "/bin/janet")
+                       (string prefix "/bin/jpm")
+                       (string prefix "/lib/janet")
+                       sanitizer
+                       prefix))
 
 # Build the hermetic toolchain into .work/ (idempotent).
 (phony "toolchain" []
@@ -496,6 +609,23 @@
 (phony "toolchain-poll" []
        (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
                      "--ev-backend" "poll" "--toolchain" ".work/poll"]))
+
+# Build sanitizer-instrumented hermetic toolchains into .work/<profile>/.
+(phony "toolchain-asan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "asan" "--toolchain" ".work/asan"]))
+
+(phony "toolchain-lsan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "lsan" "--toolchain" ".work/lsan"]))
+
+(phony "toolchain-ubsan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "ubsan" "--toolchain" ".work/ubsan"]))
+
+(phony "toolchain-san" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "san" "--toolchain" ".work/san"]))
 
 # Build jsec and run the suite under the default (epoll) in-tree toolchain.
 (phony "self-test" ["toolchain"]
@@ -509,3 +639,20 @@
 (phony "self-test-poll" ["toolchain-poll"]
        (run-self-test-suite poll-toolchain-janet poll-toolchain-jpm
                             poll-toolchain-modpath))
+
+# Build jsec and run the suite under sanitizer-instrumented toolchains.
+(phony "self-test-asan" ["toolchain-asan"]
+       (run-sanitized-profile "asan"))
+
+(phony "self-test-lsan" ["toolchain-lsan"]
+       (run-sanitized-profile "lsan"))
+
+(phony "self-test-ubsan" ["toolchain-ubsan"]
+       (run-sanitized-profile "ubsan"))
+
+(phony "self-test-san" ["toolchain-san"]
+       (run-sanitized-profile "san"))
+
+# Wire test/sanitized and test-sanitized to the combined hermetic *SAN profile.
+(phony "test/sanitized" ["self-test-san"])
+(phony "test-sanitized" ["test/sanitized"])
