@@ -41,8 +41,8 @@ X509_REQ *ca_pem_to_csr(Janet pem) {
 }
 
 /* Parse SAN entries from Janet array */
-static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
-    if (!san_arr || san_arr->count == 0) return;
+static int add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
+    if (!san_arr || san_arr->count == 0) return 1;
 
     JanetBuffer *san_buf = janet_buffer(256);
 
@@ -57,8 +57,8 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
     /* Null-terminate */
     janet_buffer_push_u8(san_buf, 0);
 
-    ca_add_extension(cert, issuer, NID_subject_alt_name,
-                     (const char *)san_buf->data);
+    return ca_add_extension(cert, issuer, NID_subject_alt_name,
+                            (const char *)san_buf->data);
 }
 
 /*
@@ -206,30 +206,66 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Add standard extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints,
-                     basic_constraints);
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                          basic_constraints)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Add key usage if specified */
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
         /* Default for end-entity cert */
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage,
+                              "digitalSignature,keyEncipherment")) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Add extended key usage if specified */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
     /* Add SAN if specified */
     if (san_arr && san_arr->count > 0) {
-        add_san_entries(cert, ca->cert, san_arr);
+        if (!add_san_entries(cert, ca->cert, san_arr)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
     }
 
     /* Sign with CA key */
@@ -390,28 +426,57 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     X509_set_pubkey(cert, key);
 
     /* Add extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE");
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Key usage */
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage,
+                              "digitalSignature,keyEncipherment")) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Extended key usage */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
     /* SAN */
     if (san_arr && san_arr->count > 0) {
-        add_san_entries(cert, ca->cert, san_arr);
+        if (!add_san_entries(cert, ca->cert, san_arr)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
     }
 
     /* Sign with CA key */
