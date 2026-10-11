@@ -39,7 +39,8 @@ FILE *keylog_file = NULL;
  * TLS CONTEXT ABSTRACT TYPE
  *============================================================================
  * Now uses the unified SSLContext type from jshared.c.
- * The tls_context_type macro aliases ssl_context_type.
+ * Type identity is resolved through jutils_get_context_type; there is no
+ * per-module tls_context_type object.
  * jtls_context_gc is kept for backwards compatibility but delegates to
  * shared.
  */
@@ -48,8 +49,6 @@ int jtls_context_gc(void *p, size_t s) {
     /* Delegate to shared implementation */
     return ssl_context_gc(p, s);
 }
-
-/* tls_context_type is now defined as a macro aliasing ssl_context_type */
 
 /*============================================================================
  * TLS STREAM ABSTRACT TYPE

@@ -267,8 +267,12 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
     SSL_CTX *ctx = NULL;
     int owns_ctx = 0;
 
-    if (janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx = janet_getabstract(argv, 1, &tls_context_type);
+    if (janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx =
+            janet_getabstract(argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
@@ -755,8 +759,12 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     SSL_CTX *ctx = NULL;
     int owns_ctx = 0;
 
-    if (janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx = janet_getabstract(argv, 1, &tls_context_type);
+    if (janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx =
+            janet_getabstract(argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;

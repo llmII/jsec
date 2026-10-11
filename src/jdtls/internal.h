@@ -366,9 +366,6 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
 
 typedef SSLContext DTLSContext;
 
-/* Use the unified ssl_context_type for DTLS contexts */
-#define dtls_context_type ssl_context_type
-
 /*
  * =============================================================================
  * Abstract Type Declarations
@@ -378,13 +375,10 @@ typedef SSLContext DTLSContext;
 extern const JanetAbstractType dtls_address_type;
 extern const JanetAbstractType dtls_server_type;
 extern const JanetAbstractType dtls_client_type;
-/* dtls_context_type is now a macro aliasing ssl_context_type from jshared.h
- */
 
 /* Method tables for stream-like behavior */
 extern const JanetMethod dtls_client_methods[];
 extern const JanetMethod dtls_server_methods[];
-/* dtls_context_methods is now ssl_context_methods from jshared.h */
 
 /*
  * =============================================================================

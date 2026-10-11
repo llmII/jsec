@@ -167,6 +167,15 @@ int ssl_context_get(void *p, Janet key, Janet *out);
 /* Method table for SSLContext */
 extern const JanetMethod ssl_context_methods[];
 
+/*
+ * Canonical context type object for janet_abstract / janet_getabstract /
+ * janet_checkabstract. ssl_context_type is a per-.so copy; only the
+ * registered copy carries one identity across module boundaries, so type
+ * checks and creation go through this lookup, never through
+ * &ssl_context_type.
+ */
+const JanetAbstractType *jutils_get_context_type(void);
+
 /* Initialize the shared context type (call once at module init) */
 void jutils_init_context_type(void);
 
@@ -174,9 +183,6 @@ void jutils_init_context_type(void);
  * Returns SSLContext* allocated via janet_abstract, or panics on error
  */
 SSLContext *jutils_create_context(Janet opts, int is_dtls);
-
-/* Helper to get SSLContext from Janet value */
-SSLContext *jutils_get_context(Janet val);
 
 /* Add trusted cert to unified context */
 Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv);

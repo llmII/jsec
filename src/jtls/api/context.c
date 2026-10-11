@@ -143,8 +143,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         }
     }
 
-    TLSContext *tls_ctx =
-        (TLSContext *)janet_abstract(&tls_context_type, sizeof(TLSContext));
+    TLSContext *tls_ctx = (TLSContext *)janet_abstract(
+        jutils_get_context_type(), sizeof(TLSContext));
     tls_ctx->ctx = ctx;
     tls_ctx->is_dtls = 0; /* This is a TLS context */
     return janet_wrap_abstract(tls_ctx);
@@ -156,7 +156,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
  */
 Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
-    TLSContext *tls_ctx = janet_getabstract(argv, 0, &tls_context_type);
+    TLSContext *tls_ctx =
+        janet_getabstract(argv, 0, jutils_get_context_type());
     JanetByteView response = janet_getbytes(argv, 1);
 
     OCSPData *data = malloc(sizeof(OCSPData));
@@ -201,7 +202,8 @@ Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
  */
 Janet cfun_trust_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
-    TLSContext *tls_ctx = janet_getabstract(argv, 0, &tls_context_type);
+    TLSContext *tls_ctx =
+        janet_getabstract(argv, 0, jutils_get_context_type());
 
     if (!jtls_add_trusted_cert(tls_ctx->ctx, argv[1])) {
         tls_panic_ssl("failed to add trusted certificate");

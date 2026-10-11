@@ -62,9 +62,12 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
 
     /* Check if argv[1] is a TLSContext */
     if (argc >= 2 && janet_checktype(argv[1], JANET_ABSTRACT) &&
-        janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx =
-            (TLSContext *)janet_getabstract(argv, 1, &tls_context_type);
+        janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx = (TLSContext *)janet_getabstract(
+            argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
@@ -160,25 +163,31 @@ client_setup:
             /* Check for pre-built context first */
             Janet context_opt = janet_get(opts, janet_ckeywordv("context"));
             if (!janet_checktype(context_opt, JANET_NIL)) {
-                if (janet_checkabstract(context_opt, &tls_context_type)) {
-                    TLSContext *tls_ctx =
-                        (TLSContext *)janet_unwrap_abstract(context_opt);
-                    ctx = tls_ctx->ctx;
-                    SSL_CTX_up_ref(ctx);
-                    owns_ctx = 1;
-
-                    /* Still need hostname for SNI */
-                    Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
-                    if (janet_checktype(hn, JANET_STRING)) {
-                        hostname = (const char *)janet_unwrap_string(hn);
-                    }
-
-                    /* Check if context was created with verification */
-                    verify =
-                        (SSL_CTX_get_verify_mode(ctx) & SSL_VERIFY_PEER) != 0;
-
-                    goto common_setup;
+                if (!janet_checkabstract(context_opt,
+                                         jutils_get_context_type())) {
+                    tls_panic_config(":context must be a jsec/ssl-context");
                 }
+                TLSContext *tls_ctx =
+                    (TLSContext *)janet_unwrap_abstract(context_opt);
+                if (tls_ctx->is_dtls) {
+                    tls_panic_config(
+                        "cannot use DTLS context for TLS connection");
+                }
+                ctx = tls_ctx->ctx;
+                SSL_CTX_up_ref(ctx);
+                owns_ctx = 1;
+
+                /* Still need hostname for SNI */
+                Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
+                if (janet_checktype(hn, JANET_STRING)) {
+                    hostname = (const char *)janet_unwrap_string(hn);
+                }
+
+                /* Check if context was created with verification */
+                verify =
+                    (SSL_CTX_get_verify_mode(ctx) & SSL_VERIFY_PEER) != 0;
+
+                goto common_setup;
             }
 
             Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
@@ -500,10 +509,28 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (!janet_checktype(opts, JANET_NIL)) {
                 Janet context_opt =
                     janet_get(opts, janet_ckeywordv("context"));
-                if (janet_checktype(context_opt, JANET_ABSTRACT) &&
-                    janet_checkabstract(context_opt, &tls_context_type)) {
+                if (!janet_checktype(context_opt, JANET_NIL)) {
+                    if (!janet_checkabstract(context_opt,
+                                             jutils_get_context_type())) {
+                        janet_free(hostname);
+                        janet_cancel(fiber,
+                                     janet_cstringv("[TLS:CONFIG] :context "
+                                                    "must be a jsec/ssl-"
+                                                    "context"));
+                        janet_async_end(fiber);
+                        return;
+                    }
                     TLSContext *tls_ctx =
                         (TLSContext *)janet_unwrap_abstract(context_opt);
+                    if (tls_ctx->is_dtls) {
+                        janet_free(hostname);
+                        janet_cancel(
+                            fiber,
+                            janet_cstringv("[TLS:CONFIG] cannot use DTLS "
+                                           "context for TLS connection"));
+                        janet_async_end(fiber);
+                        return;
+                    }
                     ctx = tls_ctx->ctx;
                     SSL_CTX_up_ref(ctx);
                     owns_ctx = 1;
@@ -673,6 +700,22 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             port = janet_getcstring(argv, 1);
         }
         if (argc >= 3) opts = argv[2];
+    }
+
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        Janet ctx_opt = janet_get(opts, janet_ckeywordv("context"));
+        if (!janet_checktype(ctx_opt, JANET_NIL)) {
+            if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
+                tls_panic_config(":context must be a jsec/ssl-context");
+            }
+            TLSContext *shared_ctx =
+                (TLSContext *)janet_unwrap_abstract(ctx_opt);
+            if (shared_ctx->is_dtls) {
+                tls_panic_config(
+                    "cannot use DTLS context for TLS connection");
+            }
+        }
     }
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;

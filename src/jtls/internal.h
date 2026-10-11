@@ -269,9 +269,6 @@ struct TLSStream {
  */
 typedef SSLContext TLSContext;
 
-/* Use the unified ssl_context_type for TLS contexts */
-#define tls_context_type ssl_context_type
-
 /*============================================================================
  * SNI (Server Name Indication) DATA
  *============================================================================
@@ -331,7 +328,6 @@ extern ServerCTXCache server_ctx_cache;
 extern JanetOSMutex *ctx_cache_lock;
 extern FILE *keylog_file;
 extern const JanetAbstractType tls_stream_type;
-/* tls_context_type is now a macro aliasing ssl_context_type from jshared.h */
 extern const JanetMethod tls_stream_methods[];
 
 /*============================================================================

@@ -82,8 +82,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
         /* :context option allows reusing a DTLSContext (SSLContext) */
         Janet ctx_opt = janet_get(opts, janet_ckeywordv("context"));
-        if (janet_checktype(ctx_opt, JANET_ABSTRACT)) {
-            shared_ctx = janet_getabstract(&ctx_opt, 0, &dtls_context_type);
+        if (!janet_checktype(ctx_opt, JANET_NIL)) {
+            if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
+                dtls_panic_config(":context must be a jsec/ssl-context");
+            }
+            shared_ctx =
+                (DTLSContext *)janet_unwrap_abstract(ctx_opt);
             /* Verify it's a DTLS context, not TLS */
             if (!shared_ctx->is_dtls) {
                 dtls_panic_config(

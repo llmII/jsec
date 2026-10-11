@@ -127,4 +127,130 @@
                       "intentional protocol guard (\"cannot use TLS context "
                       "for DTLS connection\", src/jdtls/api/connect.c:88-90); "
                       "got %q")
-              outcome))))
+              outcome)))
+
+  # The 2A registry unification makes a DTLS context pass the tls/ type
+  # checks, so the symmetric is_dtls protocol guard is what has to speak.
+  # Before the guard the tls/ connection paths silently drove a DTLS
+  # context with the TLS state machine - the least-surprise shape is to
+  # ERROR, not to accommodate. This def-test pins the mirror message at
+  # every context-taking TLS connection/accept entry point.
+  (def-test "dtls context is rejected by the tls connection paths"
+
+    (def tctx (tls/new-context {}))
+    (def dctx (dtls/new-context {}))
+    (def want "cannot use DTLS context for TLS connection")
+
+    # tls/connect's :context option - the guard fires before any socket is
+    # created, so no network is touched.
+    (var outcome :no-error)
+    (try
+      (do (tls/connect "127.0.0.1" "9" {:context dctx :verify false})
+          (set outcome :no-error))
+      ([err] (set outcome err)))
+    (assert (string/find want (string outcome))
+            (string/format
+              "tls/connect must reject a dtls context with %q; got %q"
+              want (string outcome)))
+
+    # Control: the same call with a tls/new-context context must NOT speak
+    # the protocol guard - it proceeds to the socket stage and fails there
+    # (connection refused), which is a different message entirely.
+    (var control :no-error)
+    (try
+      (do (tls/connect "127.0.0.1" "9" {:context tctx :verify false})
+          (set control :no-error))
+      ([err] (set control err)))
+    (assert (not (string/find want (string control)))
+            (string/format
+              (string "control: tls/connect must NOT reject a tls context "
+                      "with %q; got %q")
+              want (string control)))
+
+    # tls/wrap's :context option, over a real connected stream.
+    (let [[server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (with [conn (make-client-conn :tcp addr)]
+          (var wrap-out :no-error)
+          (try
+            (do (tls/wrap conn {:context dctx :verify false})
+                (set wrap-out :no-error))
+            ([err] (set wrap-out err)))
+          (assert (string/find want (string wrap-out))
+                  (string/format
+                    "tls/wrap must reject a dtls context with %q; got %q"
+                    want (string wrap-out))))))
+
+    # tls/accept and tls/accept-loop take the context as their second
+    # argument; both must speak the same mirror message.
+    (let [[server socket-path] (make-server :tcp)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+
+        (var acc-out :no-error)
+        (try
+          (do (tls/accept server dctx) (set acc-out :no-error))
+          ([err] (set acc-out err)))
+        (assert (string/find want (string acc-out))
+                (string/format
+                  "tls/accept must reject a dtls context with %q; got %q"
+                  want (string acc-out)))
+
+        (var loop-out :no-error)
+        (try
+          (do (tls/accept-loop server dctx (fn [s] nil))
+              (set loop-out :no-error))
+          ([err] (set loop-out err)))
+        (assert (string/find want (string loop-out))
+                (string/format
+                  "tls/accept-loop must reject a dtls context with %q; got %q"
+                  want (string loop-out))))))
+
+  # Least surprise at the option boundary: a :context that is present but
+  # is not an ssl-context must ERROR rather than being quietly dropped and
+  # replaced with a freshly built context. Before this guard the tls/
+  # paths silently ignored such a value on some entry points and raised a
+  # bare type error on others.
+  (def-test "a :context value that is not an ssl-context raises"
+
+    (def want ":context must be a jsec/ssl-context")
+    (def tctx (tls/new-context {}))
+    (def dctx (dtls/new-context {}))
+
+    (each bad [42 "not-a-context" {:a 1} [1 2]]
+      (var tls-out :no-error)
+      (try
+        (do (tls/connect "127.0.0.1" "9" {:context bad :verify false})
+            (set tls-out :no-error))
+        ([err] (set tls-out err)))
+      (assert (string/find want (string tls-out))
+              (string/format
+                "tls/connect must raise %q for :context %q; got %q"
+                want bad (string tls-out)))
+
+      (var dtls-out :no-error)
+      (try
+        (do (dtls/connect "127.0.0.1" "9" {:context bad :verify false})
+            (set dtls-out :no-error))
+        ([err] (set dtls-out err)))
+      (assert (string/find want (string dtls-out))
+              (string/format
+                "dtls/connect must raise %q for :context %q; got %q"
+                want bad (string dtls-out))))
+
+    # Controls: a real ssl-context of either protocol never produces the
+    # "must be a jsec/ssl-context" complaint. The TLS context reaches the
+    # socket stage; the DTLS context is stopped by the protocol guard -
+    # neither is stopped by the type contract.
+    (each ctx [tctx dctx]
+      (var out :no-error)
+      (try
+        (do (tls/connect "127.0.0.1" "9" {:context ctx :verify false})
+            (set out :no-error))
+        ([err] (set out err)))
+      (assert (not (string/find want (string out)))
+              (string/format
+                (string "control: a real ssl-context must never raise %q; "
+                        "got %q")
+                want (string out)))))
+)
