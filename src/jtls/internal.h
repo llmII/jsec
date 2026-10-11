@@ -378,8 +378,9 @@ void jtls_keylog_callback(const SSL *ssl, const char *line);
  * SSL_CTX creation and configuration.
  */
 
-/* Create client SSL context */
-SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts);
+/* Create client SSL context (ca_opt, when supplied, is the trust source:
+ * system default roots are not loaded) */
+SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt);
 
 /* Create server SSL context (with optional caching) */
 SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,

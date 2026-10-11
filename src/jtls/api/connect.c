@@ -58,6 +58,7 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
     Janet security_opts = janet_wrap_nil();
     Janet alpn_opt = janet_wrap_nil();
     Janet session_opt = janet_wrap_nil();
+    Janet ca_opt = janet_wrap_nil();
     Janet opts = janet_wrap_nil();
 
     /* Check if argv[1] is a TLSContext */
@@ -131,10 +132,10 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
                 }
 
                 /* Handle :ca option for CA file path */
-                Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
-                if (janet_checktype(ca_opt, JANET_STRING)) {
+                Janet ca_file_opt = janet_get(opts, janet_ckeywordv("ca"));
+                if (janet_checktype(ca_file_opt, JANET_STRING)) {
                     const char *ca_path =
-                        (const char *)janet_unwrap_string(ca_opt);
+                        (const char *)janet_unwrap_string(ca_file_opt);
                     if (SSL_CTX_load_verify_locations(ctx, ca_path, NULL) <=
                         0) {
                         SSL_CTX_free(ctx);
@@ -188,6 +189,7 @@ client_setup:
             security_opts = janet_get(opts, janet_ckeywordv("security"));
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
             session_opt = janet_get(opts, janet_ckeywordv("session"));
+            ca_opt = janet_get(opts, janet_ckeywordv("ca"));
 
             if (!hostname) {
                 Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
@@ -195,17 +197,9 @@ client_setup:
                     hostname = (const char *)janet_unwrap_string(hn);
                 }
             }
-
-            /* :verify-hostname option allows verifying cert against a
-             * different hostname than SNI Useful for: connecting to IP
-             * addresses with hostname certs, CDNs, load balancers */
-            Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
-            if (janet_checktype(vh, JANET_STRING)) {
-                verify_hostname = (const char *)janet_unwrap_string(vh);
-            }
         }
 
-        ctx = jtls_create_client_ctx(verify, security_opts);
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
         if (!ctx) {
             tls_panic_ssl("failed to create client context");
         }
@@ -287,6 +281,17 @@ common_setup:
             janet_get(opts, janet_ckeywordv("handshake-timing"));
         if (!janet_checktype(timing_opt, JANET_NIL)) {
             track_handshake_time = janet_truthy(timing_opt);
+        }
+    }
+
+    /* :verify-hostname option allows verifying cert against a different
+     * hostname than SNI. Parsed here in common_setup so every client call
+     * shape honors it: positional TLSContext, :context, and ad-hoc client
+     * options alike */
+    if (!is_server && !janet_checktype(opts, JANET_NIL)) {
+        Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
+        if (janet_checktype(vh, JANET_STRING)) {
+            verify_hostname = (const char *)janet_unwrap_string(vh);
         }
     }
 
@@ -518,12 +523,14 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Create context if not provided */
             if (!ctx) {
                 Janet security_opts = janet_wrap_nil();
+                Janet ca_opt = janet_wrap_nil();
                 if (!janet_checktype(opts, JANET_NIL)) {
                     security_opts =
                         janet_get(opts, janet_ckeywordv("security"));
+                    ca_opt = janet_get(opts, janet_ckeywordv("ca"));
                 }
 
-                ctx = jtls_create_client_ctx(verify, security_opts);
+                ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
                 if (!ctx) {
                     janet_free(hostname);
                     janet_cancel(fiber, janet_cstringv(

@@ -16,21 +16,36 @@
  *   verify        - Whether to verify server certificate
  *   security_opts - Janet table with security options (:min-version,
  * :ciphers, etc.)
+ *   ca_opt        - Supplied CA (trust source). When provided, the system
+ * default roots are NOT loaded: the supplied CA replaces them.
  */
-SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts) {
+SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) return NULL;
 
+    int have_ca = !janet_checktype(ca_opt, JANET_NIL);
+
     /* Set verification mode */
     if (verify) {
         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-        if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
-            SSL_CTX_free(ctx);
-            return NULL;
+        if (!have_ca) {
+            if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
+                SSL_CTX_free(ctx);
+                return NULL;
+            }
         }
     } else {
         SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    }
+
+    /* Supplied :ca is the trust source (restrictive): replaces the system
+     * default roots rather than adding to them */
+    if (have_ca) {
+        if (!jutils_load_ca(ctx, ca_opt)) {
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
     }
 
     /* Apply security options */

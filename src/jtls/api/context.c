@@ -153,10 +153,36 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             verify = janet_truthy(verify_opt);
         }
         Janet security_opts = janet_get(opts, janet_ckeywordv("security"));
+        Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
 
-        ctx = jtls_create_client_ctx(verify, security_opts);
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
         if (!ctx) {
             tls_panic_ssl("failed to create client context");
+        }
+
+        /* Trust specific certificate (:trusted-cert) */
+        Janet trusted_cert =
+            janet_get(opts, janet_ckeywordv("trusted-cert"));
+        if (!janet_checktype(trusted_cert, JANET_NIL)) {
+            if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
+                SSL_CTX_free(ctx);
+                tls_panic_ssl("failed to add trusted certificate");
+            }
+        }
+
+        /* Cipher suites (:ciphers) */
+        Janet ciphers = janet_get(opts, janet_ckeywordv("ciphers"));
+        if (!janet_checktype(ciphers, JANET_NIL)) {
+            if (!janet_checktype(ciphers, JANET_STRING)) {
+                SSL_CTX_free(ctx);
+                tls_panic_param("ciphers must be a string");
+            }
+            const char *cipher_str =
+                (const char *)janet_unwrap_string(ciphers);
+            if (SSL_CTX_set_cipher_list(ctx, cipher_str) != 1) {
+                SSL_CTX_free(ctx);
+                tls_panic_config("failed to set ciphers: %s", cipher_str);
+            }
         }
     }
 
