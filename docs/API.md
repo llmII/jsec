@@ -106,7 +106,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
+        -   `:security`: Table. Security options (see [Security Options](#org49a529a)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -539,6 +539,13 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
 
 -   `(:get-session client)` or `(dtls-stream/get-session client)`
     Returns session data for resumption
+
+-   `(:peer-cert client)` or `(dtls-stream/get-peer-cert client)`
+    -   **Returns:** Peer's X.509 certificate as an immutable DER byte string
+    -   **Returns (no peer certificate):** `nil`
+    -   **Raises:** Stream closed, encode failure
+    -   **Notes:** Lives in the jsec/dtls-stream native module only - not
+        re-exported from the jsec/tls facade.
 
 -   `(:set-session client data)` or `(dtls-stream/set-session client data)`
     Sets session data

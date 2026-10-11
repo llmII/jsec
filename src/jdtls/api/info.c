@@ -1,7 +1,8 @@
 /*
  * client/info.c - DTLS client connection information functions
  *
- * Provides getters for version, cipher, session, peer info, etc.
+ * Provides getters for version, cipher, session, peer info, the peer
+ * certificate DER export (get-peer-cert), etc.
  */
 
 #include "../internal.h"
@@ -310,4 +311,67 @@ Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv) {
             1e9;
 
     return janet_wrap_number(duration);
+}
+
+/*============================================================================
+ * GET-PEER-CERT - Get peer certificate as X.509 DER
+ *============================================================================
+ * (get-peer-cert client)
+ *
+ * Export the peer certificate as an immutable Janet string holding the
+ * X.509 DER encoding.
+ *
+ * Parameters:
+ *   client - DTLS client stream (live, after handshake)
+ *
+ * Returns:
+ *   Immutable byte string of the peer certificate's X.509 DER encoding,
+ *   or nil when there is no peer certificate (before the handshake
+ *   completes or when the peer presented none).
+ *
+ * The two-pass i2d_X509 shape writes the DER encoding directly into
+ * janet_string_begin's staging region - no intermediate buffer copy.
+ * Serialization failure is a real failure and raises. The OpenSSL error
+ * queue is drained on every exit so a silent nil cannot re-dirty it.
+ */
+Janet cfun_dtls_get_peer_cert(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
+
+    if (client->closed || client->state == DTLS_STATE_CLOSED ||
+        (client->transport &&
+         (client->transport->flags & JANET_STREAM_CLOSED))) {
+        dtls_panic_io("stream closed");
+    }
+
+    /* nil is a documented absence of a peer certificate, never a failure
+     * signal: before the handshake completes there is not one yet. */
+    if (!client->ssl || !SSL_is_init_finished(client->ssl)) {
+        return janet_wrap_nil();
+    }
+
+    ERR_clear_error();
+    X509 *cert = SSL_get_peer_certificate(client->ssl);
+    if (!cert) {
+        ERR_clear_error();
+        return janet_wrap_nil();
+    }
+
+    /* Two-pass i2d: probe the length, then write in place */
+    int der_len = i2d_X509(cert, NULL);
+    if (der_len <= 0) {
+        X509_free(cert);
+        dtls_panic_ssl("failed to encode peer certificate");
+    }
+
+    uint8_t *der = janet_string_begin((int32_t)der_len);
+    unsigned char *p = der;
+    if (i2d_X509(cert, &p) != der_len) {
+        X509_free(cert);
+        dtls_panic_ssl("failed to encode peer certificate");
+    }
+    X509_free(cert);
+
+    ERR_clear_error();
+    return janet_wrap_string(janet_string_end(der));
 }

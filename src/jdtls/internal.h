@@ -442,6 +442,7 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv);
 Janet cfun_dtls_set_session(int32_t argc, Janet *argv);
 Janet cfun_dtls_trust_cert(int32_t argc, Janet *argv);
 Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv);
+Janet cfun_dtls_get_peer_cert(int32_t argc, Janet *argv);
 
 /* io.c */
 Janet cfun_dtls_read(int32_t argc, Janet *argv);

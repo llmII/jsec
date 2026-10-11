@@ -66,6 +66,11 @@ DTLS brings TLS security to UDP. It handles packet loss and reordering.
     using the event loop.
 -   **Multiple Clients**: `dtls/server` handles multiple simultaneous clients
     using cookie-based client verification.
+-   **Peer Certificate**: After the handshake, `(:peer-cert client)` (or
+    `(dtls-stream/get-peer-cert client)`) returns the peer's X.509 certificate
+    as an immutable DER byte string, or `nil` when the peer presented none (for
+    example a DTLS server whose client authenticated without a certificate).
+    Useful for certificate pinning and post-handshake audit.
 
 **Example**: See [dtls\_echo.janet](../examples/dtls_echo.janet) for DTLS client and server implementation.
 

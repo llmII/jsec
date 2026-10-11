@@ -93,6 +93,15 @@ static const JanetReg client_cfuns[] = {
      "  :cipher - Cipher suite name\n"
      "  :cipher-bits - Cipher strength in bits\n"
      "  :alpn - Negotiated ALPN protocol or nil"},
+    {"get-peer-cert", cfun_dtls_get_peer_cert,
+     "(get-peer-cert client)\n\n"
+     "Export the peer certificate as an immutable X.509 DER byte "
+     "string.\n"
+     "Returns nil when there is no peer certificate: before the "
+     "handshake\n"
+     "completes or when the peer presented none. Raises on a closed "
+     "stream.\n"
+     "Call after handshake completes.\n"},
     {"session-reused?", cfun_dtls_session_reused,
      "(:session-reused? client)\n\n"
      "Check if the session was reused from a previous connection."},

@@ -508,6 +508,13 @@ syntax ~(:method obj args...)~ or import ~jsec/dtls-stream~ for function version
 - ~(:get-session client)~ or ~(dtls-stream/get-session client)~
   Returns session data for resumption
 
+- ~(:peer-cert client)~ or ~(dtls-stream/get-peer-cert client)~
+  - Returns :: Peer's X.509 certificate as an immutable DER byte string
+  - Returns (no peer certificate) :: ~nil~
+  - Raises :: Stream closed, encode failure
+  - Notes :: Lives in the jsec/dtls-stream native module only - not
+    re-exported from the jsec/tls facade.
+
 - ~(:set-session client data)~ or ~(dtls-stream/set-session client data)~
   Sets session data
 

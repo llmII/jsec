@@ -71,6 +71,23 @@
 #endif
 
 /*
+ * Feature Availability - SSL_get_peer_certificate
+ *
+ * The portable spelling across OpenSSL 1.1.1/3.x and LibreSSL is
+ * SSL_get_peer_certificate; SSL_get1_peer_certificate is the
+ * OpenSSL 3.x-only spelling. OpenSSL 3.x keeps the portable name as
+ * a deprecated alias that is compiled out when
+ * OPENSSL_NO_DEPRECATED_3_0 is set (derived from OPENSSL_NO_DEPRECATED
+ * in openssl/macros.h, pulled in by opensslv.h above), so treat the
+ * name as missing only there.
+ */
+#if OPENSSL_PREREQ(3, 0, 0) && defined(OPENSSL_NO_DEPRECATED_3_0)
+#define HAVE_SSL_GET_PEER_CERTIFICATE 0
+#else
+#define HAVE_SSL_GET_PEER_CERTIFICATE 1
+#endif
+
+/*
  * Feature Availability - OSSL_PARAM system
  *
  * OpenSSL 3.0 introduced new APIs that LibreSSL doesn't have:
@@ -111,6 +128,18 @@
 #if !HAVE_SSL_UP_REF
 #include <openssl/crypto.h>
 #define SSL_up_ref(ssl) CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
+#endif
+
+/*
+ * Compatibility Shims - SSL_get_peer_certificate
+ *
+ * For OpenSSL 3.x builds that compile out the deprecated
+ * SSL_get_peer_certificate alias: map the portable spelling to the
+ * OpenSSL 3.x name. Call sites use SSL_get_peer_certificate only -
+ * never SSL_get1_peer_certificate and never per-call-site ifdefs.
+ */
+#if !HAVE_SSL_GET_PEER_CERTIFICATE
+#define SSL_get_peer_certificate(ssl) SSL_get1_peer_certificate(ssl)
 #endif
 
 /*
