@@ -105,14 +105,28 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
             security_opts = janet_get(opts, janet_ckeywordv("security"));
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
 
-            ctx =
-                jtls_create_server_ctx(cert, key, security_opts, alpn_opt, 1);
+            /* Handle server-side client certificate verification (mTLS) */
+            Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
+            Janet trusted_cert =
+                janet_get(opts, janet_ckeywordv("trusted-cert"));
+            Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
+
+            /* Per-connection verify/trust/:security configuration must
+             * never mutate or inherit the process-shared cached server
+             * context: a wrap carrying any of those options gets its own
+             * private context (copy-on-write), and only default-configured
+             * wraps use and populate the cache. */
+            int shareable = !janet_truthy(verify_opt) &&
+                            janet_checktype(trusted_cert, JANET_NIL) &&
+                            janet_checktype(ca_opt, JANET_NIL) &&
+                            janet_checktype(security_opts, JANET_NIL);
+
+            ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt,
+                                         shareable);
             if (!ctx) {
                 tls_panic_ssl("failed to create server context");
             }
 
-            /* Handle server-side client certificate verification (mTLS) */
-            Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
             if (janet_truthy(verify_opt)) {
                 /* Require client certificate */
                 SSL_CTX_set_verify(
@@ -121,8 +135,6 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
 
                 /* Handle :trusted-cert option for trusting specific client
                  * certs */
-                Janet trusted_cert =
-                    janet_get(opts, janet_ckeywordv("trusted-cert"));
                 if (!janet_checktype(trusted_cert, JANET_NIL)) {
                     if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
                         SSL_CTX_free(ctx);
@@ -131,7 +143,6 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
                 }
 
                 /* Handle :ca option for CA file path */
-                Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
                 if (janet_checktype(ca_opt, JANET_STRING)) {
                     const char *ca_path =
                         (const char *)janet_unwrap_string(ca_opt);
