@@ -30,6 +30,7 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+export JSEC_SANITIZER="ubsan"
 export UBSAN_OPTIONS="suppressions=$SCRIPT_DIR/ubsan.supp:halt_on_error=$HALT:print_stacktrace=1:exitcode=23:log_path=$LOG_DIR/san.log"
 
 rc=0

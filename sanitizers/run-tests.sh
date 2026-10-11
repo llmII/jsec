@@ -31,9 +31,13 @@ JSEC_SAN=1 "$TOOLCHAIN_DIR/bin/jpm" install
 rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
+LSAN_EXITCODE=0
+[ "$HALT" = "1" ] && LSAN_EXITCODE=23
+
 export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+export JSEC_SANITIZER="san"
 export ASAN_OPTIONS="suppressions=$SCRIPT_DIR/asan.supp:detect_leaks=1:halt_on_error=$HALT:print_stacktrace=1:fast_unwind_on_malloc=0:exitcode=23:log_path=$LOG_DIR/san.log"
-export LSAN_OPTIONS="suppressions=$SCRIPT_DIR/lsan.supp:print_suppressions=0:print_stacktrace=1:fast_unwind_on_malloc=0:exitcode=23:log_path=$LOG_DIR/san.log"
+export LSAN_OPTIONS="suppressions=$SCRIPT_DIR/lsan.supp:print_suppressions=0:print_stacktrace=1:fast_unwind_on_malloc=0:exitcode=$LSAN_EXITCODE:log_path=$LOG_DIR/san.log"
 export UBSAN_OPTIONS="suppressions=$SCRIPT_DIR/ubsan.supp:halt_on_error=$HALT:print_stacktrace=1:exitcode=23:log_path=$LOG_DIR/san.log"
 
 if [ "$#" -eq 0 ]; then
