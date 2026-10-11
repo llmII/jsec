@@ -443,10 +443,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         }
 #endif
 
-        /* Remove existing socket file (if not abstract) */
-        if (unix_path[0] != '@') {
-            unlink(unix_path);
-        }
+        /* Leave any pre-existing path in place: matching Janet's
+         * net/listen, bind must fail EADDRINUSE on an occupied path
+         * rather than unlinking it first. */
 
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd == -1) {
