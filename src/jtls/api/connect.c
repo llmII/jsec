@@ -15,8 +15,23 @@
 
 #include "../internal.h"
 #ifndef _WIN32
+#include <arpa/inet.h>
 #include <sys/un.h>
 #endif
+
+/*============================================================================
+ * HELPER: IP-literal host detection
+ *============================================================================*/
+/* An IP literal is not a DNS name: verification matches it through
+ * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
+ * the server_name extension. */
+static int host_is_ip_literal(const char *host) {
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!host) return 0;
+    return inet_pton(AF_INET, host, &a4) == 1 ||
+           inet_pton(AF_INET6, host, &a6) == 1;
+}
 
 /*============================================================================
  * WRAP - Wrap an existing stream with TLS
@@ -297,14 +312,24 @@ common_setup:
 
     /* Set SNI hostname for client */
     if (hostname && !is_server) {
-        SSL_set_tlsext_host_name(tls->ssl, hostname);
+        /* IP literals send no server_name extension at all */
+        if (!host_is_ip_literal(hostname)) {
+            SSL_set_tlsext_host_name(tls->ssl, hostname);
+        }
         /* Enable hostname verification for security
          * Use verify_hostname if provided, otherwise use hostname (SNI) */
         if (verify) {
             const char *host_to_verify =
                 verify_hostname ? verify_hostname : hostname;
             SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            if (!SSL_set1_host(tls->ssl, host_to_verify)) {
+            if (host_is_ip_literal(host_to_verify)) {
+                if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
+                                                   host_to_verify)) {
+                    tls_panic_verify(
+                        "failed to set hostname verification for %s",
+                        host_to_verify);
+                }
+            } else if (!SSL_set1_host(tls->ssl, host_to_verify)) {
                 tls_panic_verify("failed to set hostname verification for %s",
                                  host_to_verify);
             }
@@ -313,7 +338,13 @@ common_setup:
         /* verify_hostname without hostname - just set hostname verification
          */
         SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        if (!SSL_set1_host(tls->ssl, verify_hostname)) {
+        if (host_is_ip_literal(verify_hostname)) {
+            if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
+                                               verify_hostname)) {
+                tls_panic_verify("failed to set hostname verification for %s",
+                                 verify_hostname);
+            }
+        } else if (!SSL_set1_host(tls->ssl, verify_hostname)) {
             tls_panic_verify("failed to set hostname verification for %s",
                              verify_hostname);
         }
@@ -617,7 +648,7 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             }
 
             /* Set SNI hostname */
-            if (sni_hostname) {
+            if (sni_hostname && !host_is_ip_literal(sni_hostname)) {
                 SSL_set_tlsext_host_name(tls->ssl, sni_hostname);
             }
 
@@ -629,7 +660,12 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (cert_verify_host) {
                     SSL_set_hostflags(tls->ssl,
                                       X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-                    SSL_set1_host(tls->ssl, cert_verify_host);
+                    if (host_is_ip_literal(cert_verify_host)) {
+                        X509_VERIFY_PARAM_set1_ip_asc(
+                            SSL_get0_param(tls->ssl), cert_verify_host);
+                    } else {
+                        SSL_set1_host(tls->ssl, cert_verify_host);
+                    }
                 }
             }
 

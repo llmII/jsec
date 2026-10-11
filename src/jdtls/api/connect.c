@@ -20,6 +20,20 @@ extern void dtls_client_async_callback(JanetFiber *fiber,
                                        JanetAsyncEvent event);
 extern int dtls_client_start_handshake(DTLSClient *client);
 
+/*============================================================================
+ * HELPER: IP-literal host detection
+ *============================================================================*/
+/* An IP literal is not a DNS name: verification matches it through
+ * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
+ * the server_name extension. */
+static int host_is_ip_literal(const char *host) {
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!host) return 0;
+    return inet_pton(AF_INET, host, &a4) == 1 ||
+           inet_pton(AF_INET6, host, &a6) == 1;
+}
+
 /*
  * (dtls/connect host port &opt opts)
  *
@@ -234,14 +248,21 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Set SNI hostname */
-    SSL_set_tlsext_host_name(client->ssl, sni);
+    if (!host_is_ip_literal(sni)) {
+        SSL_set_tlsext_host_name(client->ssl, sni);
+    }
 
     /* Set hostname for certificate verification
      * Use verify_hostname if provided, otherwise use sni */
     if (verify) {
         const char *host_to_verify = verify_hostname ? verify_hostname : sni;
         SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        SSL_set1_host(client->ssl, host_to_verify);
+        if (host_is_ip_literal(host_to_verify)) {
+            X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
+                                          host_to_verify);
+        } else {
+            SSL_set1_host(client->ssl, host_to_verify);
+        }
     }
 
     /* Session resumption */
