@@ -192,7 +192,11 @@ struct TLSState {
     TLSOpType op;              /* Operation type */
     TLSIOState io_state;       /* Current I/O state */
     JanetBuffer *user_buf;     /* Buffer for read operations */
-    const uint8_t *write_data; /* Data for write operations */
+    Janet write_src;           /* Write source object (buffer or string);
+                                * the byte pointer is re-derived from it on
+                                * every write attempt - never cached across
+                                * suspension - and it is GC-marked while the
+                                * write is parked (JANET_ASYNC_EVENT_MARK) */
     int32_t write_len;         /* Total bytes to write */
     int32_t write_offset;      /* Bytes already written */
     int32_t bytes_requested;   /* Bytes requested for read (-1 for any) */
@@ -469,6 +473,10 @@ Janet cfun_get_cipher(int32_t argc, Janet *argv);
 Janet cfun_get_cipher_bits(int32_t argc, Janet *argv);
 Janet cfun_get_connection_info(int32_t argc, Janet *argv);
 Janet cfun_get_handshake_time(int32_t argc, Janet *argv);
+
+/* Clear the pending slot (internal.h:244-245) for this state's role
+ * (read_state -> pending_read, write_state -> pending_write) */
+void clear_pending_for(TLSState *state);
 
 /* Socket info (localname/peername) */
 Janet cfun_localname(int32_t argc, Janet *argv);

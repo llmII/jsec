@@ -119,7 +119,7 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     state->buf_start = buffer->count;
     state->timeout = timeout;
     state->has_timeout = !is_infinite_timeout(timeout);
-    /* write_data, write_len, write_offset unused for reads - not zeroed */
+    /* write_src, write_len, write_offset unused for reads - not zeroed */
     /* error_msg only written on error via snprintf - not pre-zeroed */
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
@@ -201,7 +201,14 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     TLSState *state = &tls->write_state;
     state->tls = tls;
     state->op = TLS_OP_WRITE;
-    state->write_data = bytes.bytes;
+    /* Store the source object itself, never its raw bytes pointer: the
+     * operation can suspend across WANT_WRITE and the caller's buffer may
+     * be reallocated or truncated while the fiber is parked. The byte
+     * pointer is re-derived from write_src on every attempt
+     * (jtls_process_operation), matching Janet core's own ev/write
+     * discipline of storing the buffer value and re-deriving its data
+     * pointer per write event. */
+    state->write_src = argv[1];
     state->write_len = bytes.len;
     state->write_offset =
         0; /* Only write field that must be explicitly set */

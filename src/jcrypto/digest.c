@@ -59,14 +59,23 @@ Janet cfun_digest(int32_t argc, Janet *argv) {
     if (!md) crypto_panic_config("unknown digest algorithm: %s", alg);
 
     unsigned char md_value[EVP_MAX_MD_SIZE];
-    unsigned int md_len;
+    unsigned int md_len = 0;
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx) crypto_panic_ssl("failed to allocate digest context");
 
-    EVP_DigestInit_ex(mdctx, md, NULL);
-    EVP_DigestUpdate(mdctx, data.bytes, (size_t)data.len);
-    EVP_DigestFinal_ex(mdctx, md_value, &md_len);
+    if (EVP_DigestInit_ex(mdctx, md, NULL) != 1) {
+        EVP_MD_CTX_free(mdctx);
+        crypto_panic_ssl("failed to initialize digest context");
+    }
+    if (EVP_DigestUpdate(mdctx, data.bytes, (size_t)data.len) != 1) {
+        EVP_MD_CTX_free(mdctx);
+        crypto_panic_ssl("failed to update digest context");
+    }
+    if (EVP_DigestFinal_ex(mdctx, md_value, &md_len) != 1) {
+        EVP_MD_CTX_free(mdctx);
+        crypto_panic_ssl("failed to finalize digest context");
+    }
     EVP_MD_CTX_free(mdctx);
 
     return janet_stringv(md_value, md_len);

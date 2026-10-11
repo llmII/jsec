@@ -23,6 +23,7 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
     const char *format = (const char *)format_kw;
 
     const char *password = NULL;
+    size_t password_len = 0;
 
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
         if (janet_checktype(argv[2], JANET_TABLE)) {
@@ -32,6 +33,7 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
             if (!janet_checktype(pwd_val, JANET_NIL)) {
                 JanetByteView pwd = janet_getbytes(&pwd_val, 0);
                 password = (const char *)pwd.bytes;
+                password_len = pwd.len;
             }
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             JanetStruct opts = janet_unwrap_struct(argv[2]);
@@ -40,6 +42,7 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
             if (!janet_checktype(pwd_val, JANET_NIL)) {
                 JanetByteView pwd = janet_getbytes(&pwd_val, 0);
                 password = (const char *)pwd.bytes;
+                password_len = pwd.len;
             }
         }
     }
@@ -100,17 +103,17 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
         }
     } else if (strcmp(format, "pkcs8") == 0) {
         /* Output as PKCS#8 PEM */
-        if (password && strlen(password) > 0) {
+        if (password && password_len > 0) {
             result = PEM_write_bio_PKCS8PrivateKey(
                 out, pkey, EVP_aes_256_cbc(), (char *)password,
-                (int)strlen(password), NULL, NULL);
+                (int)password_len, NULL, NULL);
         } else {
             result = PEM_write_bio_PKCS8PrivateKey(out, pkey, NULL, NULL, 0,
                                                    NULL, NULL);
         }
     } else if (strcmp(format, "pkcs8-der") == 0) {
         /* Output as PKCS#8 DER */
-        if (password && strlen(password) > 0) {
+        if (password && password_len > 0) {
             /* For encrypted PKCS#8 DER, we write encrypted PEM then convert
              */
             /* This is simpler and more portable across OpenSSL versions */
@@ -118,7 +121,7 @@ Janet cfun_convert_key(int32_t argc, Janet *argv) {
             if (p8inf) {
                 X509_SIG *p8 =
                     PKCS8_encrypt(-1, EVP_aes_256_cbc(), password,
-                                  (int)strlen(password), NULL, 0, 0, p8inf);
+                                  (int)password_len, NULL, 0, 0, p8inf);
                 PKCS8_PRIV_KEY_INFO_free(p8inf);
                 if (p8) {
                     result = i2d_PKCS8_bio(out, p8);

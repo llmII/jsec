@@ -234,7 +234,7 @@ From the GitHub mirror:
 
 ## Dependencies
 
--   Janet 1.40+
+-   Janet 1.41.1+
 -   OpenSSL 3.0+, LibreSSL 3.6+
 -   spork (Janet package)
 

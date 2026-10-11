@@ -43,18 +43,30 @@ static const JanetReg client_cfuns[] = {
     {"read", cfun_dtls_read,
      "(dtls/read client n &opt buf timeout)\n\n"
      "Read up to n bytes from DTLS client.\n"
-     "Returns a buffer with the received datagram, or nil on EOF."},
+     "Returns a buffer with the received datagram, or nil on EOF.\n"
+     "The optional timeout is the deadline in seconds (a number, or a\n"
+     "table/struct with a :timeout key): an absolute deadline from the\n"
+     "call, not one per wait. Expiry cancels the fiber with a \"timeout\"\n"
+     "error. A negative timeout raises a parameter error."},
     {"chunk", cfun_dtls_chunk,
      "(dtls/chunk client n &opt buf timeout)\n\n"
      "Read exactly n bytes from DTLS client.\n"
      "Unlike read, will not return early if less than n bytes are "
      "available.\n"
      "Returns buffer with exactly n bytes, or what's available on EOF.\n"
-     "Note: For datagrams, each read returns a complete datagram."},
+     "Note: For datagrams, each read returns a complete datagram.\n"
+     "The optional timeout is the deadline in seconds (a number, or a\n"
+     "table/struct with a :timeout key): an absolute deadline from the\n"
+     "call, not one per wait. Expiry cancels the fiber with a \"timeout\"\n"
+     "error. A negative timeout raises a parameter error."},
     {"write", cfun_dtls_write,
      "(dtls/write client data &opt timeout)\n\n"
      "Write data to DTLS client.\n"
-     "Returns number of bytes written."},
+     "Returns number of bytes written.\n"
+     "The optional timeout is the deadline in seconds (a number, or a\n"
+     "table/struct with a :timeout key): an absolute deadline from the\n"
+     "call, not one per wait. Expiry cancels the fiber with a \"timeout\"\n"
+     "error. A negative timeout raises a parameter error."},
     {"close", cfun_dtls_close,
      "(dtls/close client &opt force)\n\n"
      "Close DTLS client connection.\n"

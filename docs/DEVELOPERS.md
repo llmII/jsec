@@ -409,6 +409,176 @@ Use goto cleanup pattern consistently:
 -   `wireshark` - Packet inspection (can decrypt with SSLKEYLOGFILE)
 
 
+# Hermetic In-Tree Toolchain
+
+jsec develops and tests itself against a pinned Janet through a self-contained
+toolchain under `.work/`, with no reliance on the host `janet` / `jpm`. This
+keeps the compiled-module ABI consistent: a host `jpm` whose baked `headerpath`
+points at a different Janet than the interpreter produces modules rejected at
+load with `config mismatch - host X vs module Y`. Building through the in-tree
+toolchain removes that failure class and lets the repo test itself across many
+OSes from base build tools plus OpenSSL/LibreSSL dev libraries alone.
+
+`project.janet` now hard-fails below Janet 1.41.1 (`jsec-min-janet-version`).
+
+The hermetic toolchain is a development/testing facility, not an install
+requirement.
+
+
+## When to use which
+
+a) **Developing and testing jsec** - Build and test from the project's source
+   directory using the hermetic in-tree toolchain (`.work/`). This is what
+   `scripts/bootstrap-toolchain.sh` and `jpm run self-test` provide. The
+   hermetic toolchain exists so the test suite is reproducible and not
+   contaminated by whatever `janet` / `jpm` happens to be installed. For this
+   case only, never use the host `janet` or `jpm` for jsec builds or tests;
+   always use the copies under `.work/bin/`.
+
+b) **Installing jsec as a dependency for use** - A normal install that goes
+   wherever the user's `jpm` is configured to install: `.local` under the home
+   directory for a per-user install, system directories when run as root, or
+   whatever `modpath` / `binpath` the user set. This is the ordinary `jpm
+   install` path and needs no `.work/` toolchain and no bootstrap. Nothing
+   about the hermetic toolchain is required for end users consuming jsec.
+
+
+## Which tool you invoke
+
+Hermeticity is a property of which binary you invoke, not of environment you
+set. Two rules cover it:
+
+1.  Which `jpm` you invoke decides the install destination. System `jpm
+       install` goes to system directories; a user-level `jpm` goes to the user's
+    `.local` / XDG tree; `.work/bin/jpm install` lands inside the project
+    (`.work/lib/janet` and `.work/bin`), because that `jpm` has those paths
+    baked in and ignores `JANET_*` overrides from the environment. No flags.
+
+2.  Which `janet` you invoke decides which interpreter the whole process tree
+    uses. `.work/bin/` holds only self-locating POSIX-sh launchers. Each
+    launcher establishes the environment for the whole process tree - it unsets
+    every `JANET_*` path override and prepends its own `bin/` to `PATH` - then
+    execs the matching real binary. The real binaries live in `.work/libexec/`
+    and are private: `libexec/janet` is the built interpreter, `libexec/jpm` is
+    jpm's own script. Everything they spawn (assay workers, `jpm`
+    sub-invocations) resolves `janet` / `jpm` back to the launchers through
+    that `PATH`. Invoking the host `janet` / `jpm` is your own configuration.
+
+Putting `.work/bin` on your `PATH` is optional and works: every `janet` and
+`jpm` in that shell is then the toolchain's. It is not required - invoking
+`.work/bin/janet` and `.work/bin/jpm` by path is equally hermetic, because the
+launchers establish the environment and the whole process tree inherits it.
+
+
+## Bootstrap
+
+    # Build the hermetic toolchain (Janet + jpm) into .work/
+    sh scripts/bootstrap-toolchain.sh
+    
+    # Build against a specific Janet rev (tag, branch, or githash) for a matrix
+    sh scripts/bootstrap-toolchain.sh --janet-rev 8b6d56ed \
+      --toolchain .work/1.41.1
+    
+    # Build a poll-backend Janet alongside the default epoll one
+    sh scripts/bootstrap-toolchain.sh --ev-backend poll --toolchain .work/poll
+    
+    # Build a sanitizer-instrumented Janet (none, asan, lsan, ubsan, or san)
+    sh scripts/bootstrap-toolchain.sh --sanitizer san --toolchain .work/san
+
+The script verifies host prerequisites (a C toolchain, `ar`, `make`, and
+OpenSSL/LibreSSL dev headers and libraries) and fails with a clear message when
+any are missing. It is idempotent and re-runnable; pass `--force` to rebuild or
+`--clean` to start over. `--help` lists all options. The Janet and jpm revisions
+are parameters, so one script drives a per-version test matrix with each
+revision in its own `--toolchain` prefix.
+
+`--ev-backend poll|epoll` (default `epoll`) selects Janet's event-loop backend.
+`epoll` is the platform's native backend (epoll on Linux, kqueue on the
+BSDs/macOS) and is what the script has always built. `poll` forces the portable
+`poll(2)` fallback at compile time by defining `JANET_EV_NO_EPOLL` (and
+`JANET_EV_NO_KQUEUE`, so the choice also holds on the BSDs/macOS). Use a poll
+build to demonstrate defects that edge-triggered readiness masking keeps
+invisible on epoll: `poll(2)` has no edge mode and reports readiness on every
+wait. The backend is a compile-time define only, so poll and epoll builds of
+one rev share the rev-keyed source cache under `.work/src/` but never each
+other's build output (the in-tree build tree is dropped when the backend
+switches). Give each backend its own `--toolchain` prefix - e.g. `.work/poll`
+beside `.work/` - and read the selected backend from the `ev-backend:` line of
+the `TOOLCHAIN` stamp under the prefix.
+
+`--sanitizer none|asan|lsan|ubsan|san` (default `none`, where `san` combines
+`address,leak,undefined`) compiles and links the `libexec/janet` binary itself
+with `-O1 -g3 -fno-omit-frame-pointer -fno-optimize-sibling-calls
+-fsanitize=... -fsanitize-recover=...` and preserves unstripped DWARF symbols.
+Because the interpreter binary links the sanitizer runtime directly, no
+`LD_PRELOAD` hack is needed, `janet_malloc` / `janet_free` and `core/ev.c` are
+instrumented alongside `jsec/*.so`, and child `/bin/sh` or `openssl` processes
+spawned during tests are not polluted. Each sanitizer profile lives in its own
+prefix (`.work/asan`, `.work/lsan`, `.work/ubsan`, `.work/san`) and records
+its profile on the `sanitizer:` line of `<prefix>/TOOLCHAIN` (`--sanitizer`
+also composes with `--ev-backend poll`).
+
+
+## Build and Test
+
+    # one-time per fresh toolchain: fetch/build the test dependencies (assay, spork)
+    .work/bin/jpm deps
+    
+    .work/bin/jpm build            # build jsec under the in-tree toolchain
+    .work/bin/jpm install          # install jsec into the in-tree tree
+    
+    # Full suite under the in-tree toolchain
+    .work/bin/janet test/runner.janet -f '{unit,regression,coverage}' \
+      -j fiber:16,thread:6,subprocess:6
+
+`jpm build` and `jpm install` stay separate tasks and need no flags: the
+in-tree `jpm` already points at `.work/lib/janet` and `.work/bin`. A fresh
+build + install round-trip keeps the interpreter and headers in step, so
+skew surfaces as `config mismatch` at module load in the normal suite.
+
+The same flow is wrapped by task entry points in `project.janet`, so no manual
+`PATH` / module-path / toolchain-prefix assembly is required. Each builds and
+installs jsec under a toolchain and then runs the identical `test/runner.janet`
+invocation (`-f '{unit,regression,coverage}' -j fiber:16,thread:6,subprocess:6`;
+perf is excluded), so all profiles stay directly comparable:
+
+    # unit + regression + coverage under the default epoll toolchain in .work/
+    jpm run self-test
+    
+    # the identical suite under a poll-backend Janet, building or reusing one in
+    # .work/poll/ via scripts/bootstrap-toolchain.sh --ev-backend poll --toolchain .work/poll
+    jpm run self-test-poll
+    
+    # explicit epoll alias for symmetry with self-test-poll
+    jpm run self-test-epoll
+    
+    # hermetic sanitizer profiles in .work/{asan,lsan,ubsan,san}/
+    jpm run self-test-asan
+    jpm run self-test-lsan
+    jpm run self-test-ubsan
+    jpm run self-test-san          # also wired as `jpm run test/sanitized`
+
+`self-test-poll` bootstraps a poll-backend Janet into `.work/poll/` (idempotent;
+reuses the prefix when already present) and runs the suite against it. The test
+workers spawn `janet` from that toolchain's `bin/` (through `PATH`) and resolve
+`assay` / `spork` / `jsec` from its `lib/janet` module tree (the interpreter's
+baked syspath), so the whole run is hermetic to the chosen event-loop backend.
+Both tasks share the same flags, output shape, and exit status; diffing their
+logs surfaces backend-specific differences, and on a healthy tree the suite
+counts match exactly.
+
+`self-test-{asan,lsan,ubsan,san}` (and the `sanitizers/run-with-{asan,lsan,ubsan}.sh`
+/ `sanitizers/run-tests.sh` helpers) bootstrap and reuse the matching
+`.work/<profile>/` toolchain, build `jsec` with `-fsanitize=...` (decoupled
+from `JSEC_DEBUG` verbose `fprintf` tracing), and run with
+`halt_on_error=0:print_stacktrace=1:exitcode=23` and per-process
+`log_path=<prefix>/scratch/san-logs/san.log` (set `JSEC_SAN_HALT=1` to abort on
+the first finding). Every finding across all `assay` subprocess workers is
+collected, printed after the run, and causes a non-zero exit (`23`).
+`sanitizers/lsan.supp` contains zero broad library or prefix suppressions so no
+`jsec` leak is masked.
+
+
 # Common Pitfalls
 
 1.  **Blocking in Event Loop** - Never use blocking OpenSSL calls

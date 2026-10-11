@@ -23,6 +23,16 @@ set -eu
 # drive a per-version matrix. Each rev can build into its own toolchain prefix
 # via --toolchain, so multiple Janets coexist under .work/.
 #
+# The Janet event-loop backend is selectable via --ev-backend: epoll (default;
+# the platform's native backend - epoll on Linux, kqueue on the BSDs/macOS) or
+# poll (the portable poll(2) fallback, forced with JANET_EV_NO_EPOLL and
+# JANET_EV_NO_KQUEUE). Sanitizer instrumentation is selectable via --sanitizer:
+# none (default), asan, lsan, ubsan, or san (address + leak + undefined). Both
+# share the rev-keyed source cache under .work/src/; the in-tree build output
+# is tracked in .jsec-ev and .jsec-san and dropped on switch (see build_janet).
+# Pair --ev-backend and --sanitizer with --toolchain to keep isolated prefixes
+# side by side at the same rev (e.g. .work/poll, .work/asan, .work/san).
+#
 # Layout produced (default prefix, .work/):
 #   bin/janet        our self-locating POSIX-sh launcher (entry point)
 #   bin/jpm          our self-locating POSIX-sh launcher (entry point)
@@ -49,8 +59,8 @@ set -eu
 # --- Default pinned revisions -------------------------------------------------
 # This increment pins one Janet. The rev is a githash so it is exact and
 # reproducible; pass --janet-rev <tag|branch|githash> to build a different Janet
-# (e.g. --janet-rev 7d672f43 or --janet-rev 7810724e) for the version matrix.
-DEFAULT_JANET_REV="7d672f43fcd572965c8b63c61dd835d6e680ac1d"  # janet 1.40.1
+# (e.g. --janet-rev 8b6d56ed or --janet-rev 7810724e) for the version matrix.
+DEFAULT_JANET_REV="8b6d56edae8c1eb5ae19b024087a065b6918b9ef"  # janet 1.41.1
 DEFAULT_JPM_REV="2430dec269f485473502bcdc2049ee332bc63908"    # jpm 1.2.1
 
 JANET_URL="${JANET_URL:-https://github.com/janet-lang/janet.git}"
@@ -77,6 +87,8 @@ LAUNCHER_JPM="$SCRIPT_DIR/toolchain-launcher-jpm.sh"
 
 JANET_REV="$DEFAULT_JANET_REV"
 JPM_REV="$DEFAULT_JPM_REV"
+EV_BACKEND="epoll"
+SANITIZER="none"
 FORCE=0
 CLEAN=0
 LOCAL_ONLY=0
@@ -114,7 +126,7 @@ Options:
       --local            Offline only: never clone; the opted-in local mirrors
                          must supply the requested revs (error otherwise)
       --janet-rev REV    Janet revision to build (tag/branch/githash).
-                         Default: ${DEFAULT_JANET_REV} (janet 1.40.1)
+                         Default: ${DEFAULT_JANET_REV} (janet 1.41.1)
       --janet-src DIR    Opt-in local Janet source mirror (or set JANET_SRC).
                          Off by default; with no mirror the rev is self-fetched
                          from JANET_URL into .work/src/janet/
@@ -125,7 +137,24 @@ Options:
                          from JPM_URL into .work/src/jpm/
       --toolchain DIR    Output prefix. Default: .work, so the toolchain
                          lives directly in .work/{bin,build,include,lib,
-                         libexec,share} (e.g. .work/1.40.1 for a matrix)
+                         libexec,share} (e.g. .work/1.41.1 for a matrix)
+      --ev-backend BACK  Janet event-loop backend: epoll or poll.
+                          Default: epoll - the platform's native backend
+                          (epoll on Linux, kqueue on the BSDs/macOS), today
+                          behaviour unchanged. poll forces the portable
+                          poll(2) fallback (JANET_EV_NO_EPOLL, and
+                          JANET_EV_NO_KQUEUE so the choice also holds on
+                          BSD/macOS). Poll and epoll builds of one rev share
+                          the source cache but not build output; give each
+                          its own --toolchain prefix (e.g. .work/poll)
+      --sanitizer MODE   Sanitizer instrumentation for Janet: none, asan,
+                          lsan, ubsan, or san (address + leak + undefined).
+                          Default: none. Compiles and links libexec/janet with
+                          the sanitizer runtime (-O1 -g3 -fno-omit-frame-pointer
+                          -fno-optimize-sibling-calls -fsanitize=...) and keeps
+                          unstripped debug symbols so no LD_PRELOAD is needed.
+                          Give each profile its own --toolchain prefix (e.g.
+                          .work/asan, .work/lsan, .work/ubsan, .work/san)
 
 Environment:
   JANET_SRC   Opt-in local Janet source mirror (default: empty, never probed;
@@ -146,7 +175,8 @@ Output under --toolchain:
   lib/janet/               (installed modules)
   build/                   jpm :buildpath (project build output)
 
-Provenance is recorded in <prefix>/TOOLCHAIN (revisions + built Janet version).
+Provenance is recorded in <prefix>/TOOLCHAIN (revisions, built Janet version,
+ev backend, sanitizer).
 EOF
 }
 
@@ -166,9 +196,52 @@ while [ $# -gt 0 ]; do
         --jpm-src=*)    JPM_SRC=${1#*=}; shift ;;
         --toolchain)    [ $# -ge 2 ] || die "--toolchain needs a value"; TOOLCHAIN_DIR=$2; shift 2 ;;
         --toolchain=*)  TOOLCHAIN_DIR=${1#*=}; shift ;;
+        --ev-backend)   [ $# -ge 2 ] || die "--ev-backend needs a value"; EV_BACKEND=$2; shift 2 ;;
+        --ev-backend=*) EV_BACKEND=${1#*=}; shift ;;
+        --sanitizer)    [ $# -ge 2 ] || die "--sanitizer needs a value"; SANITIZER=$2; shift 2 ;;
+        --sanitizer=*)  SANITIZER=${1#*=}; shift ;;
         *) die "unknown option: $1 (try --help)" ;;
     esac
 done
+
+# Map --ev-backend onto the janet.h gates. JANET_EV_NO_EPOLL suppresses the
+# Linux epoll backend and JANET_EV_NO_KQUEUE the BSD/macOS kqueue backend, so
+# the poll(2) fallback (janet.h: Use poll as last resort) is selected on
+# every POSIX host. epoll passes no defines - the platform's native backend,
+# exactly the previous behaviour. Extra defines ride the make CFLAGS; the
+# build keeps the caller's CFLAGS (or janet's -O2 -g default) and appends.
+case "$EV_BACKEND" in
+    epoll) EV_DEFINES="" ;;
+    poll)  EV_DEFINES="-DJANET_EV_NO_EPOLL -DJANET_EV_NO_KQUEUE" ;;
+    *) die "--ev-backend must be poll or epoll (got: $EV_BACKEND)" ;;
+esac
+
+# Map --sanitizer onto compile/link flags for Janet. Because Janet's Makefile
+# passes $(BUILD_CFLAGS) to both compile and link recipes, riding CFLAGS links
+# libexec/janet and libjanet directly against the sanitizer runtime without
+# needing LD_PRELOAD.
+SAN_BASE_CFLAGS="-O1 -g3 -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+case "$SANITIZER" in
+    none)
+        SAN_CFLAGS=""
+        ;;
+    asan)
+        SAN_CFLAGS="$SAN_BASE_CFLAGS -fsanitize=address -fsanitize-recover=address"
+        ;;
+    lsan)
+        SAN_CFLAGS="$SAN_BASE_CFLAGS -fsanitize=leak"
+        ;;
+    ubsan)
+        SAN_CFLAGS="$SAN_BASE_CFLAGS -fsanitize=undefined -fsanitize-recover=undefined"
+        ;;
+    san|asan+ubsan)
+        SANITIZER="san"
+        SAN_CFLAGS="$SAN_BASE_CFLAGS -fsanitize=address,undefined -fsanitize-recover=address,undefined"
+        ;;
+    *)
+        die "--sanitizer must be none, asan, lsan, ubsan, or san (got: $SANITIZER)"
+        ;;
+esac
 
 # Make toolchain path absolute and derive dependents.
 case "$TOOLCHAIN_DIR" in
@@ -209,6 +282,20 @@ check_ssl_dev() {
     printf '#include <tls.h>\nint main(void){ return 0; }\n' > "$_c"
     if "$CC" "$_c" -o "$_o" -ltls >/dev/null 2>&1; then rm -f "$_c" "$_o"; return 0; fi
     rm -f "$_c" "$_o"; return 1
+}
+
+check_sanitizer_dev() {
+    [ "$SANITIZER" = "none" ] && return 0
+    _c="$SCRATCH_DIR/.san-probe.c"; _o="$SCRATCH_DIR/.san-probe"
+    mkdir -p "$SCRATCH_DIR"
+    printf 'int main(void){ return 0; }\n' > "$_c"
+    # shellcheck disable=SC2086
+    if "$CC" $SAN_CFLAGS "$_c" -o "$_o" >/dev/null 2>&1; then
+        rm -f "$_c" "$_o"
+        return 0
+    fi
+    rm -f "$_c" "$_o"
+    return 1
 }
 
 # Copy a source mirror excluding .git and any build/ tree.
@@ -318,8 +405,17 @@ resolve_jpm_src() {
 # shell cannot leak into the toolchain being generated. PATH leads with the
 # toolchain's own bin/ so `which janet` resolves to the launcher; the host
 # tool locations that follow are still needed for cc, make, ar and git.
+# For sanitized builds, suppress leak-check exit failures during bootstrap.
 clean_env() {
-    env -i PATH="$TOOLCHAIN_DIR/bin:$PATH" HOME="$HOME" "$@"
+    if [ "$SANITIZER" != "none" ]; then
+        env -i PATH="$TOOLCHAIN_DIR/bin:$PATH" HOME="$HOME" \
+            ASAN_OPTIONS="detect_leaks=0:halt_on_error=0" \
+            LSAN_OPTIONS="detect_leaks=0" \
+            UBSAN_OPTIONS="halt_on_error=0" \
+            "$@"
+    else
+        env -i PATH="$TOOLCHAIN_DIR/bin:$PATH" HOME="$HOME" "$@"
+    fi
 }
 
 # jpm's generate-config cannot express :janet (it emits the bare name "janet")
@@ -365,18 +461,64 @@ run_logged() {
     return 1
 }
 
+# Run make in the Janet source tree. With no ev-backend defines (the epoll
+# default) and no sanitizer (none) the invocation is exactly the historical
+# one. With defines (poll) or sanitizer flags they ride CFLAGS.
+janet_make() {
+    _src="$1"; shift
+    if [ -n "$SAN_CFLAGS" ]; then
+        _cflags="${CFLAGS:-} $SAN_CFLAGS${EV_DEFINES:+ $EV_DEFINES}"
+        _cflags="${_cflags# }"
+        run_logged env \
+            ASAN_OPTIONS="detect_leaks=0:halt_on_error=0" \
+            LSAN_OPTIONS="detect_leaks=0" \
+            UBSAN_OPTIONS="halt_on_error=0" \
+            make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
+            "CFLAGS=$_cflags" "$@"
+    elif [ -n "$EV_DEFINES" ]; then
+        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
+            "CFLAGS=${CFLAGS:--O2 -g} $EV_DEFINES" "$@"
+    else
+        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" "$@"
+    fi
+}
+
 build_janet() {
-    log "Building Janet rev $JANET_REV into $TOOLCHAIN_DIR..."
+    log "Building Janet rev $JANET_REV (ev-backend: $EV_BACKEND, sanitizer: $SANITIZER) into $TOOLCHAIN_DIR..."
+    # The source tree under .work/src is rev-keyed and shared across ev
+    # backends and sanitizer profiles. The tree's own build/ output is NOT
+    # shareable - objects built for one backend or sanitizer would satisfy
+    # make's dependency check for another and silently keep the wrong binary.
+    # Track the backend in .jsec-ev and sanitizer in .jsec-san and drop build/
+    # on switch.
+    _last_ev=$(cat "$1/.jsec-ev" 2>/dev/null || echo)
+    _last_san=$(cat "$1/.jsec-san" 2>/dev/null || echo)
+    _last_prefix=$(cat "$1/.jsec-prefix" 2>/dev/null || echo)
+    [ -n "$_last_san" ] || _last_san="none"
+    if { [ "$_last_ev" != "$EV_BACKEND" ] || [ "$_last_san" != "$SANITIZER" ] || [ "$_last_prefix" != "$TOOLCHAIN_DIR" ]; } && [ -d "$1/build" ]; then
+        rm -rf "$1/build"
+        note "cleared in-tree Janet build output (was ev-backend ${_last_ev:-unset} / sanitizer ${_last_san}, now $EV_BACKEND / $SANITIZER)"
+    fi
+    echo "$EV_BACKEND" > "$1/.jsec-ev"
+    echo "$SANITIZER" > "$1/.jsec-san"
+    echo "$TOOLCHAIN_DIR" > "$1/.jsec-prefix"
     # PREFIX/JANET_PATH must be set for the BUILD step too: the default syspath is
     # baked into the amalgam at generation time. An ambient PREFIX (or JANET_PATH)
     # in the environment would otherwise leak a foreign path into (dyn :syspath),
     # breaking hermeticity. Command-line make vars override any ambient value.
-    run_logged make -C "$1" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" -j"$(ncpu)" \
+    janet_make "$1" -j"$(ncpu)" \
         || die "Janet build failed (see output above)."
-    run_logged make -C "$1" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" install \
+    janet_make "$1" install \
         || die "Janet install into $TOOLCHAIN_DIR failed."
+    # Janet's `make install` runs `strip -x -S` on $(BINDIR)/janet, which strips
+    # the -g3 DWARF debug symbols needed for symbolic sanitizer stack traces.
+    # Restore the unstripped binary from build/janet on sanitized profiles.
+    if [ "$SANITIZER" != "none" ] && [ -x "$1/build/janet" ]; then
+        cp "$1/build/janet" "$TOOLCHAIN_DIR/bin/janet"
+        note "preserved unstripped debug symbols in Janet binary for sanitizer ($SANITIZER)"
+    fi
     [ -x "$TOOLCHAIN_DIR/bin/janet" ] || die "Janet binary missing after install: $TOOLCHAIN_DIR/bin/janet"
-    note "built Janet $(clean_env "$TOOLCHAIN_DIR/bin/janet" -e '(print janet/version)') -> $JANET_REAL"
+    note "built Janet $(clean_env "$TOOLCHAIN_DIR/bin/janet" -e '(print janet/version)') (ev-backend $EV_BACKEND, sanitizer $SANITIZER) -> $JANET_REAL"
 }
 
 # bin/ holds only our launchers; the real janet binary is private under libexec/.
@@ -446,8 +588,10 @@ write_stamp() {
     mkdir -p "$(dirname "$STAMP_FILE")"
     {
         echo "janet-rev: $JANET_REV"
-        echo "janet-version: $("$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)"
+        echo "janet-version: $(clean_env "$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)"
         echo "jpm-rev: $JPM_REV"
+        echo "ev-backend: $EV_BACKEND"
+        echo "sanitizer: $SANITIZER"
         echo "toolchain-prefix: $TOOLCHAIN_DIR"
         echo "built-at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } > "$STAMP_FILE"
@@ -455,8 +599,10 @@ write_stamp() {
 
 print_summary() {
     log "Hermetic toolchain ready at $TOOLCHAIN_DIR"
-    info "janet:      $("$JANET_BIN" -e '(print janet/version)' 2>/dev/null)  (syspath: $("$JANET_BIN" -e '(print (dyn :syspath))' 2>/dev/null))"
+    info "janet:      $(clean_env "$JANET_BIN" -e '(print janet/version)' 2>/dev/null)  (syspath: $(clean_env "$JANET_BIN" -e '(print (dyn :syspath))' 2>/dev/null))"
     info "jpm:        $JPM_BIN"
+    info "ev-backend: $EV_BACKEND"
+    info "sanitizer:  $SANITIZER"
     info "libexec:    $JANET_REAL , $JPM_REAL"
     info "headerpath: $JANET_INCLUDEDIR"
     info "modpath:    $JANET_MODPATH"
@@ -488,10 +634,13 @@ require_cmd make "build driver for Janet"
 require_cmd git "source checkout"
 mkdir -p "$SCRATCH_DIR"
 check_ssl_dev || die "OpenSSL/LibreSSL dev headers and libs not found (need openssl/ssl.h + -lssl/-lcrypto, or libretls tls.h + -ltls). Install openssl (or libretls) development packages and retry."
+check_sanitizer_dev || die "C compiler ($CC) cannot compile/link with --sanitizer $SANITIZER ($SAN_CFLAGS). Install the matching compiler sanitizer runtime (e.g. libasan / liblsan / libubsan) and retry."
 info "C compiler: $(command -v "$CC") ($("$CC" --version 2>/dev/null | head -1))"
 info "SSL dev: ok (openssl/libretls)"
 info "Janet rev: $JANET_REV"
 info "jpm rev:   $JPM_REV"
+info "ev backend: $EV_BACKEND"
+info "sanitizer:  $SANITIZER"
 
 if [ "$CLEAN" -eq 1 ]; then
     log "Cleaning $TOOLCHAIN_DIR..."
@@ -507,15 +656,20 @@ fi
 mkdir -p "$SRC_DIR" "$TOOLCHAIN_DIR" "$SCRATCH_DIR" "$BUILD_DIR"
 
 if [ "$FORCE" -eq 0 ] && have_toolchain; then
-    cur=$("$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)
+    cur=$(clean_env "$JANET_BIN" -e '(print janet/version)' 2>/dev/null || echo unknown)
     stamped=$(grep '^janet-rev:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
-    if [ "$stamped" = "$JANET_REV" ]; then
-        log "Toolchain already present (Janet $cur, rev $JANET_REV) at $TOOLCHAIN_DIR; nothing to do."
+    stamped_ev=$(grep '^ev-backend:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
+    stamped_san=$(grep '^sanitizer:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
+    # Stamps predating the ev-backend / sanitizer keys were epoll / none builds.
+    [ -n "$stamped_ev" ] || stamped_ev="epoll"
+    [ -n "$stamped_san" ] || stamped_san="none"
+    if [ "$stamped" = "$JANET_REV" ] && [ "$stamped_ev" = "$EV_BACKEND" ] && [ "$stamped_san" = "$SANITIZER" ]; then
+        log "Toolchain already present (Janet $cur, rev $JANET_REV, ev-backend $EV_BACKEND, sanitizer $SANITIZER) at $TOOLCHAIN_DIR; nothing to do."
         info "Use --force to rebuild or --clean to start over."
         print_summary
         exit 0
     fi
-    log "Toolchain present for a different Janet rev (${stamped:-unknown} -> $JANET_REV); rebuilding."
+    log "Toolchain present for rev ${stamped:-unknown} / ev-backend $stamped_ev / sanitizer $stamped_san; requested $JANET_REV / $EV_BACKEND / $SANITIZER; rebuilding."
 fi
 
 # Rebuilding now: drop the stamp first so an interrupted rebuild cannot look

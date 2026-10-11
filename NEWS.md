@@ -3,6 +3,18 @@
 # News
 
 
+## 2026-10-08 - Baseline Janet Raised to 1.41.1
+
+-   NOTE: the minimum supported Janet baseline is now **1.41.1** (was 1.40.1),
+    pinned in `scripts/bootstrap-toolchain.sh` at the v1.41.1 githash. Janet
+    1.41.1 contains the upstream fix for the unix-socket connect hang on
+    edge-triggered kqueue (FreeBSD); without it things hang.
+-   The "Verified under" platform matrix in the 2026-10-03 entry below
+    predates this change: it was run against Janet 1.40.1 and has NOT been
+    re-run against 1.41.1. Treat it as a historical record and re-run the
+    matrix before citing it for the 1.41.1 baseline.
+
+
 ## 2026-10-03 - Read Buffer Accounting & Streaming Digest Context
 
 

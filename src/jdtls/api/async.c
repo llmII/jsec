@@ -26,6 +26,9 @@ typedef struct {
     JanetBuffer *buffer;      /* For read */
     JanetByteView write_data; /* For write */
     int32_t nbytes;           /* For read */
+    int32_t buf_start;        /* buffer->count when read op began; n is
+                               * relative to this, matching ev/read append
+                               * semantics (never treat n as buffer total) */
     enum {
         CLIENT_OP_HANDSHAKE,
         CLIENT_OP_READ,
@@ -180,21 +183,20 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case CLIENT_OP_READ: {
-                    int32_t nread = 0;
+                    int32_t before = state->buffer->count;
                     result = dtls_do_read(
-                        client->ssl,
-                        state->buffer->data + state->buffer->count,
-                        state->nbytes - state->buffer->count, &nread);
-                    if (nread > 0) {
-                        state->buffer->count += nread;
+                        client->ssl, state->buffer,
+                        state->nbytes -
+                            (state->buffer->count - state->buf_start));
+                    if (state->buffer->count > before) {
                         /* For datagrams, return after first successful read
                          */
                         retval = janet_wrap_buffer(state->buffer);
                         result = DTLS_RESULT_OK;
                     }
                     if (result == DTLS_RESULT_EOF) {
-                        /* Return what we have or nil */
-                        retval = state->buffer->count > 0
+                        /* Return what this call appended or nil */
+                        retval = state->buffer->count > state->buf_start
                                      ? janet_wrap_buffer(state->buffer)
                                      : janet_wrap_nil();
                         result = DTLS_RESULT_OK;
@@ -329,27 +331,41 @@ int dtls_client_start_handshake(DTLSClient *client) {
 
 /* Helper to create and start async read */
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int mode) {
+                                  int32_t nbytes, int32_t buf_start,
+                                  int mode, double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->buffer = buf;
     state->nbytes = nbytes;
+    state->buf_start = buf_start;
     state->op = CLIENT_OP_READ;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    /* Arm once here, at initial suspension: the deadline is absolute
+     * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
+     * callback must not re-arm it. */
+    if (timeout >= 0) {
+        janet_addtimeout(timeout);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }
 
 /* Helper to create and start async write */
 void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
-                                   int mode) {
+                                   int mode, double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->write_data = data;
     state->op = CLIENT_OP_WRITE;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    /* Arm once here, at initial suspension: the deadline is absolute
+     * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
+     * callback must not re-arm it. */
+    if (timeout >= 0) {
+        janet_addtimeout(timeout);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }

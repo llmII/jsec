@@ -81,6 +81,23 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             int idx = 0;
             for (int32_t i = 0; i < cap; i++) {
                 if (!janet_checktype(kvs[i].key, JANET_NIL)) {
+                    if (!janet_checktypes(kvs[i].key,
+                                          JANET_TFLAG_STRING |
+                                              JANET_TFLAG_KEYWORD |
+                                              JANET_TFLAG_SYMBOL)) {
+                        for (int j = 0; j < idx; j++) {
+                            free(data->hostnames[j]);
+                            SSL_CTX_free(data->contexts[j]);
+                        }
+                        free(data->hostnames);
+                        free(data->contexts);
+                        free(data);
+                        SSL_CTX_free(ctx);
+                        tls_panic_config(
+                            "sni map key must be a string, keyword, or "
+                            "symbol, got %v",
+                            kvs[i].key);
+                    }
                     const char *hostname =
                         (const char *)janet_unwrap_string(kvs[i].key);
                     Janet sub_opts = kvs[i].value;

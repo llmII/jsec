@@ -176,6 +176,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     /* Key Usage */
@@ -184,6 +186,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     /* Subject Alternative Name (SAN) - Required for modern TLS hostname
@@ -216,6 +220,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
         if (ext) {
             X509_add_ext(x509, ext, -1);
             X509_EXTENSION_free(ext);
+        } else {
+            ERR_clear_error();
         }
     }
 
@@ -225,6 +231,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     /* Ed25519/Ed448 don't use a digest, pass NULL; others use SHA256 */
@@ -365,6 +373,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     /* Key Usage */
@@ -373,6 +383,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     /* Subject Alternative Name (SAN) */
@@ -400,6 +412,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
         if (ext) {
             X509_add_ext(x509, ext, -1);
             X509_EXTENSION_free(ext);
+        } else {
+            ERR_clear_error();
         }
     }
 
@@ -409,6 +423,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
+    } else {
+        ERR_clear_error();
     }
 
     if (!X509_sign(x509, pkey, EVP_sha256())) goto cleanup;

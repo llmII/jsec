@@ -134,7 +134,12 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         janet_checktype(opts, JANET_STRUCT)) {
         security = janet_get(opts, janet_ckeywordv("security"));
     }
-    apply_security_options(client->ctx, security, 1);
+    if (!apply_security_options(client->ctx, security, 1)) {
+        SSL_CTX_free(client->ctx);
+        client->ctx = NULL;
+        client->owns_ctx = 0;
+        dtls_panic_ssl("failed to apply security options");
+    }
 
     /* Load certificates if provided */
     if (janet_checktype(opts, JANET_TABLE) ||
