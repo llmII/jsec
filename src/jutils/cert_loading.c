@@ -6,8 +6,10 @@
  */
 
 #include "internal.h"
+#include <openssl/bn.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <string.h>
 
 /*
@@ -283,4 +285,70 @@ void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca) {
             utils_panic_ssl("failed to load CA certificates");
         }
     }
+}
+
+/*
+ * Fresh CSPRNG random serial, at least 64 bits of entropy (BN_rand), set
+ * directly on the certificate. Auto-generated serials use this; an explicit
+ * caller-supplied serial is passed to ASN1_INTEGER_set_int64 by the caller.
+ */
+int jutils_set_random_serial(X509 *x509) {
+    BIGNUM *bn = BN_new();
+    if (!bn) return 0;
+    int ok = BN_rand(bn, 64, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY);
+    if (ok) {
+        ok = (BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(x509)) != NULL);
+    }
+    BN_free(bn);
+    return ok;
+}
+
+/*
+ * The common name becomes exactly one literal SAN entry: a GENERAL_NAMES
+ * structure attached with X509V3_add1_i2d, never spliced into an X509V3
+ * config value. a2i_IPADDRESS classifies the single entry (GEN_IPADD vs
+ * GEN_DNS).
+ */
+int jutils_add_common_name_san(X509 *cert, const char *cn) {
+    GENERAL_NAMES *gens = NULL;
+    GENERAL_NAME *gen = NULL;
+    ASN1_OCTET_STRING *ip = NULL;
+    STACK_OF(X509_EXTENSION) *exts = NULL;
+    int ok = 0;
+
+    gens = sk_GENERAL_NAME_new_null();
+    gen = GENERAL_NAME_new();
+    if (!gens || !gen) goto done;
+
+    ip = a2i_IPADDRESS(cn);
+    if (ip) {
+        GENERAL_NAME_set0_value(gen, GEN_IPADD, ip);
+        ip = NULL;
+    } else {
+        ASN1_IA5STRING *dns = ASN1_IA5STRING_new();
+        if (!dns) goto done;
+        if (!ASN1_STRING_set(dns, cn, -1)) {
+            ASN1_IA5STRING_free(dns);
+            goto done;
+        }
+        GENERAL_NAME_set0_value(gen, GEN_DNS, dns);
+    }
+
+    if (!sk_GENERAL_NAME_push(gens, gen)) goto done;
+    gen = NULL;
+
+    exts = sk_X509_EXTENSION_new_null();
+    if (!exts) goto done;
+    if (!X509V3_add1_i2d(&exts, NID_subject_alt_name, gens, 0,
+                         X509V3_ADD_DEFAULT))
+        goto done;
+    if (!X509_add_ext(cert, sk_X509_EXTENSION_value(exts, 0), -1)) goto done;
+    ok = 1;
+
+done:
+    if (exts) sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+    if (ip) ASN1_OCTET_STRING_free(ip);
+    if (gen) GENERAL_NAME_free(gen);
+    if (gens) sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+    return ok;
 }

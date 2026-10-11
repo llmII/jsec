@@ -91,6 +91,16 @@ int jutils_load_key(SSL_CTX *ctx, Janet key);
  */
 int jutils_load_ca(SSL_CTX *ctx, Janet ca);
 
+/* Set a fresh CSPRNG random serial of at least 64 bits (BN_rand) on the
+ * certificate. Returns 1 on success, 0 on failure. */
+int jutils_set_random_serial(X509 *x509);
+
+/* Attach exactly one SAN entry for the common name: a GEN_IPADD entry when
+ * a2i_IPADDRESS accepts the name, a GEN_DNS entry with the literal bytes
+ * otherwise. The name is never parsed as X509V3 config syntax. Returns 1 on
+ * success, 0 on failure. */
+int jutils_add_common_name_san(X509 *cert, const char *cn);
+
 /*
  * Load credentials (cert, key, ca) from Janet values into SSL_CTX.
  * All parameters are optional (pass janet_wrap_nil() to skip).

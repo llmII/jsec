@@ -173,11 +173,18 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number */
+    /* Set serial number: explicit :serial override, else fresh random of at
+     * least 64 bits of entropy (issuance no longer walks the counter) */
     if (serial < 0) {
-        serial = ca_next_serial(ca);
+        if (!jutils_set_random_serial(cert)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set random serial");
+        }
+    } else {
+        ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
     }
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -216,9 +223,13 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     if (key_usage) {
         ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
     } else {
-        /* Default for end-entity cert */
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        /* Default for end-entity cert: keyEncipherment is meaningless for
+         * EC keys (RFC 5480) */
+        const char *default_ku =
+            (EVP_PKEY_base_id(csr_key) == EVP_PKEY_EC)
+                ? "digitalSignature"
+                : "digitalSignature,keyEncipherment";
+        ca_add_extension(cert, ca->cert, NID_key_usage, default_ku);
     }
 
     /* Add extended key usage if specified */
@@ -361,9 +372,13 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number */
-    int64_t serial = ca_next_serial(ca);
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+    /* Set serial number: fresh random of at least 64 bits of entropy
+     * (issuance no longer walks the counter) */
+    if (!jutils_set_random_serial(cert)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set random serial");
+    }
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -395,12 +410,15 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
                      "keyid:always");
 
-    /* Key usage */
+    /* Key usage (keyEncipherment is meaningless for EC keys, RFC 5480) */
     if (key_usage) {
         ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
     } else {
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        const char *default_ku =
+            (EVP_PKEY_base_id(key) == EVP_PKEY_EC)
+                ? "digitalSignature"
+                : "digitalSignature,keyEncipherment";
+        ca_add_extension(cert, ca->cert, NID_key_usage, default_ku);
     }
 
     /* Extended key usage */
@@ -409,9 +427,15 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
                          extended_key_usage);
     }
 
-    /* SAN */
+    /* SAN - default to the CN when :san is not supplied */
     if (san_arr && san_arr->count > 0) {
         add_san_entries(cert, ca->cert, san_arr);
+    } else if (common_name) {
+        if (!jutils_add_common_name_san(cert, common_name)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add subject alternative name");
+        }
     }
 
     /* Sign with CA key */

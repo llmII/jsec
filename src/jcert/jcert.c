@@ -149,7 +149,8 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     if (!x509) goto cleanup;
 
     X509_set_version(x509, 2);                        /* Version 3 */
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
+    /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
+    if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
@@ -186,38 +187,9 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
         X509_EXTENSION_free(ext);
     }
 
-    /* Subject Alternative Name (SAN) - Required for modern TLS hostname
-     * verification We add both DNS and IP entries for the common name, as it
-     * might be either */
-    {
-        char san_value[512];
-        /* Check if cn looks like an IP address (contains only digits and dots
-         * for IPv4) */
-        int is_ip = 1;
-        for (const char *p = cn; *p; p++) {
-            if (*p != '.' && (*p < '0' || *p > '9')) {
-                is_ip = 0;
-                break;
-            }
-        }
-        /* Also check for IPv6 (contains colons) */
-        if (!is_ip) {
-            is_ip = (strchr(cn, ':') != NULL);
-        }
-
-        if (is_ip) {
-            snprintf(san_value, sizeof(san_value), "IP:%s", cn);
-        } else {
-            snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
-        }
-
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-                                  san_value);
-        if (ext) {
-            X509_add_ext(x509, ext, -1);
-            X509_EXTENSION_free(ext);
-        }
-    }
+    /* Subject Alternative Name (SAN) - the common name becomes exactly one
+     * literal entry (GENERAL_NAMES, never an X509V3 config splice) */
+    if (!jutils_add_common_name_san(x509, cn)) goto cleanup;
 
     /* Subject Key Identifier */
     ext =
@@ -338,7 +310,8 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     if (!x509) goto cleanup;
 
     X509_set_version(x509, 2);                        /* Version 3 */
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
+    /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
+    if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
@@ -375,33 +348,9 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
         X509_EXTENSION_free(ext);
     }
 
-    /* Subject Alternative Name (SAN) */
-    {
-        char san_value[512];
-        int is_ip = 1;
-        for (const char *p = cn; *p; p++) {
-            if (*p != '.' && (*p < '0' || *p > '9')) {
-                is_ip = 0;
-                break;
-            }
-        }
-        if (!is_ip) {
-            is_ip = (strchr(cn, ':') != NULL);
-        }
-
-        if (is_ip) {
-            snprintf(san_value, sizeof(san_value), "IP:%s", cn);
-        } else {
-            snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
-        }
-
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-                                  san_value);
-        if (ext) {
-            X509_add_ext(x509, ext, -1);
-            X509_EXTENSION_free(ext);
-        }
-    }
+    /* Subject Alternative Name (SAN) - the common name becomes exactly one
+     * literal entry (GENERAL_NAMES, never an X509V3 config splice) */
+    if (!jutils_add_common_name_san(x509, cn)) goto cleanup;
 
     /* Subject Key Identifier */
     ext =
@@ -411,7 +360,10 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
         X509_EXTENSION_free(ext);
     }
 
-    if (!X509_sign(x509, pkey, EVP_sha256())) goto cleanup;
+    /* Ed25519 is a pure signature scheme and takes no digest */
+    const EVP_MD *from_key_md =
+        (EVP_PKEY_base_id(pkey) == EVP_PKEY_ED25519) ? NULL : EVP_sha256();
+    if (!X509_sign(x509, pkey, from_key_md)) goto cleanup;
 
     /* Write to PEM */
     cert_bio = BIO_new(BIO_s_mem());

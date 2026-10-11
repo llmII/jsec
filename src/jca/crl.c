@@ -264,6 +264,42 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
         }
     }
 
+    /* crlNumber (RFC 5280 5.2.3) */
+    {
+        ASN1_INTEGER *crl_num = ASN1_INTEGER_new();
+        if (!crl_num) {
+            X509_CRL_free(crl);
+            ca_panic_resource("failed to create CRL number");
+        }
+        ASN1_INTEGER_set(crl_num, 1);
+        int num_ok = X509_CRL_add1_ext_i2d(crl, NID_crl_number, crl_num, 0,
+                                           X509V3_ADD_DEFAULT);
+        ASN1_INTEGER_free(crl_num);
+        if (!num_ok) {
+            X509_CRL_free(crl);
+            ca_panic_ssl("failed to add crlNumber extension");
+        }
+    }
+
+    /* Authority Key Identifier (RFC 5280 5.2.1) */
+    {
+        X509V3_CTX v3ctx;
+        X509V3_set_ctx(&v3ctx, ca->cert, NULL, NULL, crl, 0);
+        X509_EXTENSION *aki =
+            X509V3_EXT_conf_nid(NULL, &v3ctx, NID_authority_key_identifier,
+                                "keyid:always");
+        if (!aki) {
+            X509_CRL_free(crl);
+            ca_panic_ssl("failed to build authority key identifier");
+        }
+        int aki_ok = X509_CRL_add_ext(crl, aki, -1);
+        X509_EXTENSION_free(aki);
+        if (!aki_ok) {
+            X509_CRL_free(crl);
+            ca_panic_ssl("failed to add authority key identifier");
+        }
+    }
+
     /* Sort the revoked list (required by X.509) */
     X509_CRL_sort(crl);
 
