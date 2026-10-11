@@ -473,6 +473,7 @@ Janet cfun_get_cipher(int32_t argc, Janet *argv);
 Janet cfun_get_cipher_bits(int32_t argc, Janet *argv);
 Janet cfun_get_connection_info(int32_t argc, Janet *argv);
 Janet cfun_get_handshake_time(int32_t argc, Janet *argv);
+Janet cfun_get_peer_cert(int32_t argc, Janet *argv);
 
 /* Clear the pending slot (internal.h:244-245) for this state's role
  * (read_state -> pending_read, write_state -> pending_write) */

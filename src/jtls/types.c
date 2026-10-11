@@ -119,6 +119,7 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :shutdown         - TLS shutdown without closing socket
  *   :session-reused?  - Check if session was resumed
  *   :session          - Get session data for resumption
+ *   :peer-cert        - Get peer certificate as X.509 DER
  *   :set-session      - Set session data before handshake
  *   :version          - Get TLS version string
  *   :cipher           - Get cipher suite name
@@ -138,6 +139,7 @@ const JanetMethod tls_stream_methods[] = {
     {"peername", cfun_peername},
     {"session-reused?", cfun_session_reused},
     {"session", cfun_get_session},
+    {"peer-cert", cfun_get_peer_cert},
     {"set-session", cfun_set_session},
     {"version", cfun_get_version},
     {"cipher", cfun_get_cipher},

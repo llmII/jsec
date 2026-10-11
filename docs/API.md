@@ -106,7 +106,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
+        -   `:security`: Table. Security options (see [Security Options](#org7217d06)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -327,6 +327,13 @@ These methods are available on TLS stream objects. Access via method syntax
 
 -   `(:get-session stream)` or `(tls-stream/get-session stream)`
     Returns session data (byte string) for resumption
+
+-   `(:peer-cert stream)` or `(tls-stream/get-peer-cert stream)`
+    Returns the peer certificate as an immutable X.509 DER byte string, or
+    `nil` when there is no peer certificate (before the handshake completes
+    or when the peer presented none). Raises on a closed stream. Call after
+    handshake completes. Lives in the `jsec/tls-stream` native module only -
+    not re-exported from the `jsec/tls` facade.
 
 -   `(:set-session stream data)` or `(tls-stream/set-session stream data)`
     Sets session data (usually passed in `connect` options instead)

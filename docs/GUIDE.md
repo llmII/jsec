@@ -29,6 +29,11 @@ system's CA store.
     1.  Disable verification (NOT RECOMMENDED for production): `{:verify false}`.
     2.  Load a custom CA file: `{:ca-file "ca.pem"}`.
 
+-   **Peer Certificate**: After the handshake, `(:peer-cert stream)` (or
+    `(tls-stream/get-peer-cert stream)`) returns the peer's X.509 certificate
+    as an immutable DER byte string, or `nil` when the peer presented none.
+    Useful for certificate pinning and post-handshake audit.
+
 **Example**: See [simple\_https\_client.janet](../examples/simple_https_client.janet) for certificate verification in practice.
 
 
