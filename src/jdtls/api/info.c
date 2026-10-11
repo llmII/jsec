@@ -121,8 +121,8 @@ Janet cfun_dtls_session_reused(int32_t argc, Janet *argv) {
  * (dtls/get-session client)
  *
  * Get the session data for resumption.
- * Returns a buffer containing the serialized session, or nil if not
- * available.
+ * Returns an immutable byte string containing the serialized session,
+ * or nil if not available.
  */
 Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
@@ -144,13 +144,12 @@ Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    JanetBuffer *buf = janet_buffer(len);
-    unsigned char *p = buf->data;
+    uint8_t *str = janet_string_begin(len);
+    unsigned char *p = str;
     i2d_SSL_SESSION(session, &p);
-    buf->count = len;
 
     SSL_SESSION_free(session);
-    return janet_wrap_buffer(buf);
+    return janet_wrap_string(janet_string_end(str));
 }
 
 /*
@@ -199,7 +198,8 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
  * (dtls/set-session client session-data)
  *
  * Set session data for resumption before connect.
- * The session-data should be a buffer from a previous dtls/get-session call.
+ * The session-data should be a byte string or buffer from a previous
+ * dtls/get-session call.
  * Returns true if session was set successfully, false otherwise.
  */
 Janet cfun_dtls_set_session(int32_t argc, Janet *argv) {

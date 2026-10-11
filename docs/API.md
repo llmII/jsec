@@ -99,14 +99,14 @@ Connect to a TLS server.
         -   `:verify`: Boolean (default `true`). Verify server certificate.
         -   `:hostname`: String. SNI hostname. Defaults to `host` for TCP, "localhost" for Unix.
         -   `:verify-hostname`: String. Hostname to verify against certificate (defaults to `:hostname`).
-        -   `:session`: Byte string. Session data for resumption (from `get-session`).
+        -   `:session`: Byte string or buffer. Session data for resumption (from `get-session`).
         -   `:cert`: String/buffer. Client certificate (PEM) for mTLS.
         -   `:key`: String/buffer. Client private key (PEM) for mTLS.
         -   `:trusted-cert`: String/buffer. Trust specific cert (for self-signed servers).
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
+        -   `:security`: Table. Security options (see [Security Options](#orgc8c83df)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -194,7 +194,7 @@ Wrap an existing stream with TLS. Used for both client and server modes.
     -   `:cert`: String/buffer. Client certificate (PEM) for mTLS.
     -   `:key`: String/buffer. Client private key (PEM) for mTLS.
     -   `:trusted-cert`: String/buffer. Trust specific cert (for self-signed).
-    -   `:session`: Buffer. Session data for resumption.
+    -   `:session`: Byte string or buffer. Session data for resumption.
     -   `:buffer-size`: Integer. Internal TLS buffer size.
     -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
     -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
@@ -461,6 +461,7 @@ Create a DTLS client connection. Performs handshake.
     -   `:ca`: CA certificate (PEM string).
     -   `:sni`: Server name for SNI (defaults to host).
     -   `:verify-hostname`: Hostname to verify against cert.
+    -   `:session`: Byte string or buffer. Session data for resumption.
     -   `:handshake-timing`: Boolean. Track handshake duration.
 
 **Returns**: A DTLS client object.
@@ -538,10 +539,10 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
     Returns `true` if session was resumed
 
 -   `(:get-session client)` or `(dtls-stream/get-session client)`
-    Returns session data for resumption
+    Returns session data for resumption as an immutable byte string (or `nil`)
 
 -   `(:set-session client data)` or `(dtls-stream/set-session client data)`
-    Sets session data
+    Sets session data (byte string or buffer)
 
 
 ### DTLS Operations

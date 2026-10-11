@@ -24,7 +24,7 @@ static const JanetReg client_cfuns[] = {
      "  :verify - Verify server certificate (default true)\n"
      "  :ca - CA certificate path\n"
      "  :sni - Server name for SNI (defaults to host)\n"
-     "  :session - Session data for resumption\n"
+     "  :session - Session data for resumption (byte string or buffer)\n"
      "  :trusted-cert - Trust specific certificate (for self-signed)"},
     {"upgrade", cfun_dtls_upgrade,
      "(dtls/upgrade transport &opt opts)\n\n"
@@ -37,7 +37,7 @@ static const JanetReg client_cfuns[] = {
      "  :verify - Verify peer certificate (default true)\n"
      "  :ca - CA certificate path\n"
      "  :sni - Server name for SNI\n"
-     "  :session - Session data for resumption\n"
+     "  :session - Session data for resumption (byte string or buffer)\n"
      "  :server - Act as server (default: client)\n"
      "  :trusted-cert - Trust specific certificate"},
     {"read", cfun_dtls_read,
@@ -87,13 +87,13 @@ static const JanetReg client_cfuns[] = {
     {"session", cfun_dtls_get_session,
      "(:session client)\n\n"
      "Get the session data for resumption.\n"
-     "Returns a buffer containing the serialized session, or nil if not "
-     "available."},
+     "Returns an immutable byte string containing the serialized session, "
+     "or nil if not available."},
     {"set-session", cfun_dtls_set_session,
      "(dtls/set-session client session-data)\n\n"
      "Set session data for resumption.\n"
-     "The session-data should be a buffer from a previous dtls/get-session "
-     "call.\n"
+     "The session-data should be a byte string or buffer from a previous "
+     "dtls/get-session call.\n"
      "Returns true if session was set successfully, false otherwise."},
     {"trust-cert", cfun_dtls_trust_cert,
      "(dtls/trust-cert client cert-pem)\n\n"

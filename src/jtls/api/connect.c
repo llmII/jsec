@@ -188,6 +188,11 @@ client_setup:
             security_opts = janet_get(opts, janet_ckeywordv("security"));
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
             session_opt = janet_get(opts, janet_ckeywordv("session"));
+            if (!janet_checktype(session_opt, JANET_NIL) &&
+                !janet_checktype(session_opt, JANET_STRING) &&
+                !janet_checktype(session_opt, JANET_BUFFER)) {
+                tls_panic_param("session must be a byte string or buffer");
+            }
 
             if (!hostname) {
                 Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
@@ -265,6 +270,12 @@ common_setup:
 
         if (janet_checktype(session_opt, JANET_NIL)) {
             session_opt = janet_get(opts, janet_ckeywordv("session"));
+            if (!janet_checktype(session_opt, JANET_NIL) &&
+                !janet_checktype(session_opt, JANET_STRING) &&
+                !janet_checktype(session_opt, JANET_BUFFER)) {
+                SSL_CTX_free(ctx);
+                tls_panic_param("session must be a byte string or buffer");
+            }
         }
         if (janet_checktype(alpn_opt, JANET_NIL)) {
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
@@ -334,26 +345,14 @@ common_setup:
         }
     }
 
-    /* Set session for resumption (client) */
+    /* Set session for resumption (client; validated at option parse) */
     if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
-        JanetByteView session_data;
-        if (janet_checktype(session_opt, JANET_STRING)) {
-            session_data.bytes = janet_unwrap_string(session_opt);
-            session_data.len =
-                janet_string_length(janet_unwrap_string(session_opt));
-        } else if (janet_checktype(session_opt, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_opt);
-            session_data.bytes = buf->data;
-            session_data.len = buf->count;
-        } else {
-            session_data.bytes = NULL;
-            session_data.len = 0;
-        }
-
-        if (session_data.bytes && session_data.len > 0) {
-            const unsigned char *der_ptr = session_data.bytes;
+        const uint8_t *bytes;
+        int32_t len;
+        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+            const unsigned char *der_ptr = bytes;
             SSL_SESSION *session =
-                d2i_SSL_SESSION(NULL, &der_ptr, session_data.len);
+                d2i_SSL_SESSION(NULL, &der_ptr, len);
             if (session) {
                 SSL_set_session(tls->ssl, session);
                 SSL_SESSION_free(session);

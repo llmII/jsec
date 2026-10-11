@@ -47,6 +47,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     const char *sni = NULL;
     const char *verify_hostname = NULL;
     int track_handshake_time = 0;
+    Janet session_opt = janet_wrap_nil();
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
@@ -77,6 +78,17 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         if (!janet_checktype(ht, JANET_NIL)) {
             track_handshake_time = janet_truthy(ht);
         }
+
+        /* :session accepts nil (absent/no-op) or a byte string or buffer;
+         * anything else raises before any SSL_CTX or SSL is allocated
+         * (PNB-08 cleanup safety). */
+        Janet session = janet_get(opts, janet_ckeywordv("session"));
+        if (!janet_checktype(session, JANET_NIL) &&
+            !janet_checktype(session, JANET_STRING) &&
+            !janet_checktype(session, JANET_BUFFER)) {
+            dtls_panic_param("session must be a byte string or buffer");
+        }
+        session_opt = session;
     }
 
     /* Get the file descriptor from the stream */
@@ -193,14 +205,13 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         SSL_set1_host(client->ssl, verify_hostname);
     }
 
-    /* Session resumption */
-    if (!is_server && (janet_checktype(opts, JANET_TABLE) ||
-                       janet_checktype(opts, JANET_STRUCT))) {
-        Janet session_data = janet_get(opts, janet_ckeywordv("session"));
-        if (janet_checktype(session_data, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_data);
-            const unsigned char *p = buf->data;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, buf->count);
+    /* Session resumption (validated at option parse; bytes here) */
+    if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
+        const uint8_t *bytes;
+        int32_t len;
+        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+            const unsigned char *p = bytes;
+            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
             if (session) {
                 SSL_set_session(client->ssl, session);
                 SSL_SESSION_free(session);
