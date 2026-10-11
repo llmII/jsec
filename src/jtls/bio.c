@@ -71,10 +71,16 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 
         /* Read as much as we can into the buffer */
 #ifdef JANET_WINDOWS
-        int n = recv(fd, (char *)tls->bio_ahead.data,
+        int n;
+        do {
+            n = recv(fd, (char *)tls->bio_ahead.data,
                      (int)tls->bio_ahead.capacity, 0);
+        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 #else
-        ssize_t n = read(fd, tls->bio_ahead.data, tls->bio_ahead.capacity);
+        ssize_t n;
+        do {
+            n = read(fd, tls->bio_ahead.data, tls->bio_ahead.capacity);
+        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 #endif
 
         if (n > 0) {
@@ -97,9 +103,15 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 
     /* No buffer or large request - read directly */
 #ifdef JANET_WINDOWS
-    int n = recv(fd, dst, len, 0);
+    int n;
+    do {
+        n = recv(fd, dst, len, 0);
+    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 #else
-    ssize_t n = read(fd, dst, (size_t)len);
+    ssize_t n;
+    do {
+        n = read(fd, dst, (size_t)len);
+    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 #endif
 
     if (n > 0) {
@@ -137,7 +149,10 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
     BIO_clear_retry_flags(bio);
 
     jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-    ssize_t n = send(fd, src, len, MSG_NOSIGNAL);
+    ssize_t n;
+    do {
+        n = send(fd, src, len, MSG_NOSIGNAL);
+    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 
     if (n > 0) {
         return (int)n;

@@ -37,6 +37,24 @@ static int extract_credential(Janet value, const char **out_path,
 }
 
 /*============================================================================
+ * HELPER: SESSION ID CONTEXT FOR CONTEXT
+ *============================================================================
+ * Derive a session ID context from the context's leaf certificate (SHA-256
+ * digest of the DER encoding), so contexts with different certificates can
+ * never resume each other's sessions. Returns 1 on success.
+ */
+int jtls_sid_ctx_for_ctx(const SSL_CTX *ctx, unsigned char *out,
+                         unsigned int *out_len) {
+    X509 *cert = SSL_CTX_get0_certificate(ctx);
+    unsigned int len = 0;
+    if (!cert) return 0;
+    if (!X509_digest(cert, EVP_sha256(), out, &len)) return 0;
+    if (len == 0 || len > SSL_MAX_SID_CTX_LENGTH) return 0;
+    *out_len = len;
+    return 1;
+}
+
+/*============================================================================
  * HELPER: APPLY SESSION OPTIONS
  *============================================================================
  * Configure session cache, tickets, OCSP stapling from security options.
@@ -97,10 +115,19 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     }
     SSL_CTX_sess_set_cache_size(ctx, cache_size);
 
-    /* Set session ID context for resumption */
-    const unsigned char session_id_ctx[] = "jsec_server";
-    SSL_CTX_set_session_id_context(ctx, session_id_ctx,
-                                   sizeof(session_id_ctx) - 1);
+    /* Set session ID context for resumption. Derived from the certificate
+     * (the nginx approach) so each server and SNI vhost context has its own
+     * resumption domain and a session established for one certificate can
+     * never resume for another. */
+    unsigned char sid_ctx[SSL_MAX_SID_CTX_LENGTH];
+    unsigned int sid_len = 0;
+    if (jtls_sid_ctx_for_ctx(ctx, sid_ctx, &sid_len)) {
+        SSL_CTX_set_session_id_context(ctx, sid_ctx, sid_len);
+    } else {
+        const unsigned char session_id_ctx[] = "jsec_server";
+        SSL_CTX_set_session_id_context(ctx, session_id_ctx,
+                                       sizeof(session_id_ctx) - 1);
+    }
 }
 
 /*============================================================================
@@ -278,7 +305,7 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
     if (use_cache && server_ctx_cache.ctx) {
         if (check_cache_hit(cert_path, key_path, cert_data, cert_len,
                             key_data, key_len, alpn_wire, alpn_len)) {
-            if (alpn_wire) free(alpn_wire);
+            if (alpn_wire) janet_free(alpn_wire);
             SSL_CTX *ret_ctx = server_ctx_cache.ctx;
             SSL_CTX_up_ref(ret_ctx);
             janet_os_mutex_unlock(ctx_cache_lock);
@@ -290,7 +317,7 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
     const SSL_METHOD *method = TLS_server_method();
     ctx = SSL_CTX_new(method);
     if (!ctx) {
-        if (alpn_wire) free(alpn_wire);
+        if (alpn_wire) janet_free(alpn_wire);
         janet_os_mutex_unlock(ctx_cache_lock);
         return NULL;
     }
@@ -368,7 +395,7 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
 
 error:
     if (ctx) SSL_CTX_free(ctx);
-    if (alpn_wire) free(alpn_wire);
+    if (alpn_wire) janet_free(alpn_wire);
     janet_os_mutex_unlock(ctx_cache_lock);
     return NULL;
 }

@@ -145,6 +145,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             }
             SSL_CTX_set_tlsext_servername_callback(ctx, jtls_sni_callback);
             SSL_CTX_set_tlsext_servername_arg(ctx, data);
+            SSL_CTX_set_client_hello_cb(ctx, jtls_client_hello_cb, data);
         }
     } else {
         int verify = 1;

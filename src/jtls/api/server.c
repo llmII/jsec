@@ -16,9 +16,30 @@
 #endif
 
 #include "../internal.h"
+#include <math.h>
 #ifndef JANET_WINDOWS
 #include <sys/un.h>
+#include <time.h>
 #endif
+
+/*============================================================================
+ * ACCEPT ERROR BACK-OFF
+ *============================================================================
+ * Brief pause taken after a hard accept error before returning to the
+ * event loop. A persistent failure (EMFILE/ENFILE/EBADF) leaves the
+ * listener readable, so retrying without a pause busy-loops the event
+ * callback and starves every other fiber in the process.
+ */
+static void tls_accept_backoff(void) {
+#ifdef JANET_WINDOWS
+    Sleep(1);
+#else
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1000000L; /* 1 ms */
+    nanosleep(&ts, NULL);
+#endif
+}
 
 /*============================================================================
  * ACCEPT-LOOP - Continuously accept TLS connections
@@ -210,8 +231,12 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                         /* No more connections ready - wait for next event */
                         break;
                     }
-                    /* Other error - continue trying */
-                    continue;
+                    /* Other accept error - back off briefly and stop
+                     * draining, matching Janet core's accept handling.
+                     * Continuing here spins inside the event callback on
+                     * persistent errors like EMFILE/ENFILE/EBADF. */
+                    tls_accept_backoff();
+                    break;
                 }
 
                 /* Got a connection - set non-blocking */
@@ -609,10 +634,20 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Nothing to mark - ctx is not a Janet value */
             break;
 
-        case JANET_ASYNC_EVENT_CLOSE:
+        case JANET_ASYNC_EVENT_DEINIT:
+            /* Every terminal path ends here through janet_async_end. A
+             * cancelled (ev/cancel) or timed-out accept never reaches the
+             * success path, so release a still-owned context; successful
+             * accepts transfer ownership to the TLS stream first and leave
+             * owns_ctx cleared. */
             if (state && state->owns_ctx && state->ctx) {
                 SSL_CTX_free(state->ctx);
+                state->ctx = NULL;
+                state->owns_ctx = 0;
             }
+            break;
+
+        case JANET_ASYNC_EVENT_CLOSE:
 #ifdef JANET_WINDOWS
             if (state && state->accept_socket != INVALID_SOCKET) {
                 closesocket(state->accept_socket);
@@ -626,9 +661,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_INIT:
             /* Windows: Start AcceptEx operation */
             if (tls_start_acceptex_single(state, listener, fiber) < 0) {
-                if (state->owns_ctx && state->ctx) {
-                    SSL_CTX_free(state->ctx);
-                }
                 janet_cancel(fiber,
                              janet_cstringv("Failed to start AcceptEx"));
                 janet_async_end(fiber);
@@ -647,9 +679,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                            SO_UPDATE_ACCEPT_CONTEXT, (char *)&lsock,
                            sizeof(lsock)) != 0) {
                 closesocket(state->accept_socket);
-                if (state->owns_ctx && state->ctx) {
-                    SSL_CTX_free(state->ctx);
-                }
                 janet_cancel(
                     fiber, janet_cstringv("Failed to update accept context"));
                 janet_async_end(fiber);
@@ -730,9 +759,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 int sock_err = jsec_socket_errno;
                 if (sock_err != JSEC_EAGAIN && sock_err != JSEC_EWOULDBLOCK) {
                     /* Real error */
-                    if (state->owns_ctx && state->ctx) {
-                        SSL_CTX_free(state->ctx);
-                    }
                     janet_cancel(fiber, janet_cstringv(
                                             jsec_socket_strerror(sock_err)));
                     janet_async_end(fiber);
@@ -821,6 +847,11 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     state->buffer_size = buffer_size;
     state->tcp_nodelay = tcp_nodelay;
     state->track_handshake_time = track_handshake_time;
+
+    /* Optional timeout: arm like timed Janet I/O (net/accept, ev/read) so
+     * the fiber raises "timeout" when the deadline expires. */
+    double to = janet_optnumber(argv, argc, 2, INFINITY);
+    if (isinf(to) == 0) janet_addtimeout(to);
 
     /* Start async accept operation */
     janet_async_start(listener, JANET_ASYNC_LISTEN_READ, tls_accept_callback,

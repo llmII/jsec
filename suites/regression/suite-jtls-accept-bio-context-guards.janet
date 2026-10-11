@@ -261,7 +261,6 @@ ssize_t read(int fd, void *buf, size_t n) {
 (def client-sock (net/connect host port))
 (def c (tls/wrap client-sock {:verify false :hostname "127.0.0.1"}))
 (:write c "x")
-(:read c 1)
 
 (file/open (os/getenv "JSEC_EINTR_TRIGGER") :w)
 (try

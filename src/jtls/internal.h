@@ -396,6 +396,13 @@ unsigned char *jtls_array_to_alpn_wire(Janet array, unsigned int *out_len);
 /* SNI callback for server */
 int jtls_sni_callback(SSL *ssl, int *ad, void *arg);
 
+/* ClientHello callback: sets the per-vhost session ID context early */
+int jtls_client_hello_cb(SSL *ssl, int *al, void *arg);
+
+/* Derive a session ID context from a context's leaf certificate */
+int jtls_sid_ctx_for_ctx(const SSL_CTX *ctx, unsigned char *out,
+                         unsigned int *out_len);
+
 /* OCSP status callback */
 int jtls_ocsp_status_cb(SSL *ssl, void *arg);
 
