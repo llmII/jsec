@@ -1,83 +1,72 @@
 #!/bin/sh
-# Run jsec code with AddressSanitizer
+# Run jsec code or tests under the hermetic AddressSanitizer toolchain (.work/asan).
 # Usage: ./sanitizers/run-with-asan.sh janet script.janet [args...]
 #        ./sanitizers/run-with-asan.sh test [test-runner-args...]
 #
-# Requires library built with: JSEC_DEBUG=1 JSEC_ASAN=1 jpm build && jpm install
-#
-# NOTE: ASan requires the runtime to be loaded before the program starts.
-# Since janet itself isn't compiled with ASan, we must LD_PRELOAD the ASan runtime.
-# IMPORTANT: Must use the SAME ASan library that was used to compile the jsec
-# libraries. By default jpm uses cc/gcc, so we prefer GCC's libasan.
+# Because .work/asan/libexec/janet is compiled and linked directly with
+# -fsanitize=address, no LD_PRELOAD is needed and child /bin/sh or openssl
+# processes are not polluted.
 
-SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+set -eu
 
-# Find GCC's ASan library (jpm typically uses gcc)
-find_asan_lib() {
-    # First, try to detect what the library was actually linked against
-    if [ -f "$PROJECT_DIR/build/jsec/cert.so" ]; then
-        linked=$(ldd "$PROJECT_DIR/build/jsec/cert.so" 2>/dev/null | grep -o '/[^ ]*libasan[^ ]*' | head -1)
-        if [ -n "$linked" ] && [ -f "$linked" ]; then
-            echo "$linked"
-            return 0
-        fi
-    fi
-    
-    # Prefer GCC's ASan (jpm default compiler)
-    if command -v gcc >/dev/null 2>&1; then
-        lib="$(gcc -print-file-name=libasan.so 2>/dev/null)"
-        if [ -n "$lib" ] && [ "$lib" != "libasan.so" ] && [ -f "$lib" ]; then
-            echo "$lib"
-            return 0
-        fi
-    fi
-    
-    # Fallback to clang
-    if command -v clang >/dev/null 2>&1;
-    then
-        for lib in \
-            "$(clang -print-file-name=libclang_rt.asan-x86_64.so 2>/dev/null)" \
-            "$(clang -print-file-name=libclang_rt.asan.so 2>/dev/null)"; do
-            if [ -n "$lib" ] && [ -f "$lib" ]; then
-                echo "$lib"
-                return 0
-            fi
-        done
-    fi
-    
-    # System paths
-    for lib in /usr/lib64/libasan.so* /usr/lib/libasan.so* /usr/lib/x86_64-linux-gnu/libasan.so*; do
-        if [ -f "$lib" ]; then
-            echo "$lib"
-            return 0
-        fi
-    done
-    
-    return 1
-}
-
-ASAN_LIB=$(find_asan_lib)
-if [ -z "$ASAN_LIB" ]; then
-    echo "Error: Cannot find ASan library." >&2
-    echo "Make sure you have gcc with ASan support installed." >&2
-    exit 1
-fi
-
-echo "Using ASan library: $ASAN_LIB" >&2
-
-# ASan options - suppress OpenSSL issues, continue on error
-export ASAN_OPTIONS="suppressions=$SCRIPT_DIR/asan.supp:detect_leaks=0:halt_on_error=0:print_stacktrace=1:fast_unwind_on_malloc=0"
-export LD_PRELOAD="$ASAN_LIB"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
+PROJECT_DIR="$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd -P)"
+TOOLCHAIN_DIR="${JSEC_SAN_TOOLCHAIN:-$PROJECT_DIR/.work/asan}"
+LOG_DIR="$TOOLCHAIN_DIR/scratch/san-logs"
+HALT="${JSEC_SAN_HALT:-0}"
 
 cd "$PROJECT_DIR"
 
-case "$1" in
+if [ ! -x "$TOOLCHAIN_DIR/bin/janet" ]; then
+    sh "$PROJECT_DIR/scripts/bootstrap-toolchain.sh" \
+        --sanitizer asan --toolchain "$TOOLCHAIN_DIR"
+fi
+
+if [ "${1:-}" = "test" ] || [ ! -f "$TOOLCHAIN_DIR/lib/janet/jsec/tls-stream.so" ] || [ "${JSEC_SAN_REBUILD:-0}" = "1" ]; then
+    if [ ! -d "$TOOLCHAIN_DIR/lib/janet/assay" ] || [ ! -d "$TOOLCHAIN_DIR/lib/janet/spork" ]; then
+        JSEC_ASAN=1 "$TOOLCHAIN_DIR/bin/jpm" deps
+    fi
+    JSEC_ASAN=1 "$TOOLCHAIN_DIR/bin/jpm" build
+    JSEC_ASAN=1 "$TOOLCHAIN_DIR/bin/jpm" install
+fi
+
+rm -rf "$LOG_DIR"
+mkdir -p "$LOG_DIR"
+
+export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+export ASAN_OPTIONS="suppressions=$SCRIPT_DIR/asan.supp:detect_leaks=0:halt_on_error=$HALT:print_stacktrace=1:fast_unwind_on_malloc=0:exitcode=23:log_path=$LOG_DIR/san.log"
+
+rc=0
+case "${1:-}" in
     test)
         shift
-        exec janet test/runner.janet "$@"
+        if [ "$#" -eq 0 ]; then
+            set -- -f '{unit,regression,coverage}' -j fiber:16,thread:6,subprocess:6
+        fi
+        "$TOOLCHAIN_DIR/bin/janet" test/runner.janet "$@" || rc=$?
         ;;
     *)
-        exec "$@"
+        "$@" || rc=$?
         ;;
 esac
+
+found=0
+for f in "$LOG_DIR"/san.log.*; do
+    if [ -f "$f" ] && [ -s "$f" ]; then
+        found=$((found + 1))
+    fi
+done
+
+if [ "$found" -gt 0 ]; then
+    printf '\n=== Sanitizer findings (%d process log(s) in %s) ===\n' "$found" "$LOG_DIR"
+    for f in "$LOG_DIR"/san.log.*; do
+        if [ -f "$f" ] && [ -s "$f" ]; then
+            printf '\n--- %s ---\n' "$f"
+            cat "$f"
+        fi
+    done
+    [ "$rc" -ne 0 ] && exit "$rc"
+    exit 23
+fi
+
+exit "$rc"

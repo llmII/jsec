@@ -427,6 +427,9 @@ sh scripts/bootstrap-toolchain.sh --janet-rev 8b6d56ed \
 
 # Build a poll-backend Janet alongside the default epoll one
 sh scripts/bootstrap-toolchain.sh --ev-backend poll --toolchain .work/poll
+
+# Build a sanitizer-instrumented Janet (none, asan, lsan, ubsan, or san)
+sh scripts/bootstrap-toolchain.sh --sanitizer san --toolchain .work/san
 #+end_src
 
 The script verifies host prerequisites (a C toolchain, ~ar~, ~make~, and
@@ -449,6 +452,18 @@ other's build output (the in-tree build tree is dropped when the backend
 switches). Give each backend its own ~--toolchain~ prefix - e.g. ~.work/poll~
 beside ~.work/~ - and read the selected backend from the ~ev-backend:~ line of
 the ~TOOLCHAIN~ stamp under the prefix.
+
+~--sanitizer none|asan|lsan|ubsan|san~ (default ~none~, where ~san~ combines
+~address,leak,undefined~) compiles and links the ~libexec/janet~ binary itself
+with ~-O1 -g3 -fno-omit-frame-pointer -fno-optimize-sibling-calls
+-fsanitize=... -fsanitize-recover=...~ and preserves unstripped DWARF symbols.
+Because the interpreter binary links the sanitizer runtime directly, no
+~LD_PRELOAD~ hack is needed, ~janet_malloc~ / ~janet_free~ and ~core/ev.c~ are
+instrumented alongside ~jsec/*.so~, and child ~/bin/sh~ or ~openssl~ processes
+spawned during tests are not polluted. Each sanitizer profile lives in its own
+prefix (~.work/asan~, ~.work/lsan~, ~.work/ubsan~, ~.work/san~) and records
+its profile on the ~sanitizer:~ line of ~<prefix>/TOOLCHAIN~ (~--sanitizer~
+also composes with ~--ev-backend poll~).
 
 ** Build and Test
 
@@ -473,7 +488,7 @@ The same flow is wrapped by task entry points in ~project.janet~, so no manual
 ~PATH~ / module-path / toolchain-prefix assembly is required. Each builds and
 installs jsec under a toolchain and then runs the identical ~test/runner.janet~
 invocation (~-f '{unit,regression,coverage}' -j fiber:16,thread:6,subprocess:6~;
-perf is excluded), so the two event-loop backends stay directly comparable:
+perf is excluded), so all profiles stay directly comparable:
 
 #+begin_src sh
 # unit + regression + coverage under the default epoll toolchain in .work/
@@ -485,6 +500,12 @@ jpm run self-test-poll
 
 # explicit epoll alias for symmetry with self-test-poll
 jpm run self-test-epoll
+
+# hermetic sanitizer profiles in .work/{asan,lsan,ubsan,san}/
+jpm run self-test-asan
+jpm run self-test-lsan
+jpm run self-test-ubsan
+jpm run self-test-san          # also wired as `jpm run test/sanitized`
 #+end_src
 
 ~self-test-poll~ bootstraps a poll-backend Janet into ~.work/poll/~ (idempotent;
@@ -495,6 +516,17 @@ baked syspath), so the whole run is hermetic to the chosen event-loop backend.
 Both tasks share the same flags, output shape, and exit status; diffing their
 logs surfaces backend-specific differences, and on a healthy tree the suite
 counts match exactly.
+
+~self-test-{asan,lsan,ubsan,san}~ (and the ~sanitizers/run-with-{asan,lsan,ubsan}.sh~
+/ ~sanitizers/run-tests.sh~ helpers) bootstrap and reuse the matching
+~.work/<profile>/~ toolchain, build ~jsec~ with ~-fsanitize=...~ (decoupled
+from ~JSEC_DEBUG~ verbose ~fprintf~ tracing), and run with
+~halt_on_error=0:print_stacktrace=1:exitcode=23~ and per-process
+~log_path=<prefix>/scratch/san-logs/san.log~ (set ~JSEC_SAN_HALT=1~ to abort on
+the first finding). Every finding across all ~assay~ subprocess workers is
+collected, printed after the run, and causes a non-zero exit (~23~).
+~sanitizers/lsan.supp~ contains zero broad library or prefix suppressions so no
+~jsec~ leak is masked.
 
 * Common Pitfalls
 
