@@ -100,7 +100,7 @@
                                    {:verify false}))
               [:returned
                (string "connected to peer port "
-                       (dtls/address-port (dtls/peername c)))])
+                       ((dtls/peername c) 1))])
             ([e] [:raised (string e)])))
 
         # (a) The garbage port must raise a parameter error rather

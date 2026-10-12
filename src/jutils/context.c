@@ -51,15 +51,26 @@ const JanetAbstractType ssl_context_type = {"jsec/ssl-context",
                                             NULL, /* hash */
                                             JANET_ATEND_HASH};
 
-/* Flag to track if type is registered */
-static int ssl_context_type_registered = 0;
+/*
+ * This file is compiled into every native module, so ssl_context_type above
+ * is a distinct object per .so and its address cannot identify the type
+ * across module boundaries. The canonical identity is the copy registered
+ * under the type name: the first module to need the type registers its copy,
+ * and every module resolves that same object by name.
+ */
+const JanetAbstractType *jutils_get_context_type(void) {
+    Janet name = janet_csymbolv(ssl_context_type.name);
+    const JanetAbstractType *registered = janet_get_abstract_type(name);
+    if (!registered) {
+        janet_register_abstract_type(&ssl_context_type);
+        registered = janet_get_abstract_type(name);
+    }
+    return registered;
+}
 
 /* Initialize the shared context type */
 void jutils_init_context_type(void) {
-    if (!ssl_context_type_registered) {
-        janet_register_abstract_type(&ssl_context_type);
-        ssl_context_type_registered = 1;
-    }
+    jutils_get_context_type();
 }
 
 /*============================================================================
@@ -75,7 +86,8 @@ void jutils_init_context_type(void) {
 Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
 
-    SSLContext *ssl_ctx = janet_getabstract(argv, 0, &ssl_context_type);
+    SSLContext *ssl_ctx =
+        janet_getabstract(argv, 0, jutils_get_context_type());
 
     if (!ssl_ctx->ctx) {
         utils_panic_config("invalid SSL context");
@@ -127,7 +139,7 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
 
     /* Create SSLContext */
     SSLContext *ssl_ctx =
-        janet_abstract(&ssl_context_type, sizeof(SSLContext));
+        janet_abstract(jutils_get_context_type(), sizeof(SSLContext));
     memset(ssl_ctx, 0, sizeof(SSLContext));
     ssl_ctx->is_dtls = is_dtls;
 

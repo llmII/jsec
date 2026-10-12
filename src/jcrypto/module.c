@@ -6,6 +6,26 @@
  */
 
 #include "internal.h"
+#include <openssl/crypto.h>
+
+/* Constant-time compare (crypto/equal?): equal-length byte sequences
+ * compare with CRYPTO_memcmp, so comparison time depends only on the
+ * sequence length and not on the contents; unequal lengths return false
+ * immediately without reading content. */
+static Janet cfun_equal(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 2);
+
+    const uint8_t *a_bytes;
+    const uint8_t *b_bytes;
+    int32_t a_len;
+    int32_t b_len;
+    if (!janet_bytes_view(argv[0], &a_bytes, &a_len) ||
+        !janet_bytes_view(argv[1], &b_bytes, &b_len))
+        crypto_panic_param("arguments must be byte strings or buffers");
+
+    if (a_len != b_len) return janet_wrap_boolean(0);
+    return janet_wrap_boolean(CRYPTO_memcmp(a_bytes, b_bytes, a_len) == 0);
+}
 
 static const JanetReg cfuns[] = {
     {"digest", cfun_digest,
@@ -47,6 +67,14 @@ static const JanetReg cfuns[] = {
     {"hmac", cfun_hmac,
      "(jsec/crypto/hmac alg key data)\n\n"
      "Compute HMAC. Algorithm examples: :sha256, :sha384, :sha512."},
+    {"equal?", cfun_equal,
+     "(jsec/crypto/equal? a b)\n\n"
+     "Compare two byte sequences (string or buffer) in constant time.\n"
+     "Equal-length sequences compare with CRYPTO_memcmp; comparison time "
+     "depends only on the sequence length, not on the contents.\n"
+     "Unequal lengths return false immediately without comparing "
+     "contents.\n"
+     "Returns boolean."},
     {"random-bytes", cfun_random_bytes,
      "(jsec/crypto/random-bytes n)\n\n"
      "Generate n cryptographically secure random bytes (1-65536)."},

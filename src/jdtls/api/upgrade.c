@@ -17,6 +17,20 @@
 extern const JanetMethod dtls_client_methods[];
 extern int dtls_client_start_handshake(DTLSClient *client);
 
+/*============================================================================
+ * HELPER: IP-literal host detection
+ *============================================================================*/
+/* An IP literal is not a DNS name: verification matches it through
+ * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
+ * the server_name extension. */
+static int host_is_ip_literal(const char *host) {
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!host) return 0;
+    return inet_pton(AF_INET, host, &a4) == 1 ||
+           inet_pton(AF_INET6, host, &a6) == 1;
+}
+
 /*
  * (dtls/upgrade transport &opt opts)
  *
@@ -47,6 +61,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     const char *sni = NULL;
     const char *verify_hostname = NULL;
     int track_handshake_time = 0;
+    Janet session_opt = janet_wrap_nil();
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
@@ -77,6 +92,17 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         if (!janet_checktype(ht, JANET_NIL)) {
             track_handshake_time = janet_truthy(ht);
         }
+
+        /* :session accepts nil (absent/no-op) or a byte string or buffer;
+         * anything else raises before any SSL_CTX or SSL is allocated
+         * (PNB-08 cleanup safety). */
+        Janet session = janet_get(opts, janet_ckeywordv("session"));
+        if (!janet_checktype(session, JANET_NIL) &&
+            !janet_checktype(session, JANET_STRING) &&
+            !janet_checktype(session, JANET_BUFFER)) {
+            dtls_panic_param("session must be a byte string or buffer");
+        }
+        session_opt = session;
     }
 
     /* Get the file descriptor from the stream */
@@ -87,6 +113,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     /* Get peer address from socket */
     struct sockaddr_storage peer_addr;
+    memset(&peer_addr, 0, sizeof(peer_addr));
     socklen_t peer_len = sizeof(peer_addr);
     if (getpeername(fd, (struct sockaddr *)&peer_addr, &peer_len) < 0) {
         dtls_panic_socket(
@@ -184,28 +211,40 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     /* Set SNI hostname (client only) */
     if (!is_server && sni) {
-        SSL_set_tlsext_host_name(client->ssl, sni);
+        /* IP literals send no server_name extension at all */
+        if (!host_is_ip_literal(sni)) {
+            SSL_set_tlsext_host_name(client->ssl, sni);
+        }
         if (verify) {
             const char *host_to_verify =
                 verify_hostname ? verify_hostname : sni;
             SSL_set_hostflags(client->ssl,
                               X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            SSL_set1_host(client->ssl, host_to_verify);
+            if (host_is_ip_literal(host_to_verify)) {
+                X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
+                                              host_to_verify);
+            } else {
+                SSL_set1_host(client->ssl, host_to_verify);
+            }
         }
     } else if (!is_server && verify_hostname && verify) {
         /* verify_hostname without SNI - just set hostname verification */
         SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        SSL_set1_host(client->ssl, verify_hostname);
+        if (host_is_ip_literal(verify_hostname)) {
+            X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
+                                          verify_hostname);
+        } else {
+            SSL_set1_host(client->ssl, verify_hostname);
+        }
     }
 
-    /* Session resumption */
-    if (!is_server && (janet_checktype(opts, JANET_TABLE) ||
-                       janet_checktype(opts, JANET_STRUCT))) {
-        Janet session_data = janet_get(opts, janet_ckeywordv("session"));
-        if (janet_checktype(session_data, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_data);
-            const unsigned char *p = buf->data;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, buf->count);
+    /* Session resumption (validated at option parse; bytes here) */
+    if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
+        const uint8_t *bytes;
+        int32_t len;
+        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+            const unsigned char *p = bytes;
+            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
             if (session) {
                 SSL_set_session(client->ssl, session);
                 SSL_SESSION_free(session);

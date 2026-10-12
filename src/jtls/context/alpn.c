@@ -92,7 +92,7 @@ void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
     (void)argp;
     if (ptr) {
         ALPNConfig *conf = (ALPNConfig *)ptr;
-        if (conf->wire) free(conf->wire);
+        if (conf->wire) janet_free(conf->wire);
         free(conf);
     }
 }

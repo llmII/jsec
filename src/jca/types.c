@@ -365,6 +365,7 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
     int days_valid = 3650;
     Janet key_type = janet_wrap_nil();
     int64_t serial = 1;
+    int have_serial = 0;
     int track_issued = 0;
     const char *organization = NULL;
     const char *country = NULL;
@@ -391,6 +392,7 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "serial");
         if (!janet_checktype(v, JANET_NIL)) {
             serial = janet_getinteger64(&v, 0);
+            have_serial = 1;
         }
 
         v = ca_opts_get(opts, "track-issued");
@@ -428,8 +430,15 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number */
-    ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
+    /* Set serial number: explicit :serial override, else fresh random of at
+     * least 64 bits of entropy (was hardcoded 1) */
+    if (have_serial) {
+        ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+    } else if (!jutils_set_random_serial(cert)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set random serial");
+    }
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -456,12 +465,29 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
     X509_set_pubkey(cert, key);
 
     /* Add CA extensions */
-    ca_add_extension(cert, cert, NID_basic_constraints, "critical,CA:TRUE");
-    ca_add_extension(cert, cert, NID_key_usage,
-                     "critical,keyCertSign,cRLSign");
-    ca_add_extension(cert, cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, cert, NID_basic_constraints,
+                          "critical,CA:TRUE")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, cert, NID_key_usage,
+                          "critical,keyCertSign,cRLSign")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add keyUsage extension");
+    }
+    if (!ca_add_extension(cert, cert, NID_subject_key_identifier, "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Sign the certificate */
     if (!X509_sign(cert, key, EVP_sha256())) {
@@ -515,6 +541,7 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
     Janet key_type = janet_wrap_nil();
     int path_length = 0;
     int64_t serial = 1;
+    int have_serial = 0;
     int track_issued = 0;
     const char *organization = NULL;
     const char *country = NULL;
@@ -546,6 +573,7 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "serial");
         if (!janet_checktype(v, JANET_NIL)) {
             serial = janet_getinteger64(&v, 0);
+            have_serial = 1;
         }
 
         v = ca_opts_get(opts, "track-issued");
@@ -583,9 +611,15 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number (from parent's counter) */
-    int64_t cert_serial = ca_next_serial(parent);
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), cert_serial);
+    /* Set serial number: explicit :serial override, else fresh random of at
+     * least 64 bits of entropy (issuance no longer walks the parent counter) */
+    if (have_serial) {
+        ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+    } else if (!jutils_set_random_serial(cert)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set random serial");
+    }
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -615,13 +649,30 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
     char basic_constraints[64];
     snprintf(basic_constraints, sizeof(basic_constraints),
              "critical,CA:TRUE,pathlen:%d", path_length);
-    ca_add_extension(cert, parent->cert, NID_basic_constraints,
-                     basic_constraints);
-    ca_add_extension(cert, parent->cert, NID_key_usage,
-                     "critical,keyCertSign,cRLSign");
-    ca_add_extension(cert, parent->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, parent->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, parent->cert, NID_basic_constraints,
+                          basic_constraints)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, parent->cert, NID_key_usage,
+                          "critical,keyCertSign,cRLSign")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add keyUsage extension");
+    }
+    if (!ca_add_extension(cert, parent->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, parent->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Sign with parent's key */
     if (!X509_sign(cert, parent->key, EVP_sha256())) {

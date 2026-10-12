@@ -50,7 +50,7 @@
           (printf "Client: Server says: %s" (string response)))
 
         # Save the session for resumption using method call
-        (set saved-session (:get-session client))
+        (set saved-session (:session client))
         (if saved-session
           (print "Client: Session saved for resumption")
           (print "Client: Could not get session"))))

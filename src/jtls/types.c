@@ -39,7 +39,8 @@ FILE *keylog_file = NULL;
  * TLS CONTEXT ABSTRACT TYPE
  *============================================================================
  * Now uses the unified SSLContext type from jshared.c.
- * The tls_context_type macro aliases ssl_context_type.
+ * Type identity is resolved through jutils_get_context_type; there is no
+ * per-module tls_context_type object.
  * jtls_context_gc is kept for backwards compatibility but delegates to
  * shared.
  */
@@ -48,8 +49,6 @@ int jtls_context_gc(void *p, size_t s) {
     /* Delegate to shared implementation */
     return ssl_context_gc(p, s);
 }
-
-/* tls_context_type is now defined as a macro aliasing ssl_context_type */
 
 /*============================================================================
  * TLS STREAM ABSTRACT TYPE
@@ -119,6 +118,7 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :shutdown         - TLS shutdown without closing socket
  *   :session-reused?  - Check if session was resumed
  *   :session          - Get session data for resumption
+ *   :peer-cert        - Get peer certificate as X.509 DER
  *   :set-session      - Set session data before handshake
  *   :version          - Get TLS version string
  *   :cipher           - Get cipher suite name
@@ -138,6 +138,7 @@ const JanetMethod tls_stream_methods[] = {
     {"peername", cfun_peername},
     {"session-reused?", cfun_session_reused},
     {"session", cfun_get_session},
+    {"peer-cert", cfun_get_peer_cert},
     {"set-session", cfun_set_session},
     {"version", cfun_get_version},
     {"cipher", cfun_get_cipher},

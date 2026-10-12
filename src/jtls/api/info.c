@@ -7,6 +7,7 @@
  * - get-cipher-bits - Get cipher strength in bits
  * - get-connection-info - Get detailed connection information
  * - get-handshake-time - Get handshake duration
+ * - get-peer-cert - Get peer certificate as X.509 DER
  * - localname - Get local address/port
  * - peername - Get remote peer's address/port
  *
@@ -192,6 +193,69 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
         (double)(tls->ts_handshake.tv_nsec - tls->ts_connect.tv_nsec) / 1e9;
 
     return janet_wrap_number(duration);
+}
+
+/*============================================================================
+ * GET-PEER-CERT - Get peer certificate as X.509 DER
+ *============================================================================
+ * (get-peer-cert stream)
+ *
+ * Export the peer certificate as an immutable Janet string holding the
+ * X.509 DER encoding.
+ *
+ * Parameters:
+ *   stream - TLS stream (live, after handshake)
+ *
+ * Returns:
+ *   Immutable byte string of the peer certificate's X.509 DER encoding,
+ *   or nil when there is no peer certificate (before the handshake
+ *   completes or when the peer presented none).
+ *
+ * The two-pass i2d_X509 shape writes the DER encoding directly into
+ * janet_string_begin's staging region - no intermediate buffer copy.
+ * Serialization failure is a real failure and raises. The OpenSSL error
+ * queue is drained on every exit so a silent nil cannot re-dirty it.
+ */
+Janet cfun_get_peer_cert(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+
+    if (tls->stream.flags & JANET_STREAM_CLOSED) {
+        tls_panic_io("stream closed");
+    }
+
+    check_handshake(tls);
+
+    /* nil is a documented absence of a peer certificate, never a failure
+     * signal: before the handshake completes there is not one yet. */
+    if (!tls->ssl || !SSL_is_init_finished(tls->ssl)) {
+        return janet_wrap_nil();
+    }
+
+    ERR_clear_error();
+    X509 *cert = SSL_get_peer_certificate(tls->ssl);
+    if (!cert) {
+        ERR_clear_error();
+        return janet_wrap_nil();
+    }
+
+    /* Two-pass i2d: probe the length, then write in place */
+    int der_len = i2d_X509(cert, NULL);
+    if (der_len <= 0) {
+        X509_free(cert);
+        tls_panic_ssl("failed to encode peer certificate");
+    }
+
+    uint8_t *der = janet_string_begin((int32_t)der_len);
+    unsigned char *p = der;
+    if (i2d_X509(cert, &p) != der_len) {
+        X509_free(cert);
+        tls_panic_ssl("failed to encode peer certificate");
+    }
+    X509_free(cert);
+
+    ERR_clear_error();
+    return janet_wrap_string(janet_string_end(der));
 }
 
 /*============================================================================
