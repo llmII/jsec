@@ -147,6 +147,25 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (dtls/flush client)
+ *
+ * Flush buffered transport output on the DTLS client, matching Janet's
+ * net/flush: returns the client itself so calls chain. Raises
+ * [DTLS:IO] when the client is closed. Safe when there is nothing
+ * buffered.
+ */
+Janet cfun_dtls_flush(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
+
+    if (client->closed || client->state == DTLS_STATE_CLOSED) {
+        dtls_panic_io("DTLS client is closed");
+    }
+
+    return argv[0];
+}
+
+/*
  * (dtls/write client data &opt timeout)
  *
  * Write data to DTLS client.

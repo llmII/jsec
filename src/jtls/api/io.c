@@ -288,6 +288,32 @@ Janet cfun_close(int32_t argc, Janet *argv) {
 }
 
 /*============================================================================
+ * FLUSH - Flush buffered transport output
+ *============================================================================
+ * (flush stream)
+ *
+ * Flush buffered output on the TLS stream, matching Janet's net/flush:
+ * returns the stream itself so calls chain. Raises [TLS:IO] when the
+ * stream is closed. Safe when there is nothing buffered.
+ */
+Janet cfun_flush(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+
+    if ((tls->stream.flags & JANET_STREAM_CLOSED) || !tls->ssl) {
+        tls_panic_io("stream closed");
+    }
+
+    /* The write BIO is the custom socket BIO when the stream is
+     * socket-backed; BIO_flush pushes any buffered record output. */
+    BIO *wbio = SSL_get_wbio(tls->ssl);
+    if (wbio) {
+        BIO_flush(wbio);
+    }
+    return argv[0];
+}
+
+/*============================================================================
  * SHUTDOWN - TLS shutdown without closing socket
  *============================================================================
  * (shutdown stream &opt direction)

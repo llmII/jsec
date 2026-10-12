@@ -108,7 +108,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org2c77a23)).
+        -   `:security`: Table. Security options (see [Security Options](#orgcbf03cf)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -239,6 +239,8 @@ TLS streams implement Janet's standard stream interface. They work with:
 -   `ev/read` / `:read` - Read data from the stream
 -   `ev/write` / `:write` - Write data to the stream
 -   `ev/chunk` / `:chunk` - Read exactly n bytes or until EOF
+-   `net/flush` / `:flush` - Flush buffered transport output; returns the
+    stream itself, like Janet's `net/flush`
 -   `ev/close` / `:close` - Close with proper TLS shutdown
 
 
@@ -320,6 +322,14 @@ These methods are available on TLS stream objects. Access via method syntax
 
 -   `(:cipher-bits stream)` or `(tls-stream/cipher-bits stream)`
     Returns cipher bit strength as integer
+
+
+### Flush
+
+-   `(:flush stream)` or `(tls-stream/flush stream)`
+    Flush buffered transport output, matching Janet's `net/flush`.
+    Returns the stream itself. Raises `[TLS:IO]` when the stream is
+    closed.
 
 
 ### Session Management
@@ -559,6 +569,11 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
 
 -   `(:set-session client data)` or `(dtls-stream/set-session client data)`
     Sets session data (byte string or buffer)
+
+-   `(:flush client)` or `(dtls-stream/flush client)`
+    Flush buffered transport output, matching Janet's `net/flush`.
+    Returns the client itself. Raises `[DTLS:IO]` when the client is
+    closed.
 
 
 ### DTLS Operations

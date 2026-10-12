@@ -83,6 +83,51 @@
 (def-suite :name "TLS Stream Suite"
 
   # ===========================================================================
+  # Non-Matrix Tests (Basic Functionality)
+  # ===========================================================================
+
+  (def-test "flush returns the stream itself and raises on closed stream"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          done (ev/chan 1)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def conn (:accept server))
+                (def s (tls/wrap conn {:cert (certs :cert) :key (certs :key)}))
+                (:read s 1024)
+                (:write s "Pong")
+                (forever
+                  (def b (:read s 1024))
+                  (when (or (not b) (empty? b)) (break))))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (def s (tls/wrap raw {:verify false}))
+        (:write s "Ping")
+        (assert (:read s 1024) "setup: client should receive the Pong reply")
+
+        # flush returns the stream itself, matching net/flush
+        (assert (= s (:flush s))
+                ":flush must return the stream itself like net/flush")
+        (assert (= s (tls-stream/flush s))
+                "tls-stream/flush must return the stream itself")
+
+        # Negative shapes: a closed stream raises [TLS:IO]
+        (:close s true)
+        (assert-error (:flush s)
+                      "closed stream :flush must raise [TLS:IO]")
+        (assert-error (tls-stream/flush s)
+                      "closed stream tls-stream/flush must raise [TLS:IO]")
+
+        (ev/take done))))
+
+  # ===========================================================================
   # Main Test Matrix - Socket Type x TLS Version x Verify Mode x Options
   # ===========================================================================
 
