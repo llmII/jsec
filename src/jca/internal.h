@@ -222,7 +222,7 @@ Janet cfun_ca_parse_ocsp_request(int32_t argc, Janet *argv);
  *   :this-update <time>        (default: now)
  *   :next-update <time>        (default: +1 day)
  *   :include-nonce true        (echo nonce from request)
- * Returns: DER-encoded OCSP response bytes
+ * Returns: DER-encoded OCSP response string
  */
 Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv);
 

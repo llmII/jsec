@@ -162,7 +162,7 @@ static const char *cfun_ca_create_ocsp_response_docstring =
     "  :next-update <time>        - Response validity end (default: +1 day)\n"
     "  :include-nonce <bool>      - Echo nonce from request (default: true "
     "if present)\n\n"
-    "Returns DER-encoded OCSP response bytes.\n\n"
+    "Returns a DER-encoded OCSP response string.\n\n"
     "Note: You implement the HTTP server; this just creates the crypto "
     "response.";
 
@@ -379,10 +379,10 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
         ca_panic_ssl("failed to encode OCSP response");
     }
 
-    JanetBuffer *result = janet_buffer(len);
-    unsigned char *p = result->data;
+    uint8_t *str = janet_string_begin(len);
+    unsigned char *p = str;
     i2d_OCSP_RESPONSE(resp, &p);
-    result->count = len;
+    Janet result = janet_wrap_string(janet_string_end(str));
 
     /* Cleanup */
     if (revtime) ASN1_TIME_free(revtime);
@@ -395,7 +395,7 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     OCSP_BASICRESP_free(basic);
     OCSP_RESPONSE_free(resp);
 
-    return janet_wrap_buffer(result);
+    return result;
 }
 
 /*

@@ -786,7 +786,7 @@ Create an OCSP response for a certificate status query.
   - ~:next-update~ - Response validity end (default: +1 day).
   - ~:include-nonce~ - Echo nonce from request (default ~true~).
 
-*Returns*: DER-encoded OCSP response bytes.
+*Returns*: DER-encoded OCSP response string.
 
 ** (:is-tracking ca) / (ca/is-tracking ca)
 
