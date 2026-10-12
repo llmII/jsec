@@ -151,6 +151,7 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
  *
  * Write data to DTLS client.
  * Data should fit in a single datagram (typically < 64KB).
+ * Returns nil on success, matching tls/write and ev/write.
  *
  * The optional timeout is the deadline in seconds (a number, or a
  * table/struct with a :timeout key). It is an absolute deadline from the
@@ -180,7 +181,7 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
         dtls_do_write(client->ssl, data.bytes, data.len, &nwritten);
 
     if (result == DTLS_RESULT_OK) {
-        return janet_wrap_integer(nwritten);
+        return janet_wrap_nil();
     }
 
     /* Need to wait */

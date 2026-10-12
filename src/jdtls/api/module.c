@@ -62,7 +62,7 @@ static const JanetReg client_cfuns[] = {
     {"write", cfun_dtls_write,
      "(dtls/write client data &opt timeout)\n\n"
      "Write data to DTLS client.\n"
-     "Returns number of bytes written.\n"
+     "Returns nil on success, matching tls/write and ev/write.\n"
      "The optional timeout is the deadline in seconds (a number, or a\n"
      "table/struct with a :timeout key): an absolute deadline from the\n"
      "call, not one per wait. Expiry cancels the fiber with a \"timeout\"\n"

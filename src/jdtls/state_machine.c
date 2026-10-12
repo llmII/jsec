@@ -429,7 +429,7 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         dtls_do_write(data->ssl, data->state.write_data.bytes,
                                       data->state.write_data.len, &nwritten);
                     if (result == DTLS_RESULT_OK) {
-                        retval = janet_wrap_integer(nwritten);
+                        retval = janet_wrap_nil();
                     }
                     break;
                 }
