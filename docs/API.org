@@ -897,6 +897,20 @@ Compute HMAC (Hash-based Message Authentication Code).
 
 *Returns*: Buffer with HMAC bytes.
 
+*** (crypto/equal? a b)
+
+Constant-time compare of two byte sequences - the safe way to check an
+HMAC or tag without leaking the matching prefix through timing.
+
+- *a*: Byte sequence (string or buffer)
+- *b*: Byte sequence (string or buffer)
+
+Equal-length sequences compare with ~CRYPTO_memcmp~: comparison time
+depends only on the sequence length, not on the contents. Unequal
+lengths return ~false~ immediately without comparing contents.
+
+*Returns*: Boolean.
+
 ** Key Generation and Management
 
 *** (crypto/generate-key alg &opt bits)

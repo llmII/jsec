@@ -106,7 +106,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
+        -   `:security`: Table. Security options (see [Security Options](#org3246d12)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -970,6 +970,21 @@ Compute HMAC (Hash-based Message Authentication Code).
 -   **data**: Data to authenticate (string or buffer)
 
 **Returns**: Buffer with HMAC bytes.
+
+
+### (crypto/equal? a b)
+
+Constant-time compare of two byte sequences - the safe way to check an
+HMAC or tag without leaking the matching prefix through timing.
+
+-   **a**: Byte sequence (string or buffer)
+-   **b**: Byte sequence (string or buffer)
+
+Equal-length sequences compare with `CRYPTO_memcmp`: comparison time
+depends only on the sequence length, not on the contents. Unequal
+lengths return `false` immediately without comparing contents.
+
+**Returns**: Boolean.
 
 
 ## Key Generation and Management
