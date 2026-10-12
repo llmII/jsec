@@ -50,6 +50,7 @@ const JanetMethod dtls_client_methods[] = {
     {"connection-info", cfun_dtls_get_connection_info},
     {"session-reused?", cfun_dtls_session_reused},
     {"session", cfun_dtls_get_session},
+    {"peer-cert", cfun_dtls_get_peer_cert},
     {"set-session", cfun_dtls_set_session},
     {"localname", cfun_dtls_localname},
     {"peername", cfun_dtls_peername},

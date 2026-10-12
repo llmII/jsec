@@ -80,8 +80,10 @@ Create a reusable TLS context.
   - ~:ca-path~: Path to CA certificate directory.
   - ~:security~: Security options.
   - ~:alpn~: List of ALPN protocols (e.g. ~["h2" "http/1.1"]~).
+  - ~:ocsp-response~: (Server only) DER OCSP response (byte string or buffer) to staple on this context's handshakes, the same data as ~tls-stream/set-ocsp-response~. Names with no response of their own in the ~:sni~ map staple this response.
   - ~:sni~: (Server only) Table of hostname -> options for virtual hosting.
-    Example: ~{"example.com" {:cert "..." :key "..."}}~.
+    Example: ~{"example.com" {:cert "..." :key "..." :ocsp-response der-bytes}}~.
+    Each entry accepts ~:cert~, ~:key~, ~:security~, ~:alpn~ plus ~:ocsp-response~: a DER OCSP response (byte string or buffer) stapled only for that name.
 
 *Returns*: A TLS context object.
 
@@ -99,7 +101,7 @@ Connect to a TLS server.
     - ~:verify~: Boolean (default ~true~). Verify server certificate.
     - ~:hostname~: String. SNI hostname. Defaults to ~host~ for TCP, "localhost" for Unix.
     - ~:verify-hostname~: String. Hostname to verify against certificate (defaults to ~:hostname~).
-    - ~:session~: Byte string. Session data for resumption (from ~get-session~).
+    - ~:session~: Byte string or buffer. Session data for resumption (from ~get-session~).
     - ~:cert~: String/buffer. Client certificate (PEM) for mTLS.
     - ~:key~: String/buffer. Client private key (PEM) for mTLS.
     - ~:trusted-cert~: String/buffer. Trust specific cert (for self-signed servers).
@@ -187,7 +189,7 @@ Wrap an existing stream with TLS. Used for both client and server modes.
   - ~:cert~: String/buffer. Client certificate (PEM) for mTLS.
   - ~:key~: String/buffer. Client private key (PEM) for mTLS.
   - ~:trusted-cert~: String/buffer. Trust specific cert (for self-signed).
-  - ~:session~: Buffer. Session data for resumption.
+  - ~:session~: Byte string or buffer. Session data for resumption.
   - ~:buffer-size~: Integer. Internal TLS buffer size.
   - ~:tcp-nodelay~: Boolean. Enable TCP_NODELAY (default ~true~).
   - ~:handshake-timing~: Boolean. Track handshake duration (default ~false~).
@@ -313,6 +315,13 @@ These methods are available on TLS stream objects. Access via method syntax
 - ~(:get-session stream)~ or ~(tls-stream/get-session stream)~
   Returns session data (byte string) for resumption
 
+- ~(:peer-cert stream)~ or ~(tls-stream/get-peer-cert stream)~
+  Returns the peer certificate as an immutable X.509 DER byte string, or
+  ~nil~ when there is no peer certificate (before the handshake completes
+  or when the peer presented none). Raises on a closed stream. Call after
+  handshake completes. Lives in the ~jsec/tls-stream~ native module only -
+  not re-exported from the ~jsec/tls~ facade.
+
 - ~(:set-session stream data)~ or ~(tls-stream/set-session stream data)~
   Sets session data (usually passed in ~connect~ options instead)
 
@@ -436,6 +445,7 @@ Create a DTLS client connection. Performs handshake.
   - ~:ca~: CA certificate (PEM string).
   - ~:sni~: Server name for SNI (defaults to host).
   - ~:verify-hostname~: Hostname to verify against cert.
+  - ~:session~: Byte string or buffer. Session data for resumption.
   - ~:handshake-timing~: Boolean. Track handshake duration.
 
 *Returns*: A DTLS client object.
@@ -506,10 +516,17 @@ syntax ~(:method obj args...)~ or import ~jsec/dtls-stream~ for function version
   Returns ~true~ if session was resumed
 
 - ~(:get-session client)~ or ~(dtls-stream/get-session client)~
-  Returns session data for resumption
+  Returns session data for resumption as an immutable byte string (or ~nil~)
+
+- ~(:peer-cert client)~ or ~(dtls-stream/get-peer-cert client)~
+  - Returns :: Peer's X.509 certificate as an immutable DER byte string
+  - Returns (no peer certificate) :: ~nil~
+  - Raises :: Stream closed, encode failure
+  - Notes :: Lives in the jsec/dtls-stream native module only - not
+    re-exported from the jsec/tls facade.
 
 - ~(:set-session client data)~ or ~(dtls-stream/set-session client data)~
-  Sets session data
+  Sets session data (byte string or buffer)
 
 *** DTLS Operations
 
@@ -896,6 +913,20 @@ Compute HMAC (Hash-based Message Authentication Code).
 - *data*: Data to authenticate (string or buffer)
 
 *Returns*: Buffer with HMAC bytes.
+
+*** (crypto/equal? a b)
+
+Constant-time compare of two byte sequences - the safe way to check an
+HMAC or tag without leaking the matching prefix through timing.
+
+- *a*: Byte sequence (string or buffer)
+- *b*: Byte sequence (string or buffer)
+
+Equal-length sequences compare with ~CRYPTO_memcmp~: comparison time
+depends only on the sequence length, not on the contents. Unequal
+lengths return ~false~ immediately without comparing contents.
+
+*Returns*: Boolean.
 
 ** Key Generation and Management
 
@@ -1414,6 +1445,7 @@ The ~:security~ option in ~connect~ and ~accept~ allows fine-grained control:
 - ~:curves~: Keyword or string. Supported elliptic curves (e.g., :prime256v1, "prime256v1:secp384r1").
 - ~:ca-file~: CA certificate (path or PEM content).
 - ~:ca-path~: CA directory path.
+- ~:ocsp-stapling~: Boolean. On a server, staple an OCSP response (data from ~:ocsp-response~ or ~tls-stream/set-ocsp-response~) on handshakes. On a client, send the RFC 6066 ~status_request~ extension asking the server to staple; the request goes out with the connection's first handshake flight. Clients send no status request when this is unset, so default wire behavior is unchanged. Also accepted as a top-level option on ~tls/new-context~, ~tls/connect~, and ~tls/wrap~.
 
 *Note*: Keyword symbols are preferred for idiomatic Janet code.
 

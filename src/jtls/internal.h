@@ -273,9 +273,6 @@ struct TLSStream {
  */
 typedef SSLContext TLSContext;
 
-/* Use the unified ssl_context_type for TLS contexts */
-#define tls_context_type ssl_context_type
-
 /*============================================================================
  * SNI (Server Name Indication) DATA
  *============================================================================
@@ -335,7 +332,6 @@ extern ServerCTXCache server_ctx_cache;
 extern JanetOSMutex *ctx_cache_lock;
 extern FILE *keylog_file;
 extern const JanetAbstractType tls_stream_type;
-/* tls_context_type is now a macro aliasing ssl_context_type from jshared.h */
 extern const JanetMethod tls_stream_methods[];
 
 /*============================================================================
@@ -378,8 +374,9 @@ void jtls_keylog_callback(const SSL *ssl, const char *line);
  * SSL_CTX creation and configuration.
  */
 
-/* Create client SSL context */
-SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts);
+/* Create client SSL context (ca_opt, when supplied, is the trust source:
+ * system default roots are not loaded) */
+SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt);
 
 /* Create server SSL context (with optional caching) */
 SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
@@ -396,8 +393,20 @@ unsigned char *jtls_array_to_alpn_wire(Janet array, unsigned int *out_len);
 /* SNI callback for server */
 int jtls_sni_callback(SSL *ssl, int *ad, void *arg);
 
+/* ClientHello callback: sets the per-vhost session ID context early */
+int jtls_client_hello_cb(SSL *ssl, int *al, void *arg);
+
+/* Derive a session ID context from a context's leaf certificate */
+int jtls_sid_ctx_for_ctx(const SSL_CTX *ctx, unsigned char *out,
+                         unsigned int *out_len);
+
 /* OCSP status callback */
 int jtls_ocsp_status_cb(SSL *ssl, void *arg);
+
+/* Store a DER OCSP stapling response on a context (copies the bytes);
+ * returns 1 on success, 0 on allocation failure */
+int jtls_store_ocsp_response(SSL_CTX *ctx, const unsigned char *data,
+                             int len);
 
 /* Free callbacks for ex_data */
 void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
@@ -473,6 +482,7 @@ Janet cfun_get_cipher(int32_t argc, Janet *argv);
 Janet cfun_get_cipher_bits(int32_t argc, Janet *argv);
 Janet cfun_get_connection_info(int32_t argc, Janet *argv);
 Janet cfun_get_handshake_time(int32_t argc, Janet *argv);
+Janet cfun_get_peer_cert(int32_t argc, Janet *argv);
 
 /* Clear the pending slot (internal.h:244-245) for this state's role
  * (read_state -> pending_read, write_state -> pending_write) */

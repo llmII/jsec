@@ -41,8 +41,8 @@ X509_REQ *ca_pem_to_csr(Janet pem) {
 }
 
 /* Parse SAN entries from Janet array */
-static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
-    if (!san_arr || san_arr->count == 0) return;
+static int add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
+    if (!san_arr || san_arr->count == 0) return 1;
 
     JanetBuffer *san_buf = janet_buffer(256);
 
@@ -60,8 +60,8 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
     /* Null-terminate */
     janet_buffer_push_u8(san_buf, 0);
 
-    ca_add_extension(cert, issuer, NID_subject_alt_name,
-                     (const char *)san_buf->data);
+    return ca_add_extension(cert, issuer, NID_subject_alt_name,
+                            (const char *)san_buf->data);
 }
 
 static void strip_extension(X509 *cert, int nid) {
@@ -195,11 +195,18 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number */
+    /* Set serial number: explicit :serial override, else fresh random of at
+     * least 64 bits of entropy (issuance no longer walks the counter) */
     if (serial < 0) {
-        serial = ca_next_serial(ca);
+        if (!jutils_set_random_serial(cert)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set random serial");
+        }
+    } else {
+        ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
     }
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -232,35 +239,75 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
 
     /* Add standard extensions */
     strip_extension(cert, NID_basic_constraints);
-    ca_add_extension(cert, ca->cert, NID_basic_constraints,
-                     basic_constraints);
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                          basic_constraints)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
     strip_extension(cert, NID_subject_key_identifier);
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
     strip_extension(cert, NID_authority_key_identifier);
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Add key usage if specified */
     strip_extension(cert, NID_key_usage);
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
-        /* Default for end-entity cert */
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        /* Default for end-entity cert: keyEncipherment is meaningless for
+         * EC keys (RFC 5480) */
+        const char *default_ku =
+            (EVP_PKEY_base_id(csr_key) == EVP_PKEY_EC)
+                ? "digitalSignature"
+                : "digitalSignature,keyEncipherment";
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Add extended key usage if specified */
     if (extended_key_usage) {
         strip_extension(cert, NID_ext_key_usage);
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
     /* Add SAN if specified */
     if (san_arr && san_arr->count > 0) {
         strip_extension(cert, NID_subject_alt_name);
-        add_san_entries(cert, ca->cert, san_arr);
+        if (!add_san_entries(cert, ca->cert, san_arr)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
     }
 
     /* Sign with CA key */
@@ -408,9 +455,13 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     /* Set version to v3 */
     X509_set_version(cert, 2);
 
-    /* Set serial number */
-    int64_t serial = ca_next_serial(ca);
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+    /* Set serial number: fresh random of at least 64 bits of entropy
+     * (issuance no longer walks the counter) */
+    if (!jutils_set_random_serial(cert)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set random serial");
+    }
 
     /* Set validity */
     X509_gmtime_adj(X509_getm_notBefore(cert), 0);
@@ -437,28 +488,66 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     X509_set_pubkey(cert, key);
 
     /* Add extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE");
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
-    /* Key usage */
+    /* Key usage (keyEncipherment is meaningless for EC keys, RFC 5480) */
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        const char *default_ku =
+            (EVP_PKEY_base_id(key) == EVP_PKEY_EC)
+                ? "digitalSignature"
+                : "digitalSignature,keyEncipherment";
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Extended key usage */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
-    /* SAN */
+    /* SAN - default to the CN when :san is not supplied */
     if (san_arr && san_arr->count > 0) {
-        add_san_entries(cert, ca->cert, san_arr);
+        if (!add_san_entries(cert, ca->cert, san_arr)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
+    } else if (common_name) {
+        if (!jutils_add_common_name_san(cert, common_name)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add subject alternative name");
+        }
     }
 
     /* Sign with CA key */
