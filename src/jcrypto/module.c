@@ -223,8 +223,7 @@ static const JanetReg cfuns[] = {
      "             :oaep-sha256 (recommended)\n"
      "             :oaep-sha384\n"
      "             :oaep-sha512\n"
-     "             :oaep-sha1 (legacy)\n"
-     "             :pkcs1 (legacy, NOT recommended)\n\n"
+     "             :oaep-sha1 (legacy)\n\n"
      "NOTE: RSA encryption has size limits based on key size.\n"
      "Use crypto/rsa-max-plaintext to check maximum size.\n"
      "For larger data, use hybrid encryption (RSA + AES)."},
