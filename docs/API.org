@@ -108,7 +108,7 @@ Connect to a TLS server.
     - ~:buffer-size~: Integer. Internal TLS buffer size (default 16384).
     - ~:tcp-nodelay~: Boolean. Enable TCP_NODELAY (default ~true~).
     - ~:handshake-timing~: Boolean. Track handshake duration (default ~false~).
-    - ~:security~: Table. Security options (see [[*Security Options][Security Options]]).
+    - ~:security~: Table or struct. Security options (see [[*Security Options][Security Options]]).
     - ~:alpn~: List of ALPN protocols.
     - ~:ca-file~: Path to CA certificate file or PEM content (string/buffer).
     - ~:ca-path~: Path to CA certificate directory.
@@ -147,7 +147,7 @@ Accept a connection from a listener and perform the TLS handshake.
     - ~:buffer-size~: Integer. Internal TLS buffer size (default 16384).
     - ~:tcp-nodelay~: Boolean. Enable TCP_NODELAY (default ~true~).
     - ~:handshake-timing~: Boolean. Track handshake duration (default ~false~).
-    - ~:security~: Table. Security options.
+    - ~:security~: Table or struct. Security options.
     - ~:alpn~: List of ALPN protocols.
     - ~:ca-file~: Path to CA certificate file (for mTLS) or PEM content.
     - ~:ca-path~: Path to CA certificate directory (for mTLS).
@@ -193,7 +193,7 @@ Wrap an existing stream with TLS. Used for both client and server modes.
   - ~:buffer-size~: Integer. Internal TLS buffer size.
   - ~:tcp-nodelay~: Boolean. Enable TCP_NODELAY (default ~true~).
   - ~:handshake-timing~: Boolean. Track handshake duration (default ~false~).
-  - ~:security~: Table. Security options.
+  - ~:security~: Table or struct. Security options.
   - ~:alpn~: List of ALPN protocols.
 
 *Server mode* (provides cert/key):
@@ -207,7 +207,7 @@ Wrap an existing stream with TLS. Used for both client and server modes.
   - ~:buffer-size~: Integer. Internal TLS buffer size.
   - ~:tcp-nodelay~: Boolean. Enable TCP_NODELAY (default ~true~).
   - ~:handshake-timing~: Boolean. Track handshake duration (default ~false~).
-  - ~:security~: Table. Security options.
+  - ~:security~: Table or struct. Security options.
   - ~:alpn~: List of ALPN protocols.
 
 *Returns*: A TLS stream object.
@@ -1428,7 +1428,7 @@ Create a reusable DTLS context.
   - ~:ca~ - CA certificate path.
   - ~:trusted-cert~ - Trust specific certificate (for self-signed).
   - ~:ciphers~ - Cipher suite string.
-  - ~:security~ - Security options table.
+  - ~:security~ - Security options table or struct.
 
 If ~:cert~ and ~:key~ are provided, creates a server-capable context.
 Otherwise creates a client-only context.
@@ -1437,7 +1437,10 @@ Otherwise creates a client-only context.
 
 * Security Options
 
-The ~:security~ option in ~connect~ and ~accept~ allows fine-grained control:
+The ~:security~ option in ~connect~ and ~accept~ allows fine-grained control.
+It accepts a table or a struct; any other type raises a parameter error
+(=[UTILS:PARAM] :security must be a table or struct=). The same contract
+holds at every context builder and at both option parsers.
 
 - ~:min-version~: Keyword or string. For TLS: :TLS1_2, :TLS1_3, or "TLS1.2", "TLS1.3". For DTLS: :DTLS1_0, :DTLS1_2, or "DTLS1.0", "DTLS1.2".
 - ~:max-version~: Keyword or string. Same format as ~:min-version~.
@@ -1445,8 +1448,10 @@ The ~:security~ option in ~connect~ and ~accept~ allows fine-grained control:
 - ~:curves~: Keyword or string. Supported elliptic curves (e.g., :prime256v1, "prime256v1:secp384r1").
 - ~:ca-file~: CA certificate (path or PEM content).
 - ~:ca-path~: CA directory path.
-- ~:ocsp-stapling~: Boolean. On a server, staple an OCSP response (data from ~:ocsp-response~ or ~tls-stream/set-ocsp-response~) on handshakes. On a client, send the RFC 6066 ~status_request~ extension asking the server to staple; the request goes out with the connection's first handshake flight. Clients send no status request when this is unset, so default wire behavior is unchanged. Also accepted as a top-level option on ~tls/new-context~, ~tls/connect~, and ~tls/wrap~.
-
+- ~:session-cache~: Boolean. Cache TLS/DTLS sessions (default =true=). Server contexts cache their own sessions (SSL_SESS_CACHE_SERVER) and client contexts cache client-side (SSL_SESS_CACHE_CLIENT); =false= turns the cache off (SSL_SESS_CACHE_OFF).
+- ~:session-tickets~: Boolean. Stateless session tickets (RFC 5077, default =true=). =false= disables them (SSL_OP_NO_TICKET).
+- ~:session-cache-size~: Number. Maximum cached sessions (default 1000). Must be a non-negative number; a non-number or negative value raises a parameter error instead of being silently clamped to 1000.
+- ~:ocsp-stapling~: Boolean (default =false=). On a server, staple an OCSP response (data from ~:ocsp-response~ or ~tls-stream/set-ocsp-response~) on handshakes. On a client, send the RFC 6066 ~status_request~ extension asking the server to staple; the request goes out with the connection's first handshake flight. Clients send no status request when this is unset, so default wire behavior is unchanged. Also accepted as a top-level option on ~tls/new-context~, ~tls/connect~, and ~tls/wrap~.
 *Note*: Keyword symbols are preferred for idiomatic Janet code.
 
 *Example*: See [[file:../examples/policy_enforcement.janet][policy_enforcement.janet]] for advanced security configuration.

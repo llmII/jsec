@@ -37,9 +37,77 @@ static int parse_dtls_version(const char *ver_str) {
 }
 
 /*============================================================================
+ * VALIDATE SECURITY OPTIONS
+ *============================================================================
+ * Raise on a non-dictionary :security value and on a bad
+ * :session-cache-size. Called before any SSL_CTX or ctx_cache_lock
+ * exists so the raise never longjmps past cleanup.
+ */
+void jutils_validate_security_options(Janet opts) {
+    if (janet_checktype(opts, JANET_NIL)) return;
+    if (!janet_checktype(opts, JANET_TABLE) &&
+        !janet_checktype(opts, JANET_STRUCT)) {
+        utils_panic_param(":security must be a table or struct");
+    }
+
+    Janet size_opt = janet_get(opts, janet_ckeywordv("session-cache-size"));
+    if (!janet_checktype(size_opt, JANET_NIL)) {
+        if (!janet_checktype(size_opt, JANET_NUMBER)) {
+            utils_panic_param(":session-cache-size must be a number");
+        }
+        double size = janet_unwrap_number(size_opt);
+        if (!(size >= 0.0) || size > 4294967295.0) {
+            utils_panic_param(
+                ":session-cache-size must be a non-negative number");
+        }
+    }
+}
+
+/*============================================================================
+ * APPLY SESSION CACHE OPTIONS
+ *============================================================================
+ * The session trio shared by every context builder and both parser sites:
+ * :session-cache, :session-tickets, :session-cache-size. Accepts nil,
+ * table, or struct.
+ */
+void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
+                                        int is_server) {
+    int session_cache = 1;
+    int tickets = 1;
+    long cache_size = 1000;
+
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        Janet v = janet_get(opts, janet_ckeywordv("session-cache"));
+        if (!janet_checktype(v, JANET_NIL)) {
+            session_cache = janet_truthy(v);
+        }
+
+        v = janet_get(opts, janet_ckeywordv("session-tickets"));
+        if (!janet_checktype(v, JANET_NIL)) {
+            tickets = janet_truthy(v);
+        }
+
+        v = janet_get(opts, janet_ckeywordv("session-cache-size"));
+        if (janet_checktype(v, JANET_NUMBER)) {
+            cache_size = (long)janet_unwrap_number(v);
+        }
+    }
+
+    SSL_CTX_set_session_cache_mode(
+        ctx, session_cache
+                 ? (is_server ? SSL_SESS_CACHE_SERVER : SSL_SESS_CACHE_CLIENT)
+                 : SSL_SESS_CACHE_OFF);
+    if (!tickets) {
+        SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+    }
+    SSL_CTX_sess_set_cache_size(ctx, cache_size);
+}
+
+/*============================================================================
  * APPLY SECURITY OPTIONS
  *============================================================================
- * Apply a Janet table of security options to an SSL_CTX.
+ * Apply a Janet table or struct of security options to an SSL_CTX.
  *
  * Supported options:
  *   :min-version - Minimum TLS/DTLS version (e.g., "TLS1.2", "DTLS1.2")
@@ -49,18 +117,40 @@ static int parse_dtls_version(const char *ver_str) {
  *   :curves      - EC curves for ECDHE (e.g., "prime256v1:secp384r1")
  *   :ca-file     - CA file path or PEM data
  *   :ca-path     - CA directory path
+ *   :session-cache - Boolean, cache sessions (default true)
+ *   :session-tickets - Boolean, stateless session tickets (default true)
+ *   :session-cache-size - Number, maximum cached sessions (default 1000)
+ *
+ * The container contract is one for both parser sites (this function and
+ * apply_session_options in src/jtls/context/server.c): nil, table, or
+ * struct; anything else raises [UTILS:PARAM] via
+ * jutils_validate_security_options, which every context builder calls
+ * BEFORE allocating an SSL_CTX or taking ctx_cache_lock so the raise
+ * never longjmps past live cleanup. This function never reports
+ * success for a value it cannot read.
  */
-int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls) {
+int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
+                           int is_server) {
     /* Always set secure minimum version default */
     SSL_CTX_set_min_proto_version(ctx,
                                   is_dtls ? DTLS1_2_VERSION : TLS1_2_VERSION);
 
     /* If no options provided, use defaults */
-    if (janet_checktype(opts, JANET_NIL)) return 1;
-    if (!janet_checktype(opts, JANET_TABLE) &&
-        !janet_checktype(opts, JANET_STRUCT)) {
+    if (janet_checktype(opts, JANET_NIL)) {
+        jutils_apply_session_cache_options(ctx, opts, is_server);
         return 1;
     }
+    /* Contract: table or struct. jutils_validate_security_options raises
+     * on anything else before this point is reachable; never report
+     * success for a value we cannot read. */
+    if (!janet_checktype(opts, JANET_TABLE) &&
+        !janet_checktype(opts, JANET_STRUCT)) {
+        return 0;
+    }
+
+    /* Session options: the same keys this parser shares with
+     * apply_session_options, honored for every context builder. */
+    jutils_apply_session_cache_options(ctx, opts, is_server);
 
     /* Apply minimum protocol version (override default if specified) */
     Janet min_ver = janet_get(opts, janet_ckeywordv("min-version"));

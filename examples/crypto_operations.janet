@@ -115,7 +115,7 @@
   (printf "Signed data: %d bytes" (length signed))
 
   # Verify signature
-  (def result (crypto/cms-verify signed))
+  (def result (crypto/cms-verify signed cert))
   (printf "Signature valid: %v" (result :valid))
   (printf "Content recovered: %s" (result :content))
 

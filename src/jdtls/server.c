@@ -337,6 +337,15 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         }
     }
 
+    /* Validate :security before any SSL_CTX exists or ctx_cache_lock
+     * is taken (never longjmp past cleanup) */
+    Janet security = janet_wrap_nil();
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        security = janet_get(opts, janet_ckeywordv("security"));
+    }
+    jutils_validate_security_options(security);
+
     /* Create SSL context */
     server->ctx = SSL_CTX_new(DTLS_server_method());
     if (!server->ctx) {
@@ -352,12 +361,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     SSL_CTX_set_cookie_verify_cb(server->ctx, server_verify_cookie);
 
     /* Apply security options */
-    Janet security = janet_wrap_nil();
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        security = janet_get(opts, janet_ckeywordv("security"));
-    }
-    if (!apply_security_options(server->ctx, security, 1)) {
+    if (!apply_security_options(server->ctx, security, 1,
+                                1)) { /* is_dtls, is_server */
         SSL_CTX_free(server->ctx);
         server->ctx = NULL;
         dtls_panic_ssl("failed to apply security options");

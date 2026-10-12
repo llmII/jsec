@@ -32,7 +32,7 @@
  * server) :ca - CA certificate path :trusted-cert - Trust specific
  * certificate (for self-signed) :ciphers - Cipher suite string :min-version -
  * Minimum DTLS version (:dtls1.0 or :dtls1.2) :max-version - Maximum DTLS
- * version :security - Security options table
+ * version :security - Security options table or struct
  *
  * If :cert and :key are provided, creates a server-capable context.
  * Otherwise creates a client-only context.
@@ -68,7 +68,7 @@ static const JanetReg context_cfuns[] = {
      "  :ca - CA certificate path\n"
      "  :trusted-cert - Trust specific certificate (for self-signed)\n"
      "  :ciphers - Cipher suite string\n"
-     "  :security - Security options table\n\n"
+     "  :security - Security options table or struct\n\n"
      "If :cert and :key are provided, creates a server-capable context.\n"
      "Otherwise creates a client-only context."},
     {NULL, NULL, NULL}};

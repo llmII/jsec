@@ -147,10 +147,17 @@ static const JanetReg cfuns[] = {
     {"cms-verify", cfun_cms_verify,
      "(jsec/crypto/cms-verify cms-der &opt trusted-certs-pem "
      "detached-data)\n\n"
-     "Verify CMS signed data.\n"
+     "Verify CMS signed data. A failed verification reports :valid "
+     "false and never raises.\n"
+     "Signer certificate verification against trusted-certs-pem is "
+     "required for :valid true; with no trusted certs (or an untrusted "
+     "signer) the result reports :valid false.\n"
+     "detached-data, when supplied, is the content covered by a "
+     "detached signature.\n"
      "Returns table with:\n"
-     "  :valid - boolean indicating signature validity\n"
-     "  :content - decrypted content (if not detached)\n"
+     "  :valid - boolean: signature checked and signer certificate "
+     "verified\n"
+     "  :content - recovered content (when verification succeeds)\n"
      "  :signers - array of signer certificates in PEM format"},
     {"cms-encrypt", cfun_cms_encrypt,
      "(jsec/crypto/cms-encrypt data recipient-certs &opt opts)\n\n"

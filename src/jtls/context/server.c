@@ -58,52 +58,26 @@ int jtls_sid_ctx_for_ctx(const SSL_CTX *ctx, unsigned char *out,
  * HELPER: APPLY SESSION OPTIONS
  *============================================================================
  * Configure session cache, tickets, OCSP stapling from security options.
- * Options are read with janet_get, so a table and a struct behave the
- * same.
+ * Accepts nil, table, or struct - jutils_validate_security_options raises
+ * on anything else before any SSL_CTX or ctx_cache_lock exists (never
+ * longjmp past live cleanup). Options are read with janet_get, so a table
+ * and a struct behave the same.
  */
 static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
-    /* Handle session cache option - default enabled for server */
-    int session_cache = 1;
-    Janet cache_opt =
-        janet_get(security_opts, janet_ckeywordv("session-cache"));
-    if (!janet_checktype(cache_opt, JANET_NIL)) {
-        session_cache = janet_truthy(cache_opt);
-    }
-    SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_SERVER
-                                                      : SSL_SESS_CACHE_OFF);
+    /* Session cache, tickets and cache size: the shared reader used by
+     * every context builder and both parser sites. */
+    jutils_apply_session_cache_options(ctx, security_opts, 1);
 
-    /* Handle session tickets */
-    int tickets = 1;
-    Janet ticket_opt =
-        janet_get(security_opts, janet_ckeywordv("session-tickets"));
-    if (!janet_checktype(ticket_opt, JANET_NIL)) {
-        tickets = janet_truthy(ticket_opt);
+    /* jtls-specific OCSP stapling callback */
+    if (janet_checktype(security_opts, JANET_TABLE) ||
+        janet_checktype(security_opts, JANET_STRUCT)) {
+        Janet ocsp_opt =
+            janet_get(security_opts, janet_ckeywordv("ocsp-stapling"));
+        if (!janet_checktype(ocsp_opt, JANET_NIL) && janet_truthy(ocsp_opt)) {
+            SSL_CTX_set_tlsext_status_cb(ctx, jtls_ocsp_status_cb);
+            SSL_CTX_set_tlsext_status_arg(ctx, NULL);
+        }
     }
-    if (!tickets) {
-        SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
-    }
-
-    /* Handle OCSP stapling option */
-    int ocsp_stapling = 0;
-    Janet ocsp_opt =
-        janet_get(security_opts, janet_ckeywordv("ocsp-stapling"));
-    if (!janet_checktype(ocsp_opt, JANET_NIL)) {
-        ocsp_stapling = janet_truthy(ocsp_opt);
-    }
-    if (ocsp_stapling) {
-        SSL_CTX_set_tlsext_status_cb(ctx, jtls_ocsp_status_cb);
-        SSL_CTX_set_tlsext_status_arg(ctx, NULL);
-    }
-
-    /* Get cache size from security options */
-    long cache_size = 1000;
-    Janet size_opt =
-        janet_get(security_opts, janet_ckeywordv("session-cache-size"));
-    if (janet_checktype(size_opt, JANET_NUMBER)) {
-        cache_size = (long)janet_unwrap_number(size_opt);
-        if (cache_size < 0) cache_size = 1000;
-    }
-    SSL_CTX_sess_set_cache_size(ctx, cache_size);
 
     /* Set session ID context for resumption. Derived from the certificate
      * (the nginx approach) so each server and SNI vhost context has its own
@@ -260,6 +234,11 @@ static void update_cache(SSL_CTX *ctx, const char *cert_path,
  */
 SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
                                 Janet alpn_opt, int use_cache) {
+    /* Validate :security before the mutex or any SSL_CTX exists: the
+     * raise must never run while ctx_cache_lock is held or an SSL_CTX is
+     * unfreed (never longjmp past live cleanup). */
+    jutils_validate_security_options(security_opts);
+
     janet_os_mutex_lock(ctx_cache_lock);
 
     const char *cert_path = NULL;
@@ -342,7 +321,7 @@ SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
     }
 
     /* Apply security options */
-    if (!apply_security_options(ctx, security_opts, 0)) {
+    if (!apply_security_options(ctx, security_opts, 0, 1)) {
         goto error;
     }
 

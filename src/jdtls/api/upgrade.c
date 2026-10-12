@@ -144,6 +144,15 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     memcpy(&client->peer_addr.addr, &peer_addr, peer_len);
     client->peer_addr.addrlen = peer_len;
 
+    /* Extract and validate :security before any SSL_CTX exists
+     * or ctx_cache_lock is taken (never longjmp past cleanup) */
+    Janet security = janet_wrap_nil();
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        security = janet_get(opts, janet_ckeywordv("security"));
+    }
+    jutils_validate_security_options(security);
+
     /* Create SSL context */
     if (is_server) {
         client->ctx = SSL_CTX_new(DTLS_server_method());
@@ -156,12 +165,8 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     client->owns_ctx = 1;
 
     /* Apply security options */
-    Janet security = janet_wrap_nil();
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        security = janet_get(opts, janet_ckeywordv("security"));
-    }
-    if (!apply_security_options(client->ctx, security, 1)) {
+    if (!apply_security_options(client->ctx, security, 1,
+                                is_server)) { /* is_dtls = 1 */
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
         client->owns_ctx = 0;

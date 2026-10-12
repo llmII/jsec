@@ -111,7 +111,7 @@ Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv) {
  *   :verify - Verify peer certificates (default: true for client, false for
  * server) :ca - CA certificate path :trusted-cert - Trust specific
  * certificate (for self-signed) :ciphers - Cipher suite string :security -
- * Security options table
+ * Security options table or struct
  *
  * If :cert and :key are provided, creates a server-capable context.
  * Otherwise creates a client-only context.
@@ -137,6 +137,15 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
         }
     }
 
+    /* Extract :security and validate it before any SSL_CTX exists
+     * or ctx_cache_lock is taken (never longjmp past cleanup) */
+    Janet security = janet_wrap_nil();
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        security = janet_get(opts, janet_ckeywordv("security"));
+    }
+    jutils_validate_security_options(security);
+
     /* Create SSLContext */
     SSLContext *ssl_ctx =
         janet_abstract(jutils_get_context_type(), sizeof(SSLContext));
@@ -156,13 +165,8 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
         utils_panic_ssl("failed to create SSL context");
     }
 
-    /* Apply security options */
-    Janet security = janet_wrap_nil();
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        security = janet_get(opts, janet_ckeywordv("security"));
-    }
-    if (!apply_security_options(ssl_ctx->ctx, security, is_dtls)) {
+    /* Apply security options (including the shared session options) */
+    if (!apply_security_options(ssl_ctx->ctx, security, is_dtls, is_server)) {
         SSL_CTX_free(ssl_ctx->ctx);
         ssl_ctx->ctx = NULL;
         utils_panic_ssl("failed to apply security options");
