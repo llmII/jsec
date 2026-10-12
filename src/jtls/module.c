@@ -82,7 +82,7 @@ void jtls_module_init(JanetTable *env) {
          "Options:\n"
          "  :cert, :key - Server certificate/key paths\n"
          "  :verify - Client verification (default true)\n"
-         "  :security - Security options table\n"
+         "  :security - Security options table or struct\n"
          "  :alpn - ALPN protocols array\n"
          "  :sni - SNI hostname->options table (server only)\n"},
         {"wrap", cfun_wrap,

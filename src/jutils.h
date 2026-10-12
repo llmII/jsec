@@ -126,14 +126,34 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
  */
 
 /* Apply security options to SSL_CTX
- * Accepts a Janet table with the following optional keys:
+ * Accepts nil, a Janet table, or a Janet struct with the following optional
+ * keys:
  *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3,
  * :DTLS1.2) :max-version - Maximum TLS/DTLS version :ciphers - Cipher suite
  * string (OpenSSL format) :curves - EC curves for ECDHE (e.g., :prime256v1 or
  * "prime256v1:secp384r1") :ca-file - CA file path or PEM string/buffer
  *   :ca-path - CA directory path
+ *   :session-cache - Boolean, cache sessions (default true)
+ *   :session-tickets - Boolean, stateless session tickets (default true)
+ *   :session-cache-size - Number, maximum cached sessions (default 1000)
+ * A non-dictionary opts value is rejected: jutils_validate_security_options
+ * raises a parameter error before any SSL_CTX exists.
  */
-int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls);
+int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
+                           int is_server);
+
+/* Validate the :security option value before any SSL_CTX is allocated or
+ * ctx_cache_lock is taken (cleanup safety: never let a validation
+ * raise run while resources are held). Accepts nil, table, or struct;
+ * raises [UTILS:PARAM] on any other type and on a non-number or negative
+ * :session-cache-size. */
+void jutils_validate_security_options(Janet opts);
+
+/* Apply the session options shared by every context builder:
+ * :session-cache, :session-tickets, :session-cache-size. Accepts nil,
+ * table, or struct (same contract as apply_security_options). */
+void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
+                                        int is_server);
 
 /* Add a trusted certificate to SSL_CTX's certificate store
  * Used for certificate pinning (trust specific cert without full CA chain)

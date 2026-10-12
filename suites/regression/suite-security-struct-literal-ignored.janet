@@ -4,7 +4,8 @@
 # ":security struct literals silently ignored"
 #
 # 2026-10-11 maintainer ruling widened the scope: accept table-or-struct,
-# raise on non-dictionary with PNB-08 cleanup safety, unify session
+# raise on non-dictionary with cleanup safety (before any SSL_CTX or
+# ctx_cache_lock exists, never longjmp past live cleanup), unify session
 # options across server context builders, and document the 4 session keys
 # in docs/API.org. Each ruled behaviour carries a failing proof-of-defect
 # guard with its predicted symptom.
@@ -67,9 +68,10 @@
 #       "non-dictionary-security-raises-at-dtls-context-builders" - a
 #       non-dictionary :security must raise a parameter error naming
 #       :security instead of silently defaulting, at every context
-#       builder entry. The TLS guard also carries the PNB-08 cleanup
-#       safety leg: the raise must leave the context cache lock usable
-#       (a later valid build must succeed, not deadlock).
+#       builder entry. The TLS guard also carries the cleanup-safety
+#       leg: the raise must run before any SSL_CTX or ctx_cache_lock
+#       exists and leave the context cache lock usable (a later valid
+#       build must succeed, not deadlock).
 #   (3) "dtls-server-context-builder-honours-session-options" - with
 #       :session-cache and :session-tickets false, a replayed session
 #       must NOT be resumed, under both table and struct literals.
@@ -431,14 +433,14 @@
                       ":security-must-be-a-table-or-struct parameter "
                       "error, got %q") err2))
 
-    # (b) PNB-08 cleanup safety leg: the raise must run before any
+    # (b) cleanup safety leg: the raise must run before any
     # SSL_CTX exists or ctx_cache_lock is taken - a later valid build
     # must succeed instead of deadlocking on the leaked lock.
     (assert (tls-stream/new-context {:cert (certs :cert)
                                      :key (certs :key)})
             (string "a valid context build must still succeed after the "
                     "non-dictionary :security raise - the raise must not "
-                    "leak ctx_cache_lock or an SSL_CTX (PNB-08 cleanup "
+                    "leak ctx_cache_lock or an SSL_CTX (cleanup "
                     "safety); if this hangs the raise panicked past the "
                     "cleanup")))
 

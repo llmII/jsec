@@ -167,6 +167,15 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         client->ctx = shared_ctx->ctx;
         client->owns_ctx = 0;
     } else {
+        /* Extract and validate :security before any SSL_CTX exists
+         * or ctx_cache_lock is taken (never longjmp past cleanup) */
+        Janet security = janet_wrap_nil();
+        if (janet_checktype(opts, JANET_TABLE) ||
+            janet_checktype(opts, JANET_STRUCT)) {
+            security = janet_get(opts, janet_ckeywordv("security"));
+        }
+        jutils_validate_security_options(security);
+
         /* Create new context - free on GC */
         client->ctx = SSL_CTX_new(DTLS_client_method());
         if (!client->ctx) {
@@ -175,12 +184,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         client->owns_ctx = 1;
 
         /* Apply security options from jshared */
-        Janet security = janet_wrap_nil();
-        if (janet_checktype(opts, JANET_TABLE) ||
-            janet_checktype(opts, JANET_STRUCT)) {
-            security = janet_get(opts, janet_ckeywordv("security"));
-        }
-        apply_security_options(client->ctx, security, 1); /* 1 = is_dtls */
+        apply_security_options(client->ctx, security, 1,
+                               0); /* is_dtls = 1, is_server = 0 */
 
         /* Load certificates if provided */
         if (janet_checktype(opts, JANET_TABLE) ||
