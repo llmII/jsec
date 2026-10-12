@@ -80,8 +80,10 @@ Create a reusable TLS context.
   - ~:ca-path~: Path to CA certificate directory.
   - ~:security~: Security options.
   - ~:alpn~: List of ALPN protocols (e.g. ~["h2" "http/1.1"]~).
+  - ~:ocsp-response~: (Server only) DER OCSP response (byte string or buffer) to staple on this context's handshakes, the same data as ~tls-stream/set-ocsp-response~. Names with no response of their own in the ~:sni~ map staple this response.
   - ~:sni~: (Server only) Table of hostname -> options for virtual hosting.
-    Example: ~{"example.com" {:cert "..." :key "..."}}~.
+    Example: ~{"example.com" {:cert "..." :key "..." :ocsp-response der-bytes}}~.
+    Each entry accepts ~:cert~, ~:key~, ~:security~, ~:alpn~ plus ~:ocsp-response~: a DER OCSP response (byte string or buffer) stapled only for that name.
 
 *Returns*: A TLS context object.
 
@@ -1414,6 +1416,7 @@ The ~:security~ option in ~connect~ and ~accept~ allows fine-grained control:
 - ~:curves~: Keyword or string. Supported elliptic curves (e.g., :prime256v1, "prime256v1:secp384r1").
 - ~:ca-file~: CA certificate (path or PEM content).
 - ~:ca-path~: CA directory path.
+- ~:ocsp-stapling~: Boolean. On a server, staple an OCSP response (data from ~:ocsp-response~ or ~tls-stream/set-ocsp-response~) on handshakes. On a client, send the RFC 6066 ~status_request~ extension asking the server to staple; the request goes out with the connection's first handshake flight. Clients send no status request when this is unset, so default wire behavior is unchanged. Also accepted as a top-level option on ~tls/new-context~, ~tls/connect~, and ~tls/wrap~.
 
 *Note*: Keyword symbols are preferred for idiomatic Janet code.
 

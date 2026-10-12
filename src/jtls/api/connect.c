@@ -19,6 +19,22 @@
 #endif
 
 /*============================================================================
+ * HELPER: OCSP STAPLING OPTION
+ *============================================================================
+ * True when per-connection options ask for an OCSP status request
+ * (top-level :ocsp-stapling, or the same key in :security).
+ */
+static int opts_ocsp_stapling(Janet opts) {
+    if (janet_checktype(opts, JANET_NIL)) return 0;
+    Janet v = janet_get(opts, janet_ckeywordv("ocsp-stapling"));
+    if (janet_checktype(v, JANET_NIL)) {
+        v = janet_get(janet_get(opts, janet_ckeywordv("security")),
+                      janet_ckeywordv("ocsp-stapling"));
+    }
+    return janet_truthy(v);
+}
+
+/*============================================================================
  * WRAP - Wrap an existing stream with TLS
  *============================================================================
  * (wrap stream &opt config options)
@@ -210,6 +226,11 @@ client_setup:
             tls_panic_ssl("failed to create client context");
         }
 
+        /* Top-level :ocsp-stapling opts in status requests on the wire */
+        if (opts_ocsp_stapling(opts)) {
+            SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp);
+        }
+
         /* Handle :trusted-cert option for certificate pinning */
         if (!janet_checktype(opts, JANET_NIL)) {
             Janet trusted_cert =
@@ -294,6 +315,13 @@ common_setup:
     TLSStream *tls =
         jtls_setup_stream(transport, ctx, is_server, owns_ctx, buffer_size,
                           tcp_nodelay, track_handshake_time);
+
+    /* Per-connection :ocsp-stapling arms the status request on the
+     * connection itself, which is the only lever when the context is
+     * shared */
+    if (!is_server && opts_ocsp_stapling(opts)) {
+        SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
+    }
 
     /* Set SNI hostname for client */
     if (hostname && !is_server) {
@@ -532,6 +560,13 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     return;
                 }
 
+                /* Top-level :ocsp-stapling opts in status requests on the
+                 * wire */
+                if (opts_ocsp_stapling(opts)) {
+                    SSL_CTX_set_tlsext_status_type(ctx,
+                                                   TLSEXT_STATUSTYPE_ocsp);
+                }
+
                 /* Handle trusted-cert option (only when creating new context)
                  */
                 if (!janet_checktype(opts, JANET_NIL)) {
@@ -594,6 +629,21 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             TLSStream *tls =
                 jtls_setup_stream(stream, ctx, 0, owns_ctx, buffer_size,
                                   tcp_nodelay, track_handshake_time);
+
+            /* Per-connection :ocsp-stapling arms the status request on
+             * the connection itself, which is the only lever when the
+             * context is shared. It also emits the first handshake flight
+             * with the connect so the request reaches the server without
+             * waiting for application I/O; the handshake still completes
+             * on first I/O. Without the option nothing changes. */
+            if (opts_ocsp_stapling(opts)) {
+                TLSState kick;
+                SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
+                memset(&kick, 0, sizeof(TLSState));
+                kick.tls = tls;
+                kick.op = TLS_OP_HANDSHAKE;
+                jtls_process_operation(&kick);
+            }
 
             /* Check for :hostname option to override SNI (allows connecting
              * by IP but using hostname for SNI) */

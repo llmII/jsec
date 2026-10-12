@@ -395,6 +395,11 @@ int jtls_sni_callback(SSL *ssl, int *ad, void *arg);
 /* OCSP status callback */
 int jtls_ocsp_status_cb(SSL *ssl, void *arg);
 
+/* Store a DER OCSP stapling response on a context (copies the bytes);
+ * returns 1 on success, 0 on allocation failure */
+int jtls_store_ocsp_response(SSL_CTX *ctx, const unsigned char *data,
+                             int len);
+
 /* Free callbacks for ex_data */
 void jtls_alpn_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
                        long argl, void *argp);
