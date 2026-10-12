@@ -901,6 +901,28 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (dtls/localname client-or-server)
+ *
+ * One module entry for the dtls/localname name, dispatching on the
+ * abstract type of its argument: a DTLSClient returns its local
+ * address as a DTLSAddress, a DTLSServer returns the address it is
+ * bound to as a [host port] tuple. Any other argument raises a type
+ * error naming both accepted types.
+ */
+static Janet cfun_dtls_localname_dispatch(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    if (janet_checkabstract(argv[0], &dtls_client_type)) {
+        return cfun_dtls_localname(argc, argv);
+    }
+    if (janet_checkabstract(argv[0], &dtls_server_type)) {
+        return cfun_dtls_server_localname(argc, argv);
+    }
+    janet_panicf("bad slot #%d, expected %s or %s, got %v", 0,
+                 dtls_client_type.name, dtls_server_type.name, argv[0]);
+}
+
+/*
  * Method dispatch
  */
 /*
@@ -938,10 +960,10 @@ static const JanetReg server_cfuns[] = {
      "Close the DTLS server and all sessions.\n"
      "Sends close_notify to all established sessions unless force is true.\n"
      "Close notifications are non-blocking (best effort)."},
-    {"localname", cfun_dtls_server_localname,
-     "(dtls/localname server)\n\n"
-     "Get the local address the server is bound to.\n"
-     "Returns [host port] tuple."},
+    {"localname", cfun_dtls_localname_dispatch,
+     "(dtls/localname client-or-server)\n\n"
+     "Get the local address as a DTLSAddress (client), or the local\n"
+     "address the server is bound to as a [host port] tuple (server)."},
     {NULL, NULL, NULL}};
 
 void jdtls_register_server(JanetTable *env) {

@@ -101,9 +101,6 @@ static const JanetReg client_cfuns[] = {
      "Useful for self-signed certificates or certificate pinning.\n"
      "The cert-pem should be a string/buffer containing PEM-encoded "
      "certificate."},
-    {"localname", cfun_dtls_localname,
-     "(dtls/localname client)\n\n"
-     "Get the local address as a DTLSAddress."},
     {"peername", cfun_dtls_peername,
      "(dtls/peername client)\n\n"
      "Get the peer's address as a DTLSAddress."},
