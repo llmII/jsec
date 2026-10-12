@@ -108,7 +108,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org2c77a23)).
+        -   `:security`: Table. Security options (see [Security Options](#orgdbd550a)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -758,7 +758,9 @@ Generate a new certificate (key + cert in one step).
 -   **opts**: Optional table.
     -   `:common-name` - Certificate common name. **Required**.
     -   `:san` - Subject Alternative Names array (e.g., `["DNS:example.com" "IP:1.2.3.4"]`).
-    -   `:days-valid` - Validity period (default 365).
+    -   `:days-valid` - Validity period (default 365; the window end used when no `:not-after` is given).
+    -   `:not-before` - Validity start (Unix timestamp seconds; defaults to the signing time).
+    -   `:not-after` - Validity end (Unix timestamp seconds; must be later than the start).
     -   `:key-type` - Key type (default `:ec-p256`).
     -   `:extended-key-usage` - e.g., "serverAuth", "clientAuth".
     -   `:key-usage` - Override key usage extension.
@@ -775,10 +777,14 @@ Sign a Certificate Signing Request.
 -   **ca**: CA object.
 -   **csr-pem**: CSR in PEM format.
 -   **opts**: Optional table.
-    -   `:days-valid` - Validity period (default 365).
+    -   `:days-valid` - Validity period (default 365; the window end used when no `:not-after` is given).
+    -   `:not-before` - Validity start (Unix timestamp seconds; defaults to the signing time).
+    -   `:not-after` - Validity end (Unix timestamp seconds; must be later than the start).
     -   `:serial` - Override serial number.
     -   `:copy-extensions` - Copy extensions from CSR (default `false`).
+    -   `:key-usage` - Key usage extension (e.g., `"keyCertSign,cRLSign"`).
     -   `:extended-key-usage` - Extended key usage.
+    -   `:basic-constraints` - Basic constraints (e.g., `"CA:FALSE"`, the default).
     -   `:san` - Subject Alternative Names.
 
 **Returns**: Certificate in PEM format.

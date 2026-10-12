@@ -133,28 +133,14 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv);
  */
 
 /* Sign a CSR, return certificate PEM
- * Options:
- *   :days-valid 365
- *   :not-before <time>
- *   :not-after <time>
- *   :serial <number>
- *   :extensions [...]
- *   :copy-extensions true
- *   :key-usage "..."
- *   :extended-key-usage "serverAuth,clientAuth"
- *   :san ["DNS:example.com" "IP:1.2.3.4"]
- *   :basic-constraints "CA:FALSE"
+ * Options: one canonical list lives in SIGN_CSR_DOC (sign.c) - do not
+ * duplicate it here.
  */
 Janet cfun_ca_sign_csr(int32_t argc, Janet *argv);
 
 /* Issue certificate (generate key + CSR + sign in one step)
- * Options:
- *   :common-name "server.example.com"
- *   :san ["DNS:server.example.com"]
- *   :days-valid 365
- *   :key-type :ec-p256 | :ec-p384 | :rsa-2048 | :rsa-4096
- *   :key-usage "..."
- *   :extended-key-usage "..."
+ * Options: one canonical list lives in cfun_ca_issue_docstring (sign.c) -
+ * do not duplicate it here.
  * Returns: {:cert <pem> :key <pem>}
  */
 Janet cfun_ca_issue(int32_t argc, Janet *argv);
