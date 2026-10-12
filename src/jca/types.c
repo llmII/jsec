@@ -308,8 +308,19 @@ Janet cfun_ca_create(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Load cert and key */
+    /* Load cert and key. ca_pem_to_key raises through janet_getbytes on a
+     * non-byte key value, so prove the argument is a byte value and free
+     * the certificate first when it is not: the raise must not unwind past
+     * a live OpenSSL object (the free-then-raise discipline of the
+     * garbage-PEM path below). */
     X509 *cert = ca_pem_to_x509(cert_pem);
+    if (!janet_checktype(key_pem, JANET_STRING) &&
+        !janet_checktype(key_pem, JANET_SYMBOL) &&
+        !janet_checktype(key_pem, JANET_KEYWORD) &&
+        !janet_checktype(key_pem, JANET_BUFFER)) {
+        X509_free(cert);
+        janet_panic_type(key_pem, 0, JANET_TFLAG_BYTES);
+    }
     EVP_PKEY *key = ca_pem_to_key(key_pem);
     if (!key) {
         X509_free(cert);
