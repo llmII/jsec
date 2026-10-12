@@ -85,6 +85,17 @@ DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
     int ret = SSL_read(ssl, buf->data + buf->count, to_read);
     if (ret > 0) {
         buf->count += ret;
+        /* A read capped below the datagram size consumes up to n bytes
+         * and discards the rest of THAT record, so the next call
+         * receives the next datagram - the net/read datagram contract.
+         * The drain reads the remainder out of OpenSSL's record buffer;
+         * SSL_pending drops to 0 once this record is exhausted, before
+         * any later datagram is processed. */
+        while (SSL_pending(ssl) > 0) {
+            uint8_t discard[512];
+            int drop = SSL_read(ssl, discard, (int)sizeof(discard));
+            if (drop <= 0) break;
+        }
         return DTLS_RESULT_OK;
     }
     return dtls_ssl_result(ssl, ret);
@@ -125,6 +136,13 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     int32_t buf_start = buf->count;
 
     double timeout = parse_timeout_opt(argc, argv, 3);
+
+    /* n == 0 appends nothing and returns the buffer immediately with
+     * no I/O - the pending datagram is not consumed and no
+     * SSL_read(..., 0) runs (which would be misclassified as EOF). */
+    if (n == 0) {
+        return janet_wrap_buffer(buf);
+    }
 
     /* Try initial read */
     int32_t before = buf->count;

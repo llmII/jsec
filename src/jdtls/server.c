@@ -463,7 +463,8 @@ typedef struct {
  * data is placed in the provided buffer.
  */
 static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
-                              DTLSAddress *peer_addr, JanetBuffer *out_buf) {
+                              DTLSAddress *peer_addr, JanetBuffer *out_buf,
+                              int32_t nbytes) {
     /* Look up or create session for this peer */
     DTLSSession *session = dtls_server_get_session(server, peer_addr);
 
@@ -511,10 +512,16 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
     }
 
     /* Read application data from established session, sized from the
-     * datagram: SSL_peek runs before any buffer growth (nothing is
-     * reserved with no data available), and once a decrypted datagram is
-     * pending its exact size drives the growth and the read, so a
-     * datagram of any size is delivered intact. */
+     * datagram and capped at the caller's nbytes: SSL_peek runs before
+     * any buffer growth (nothing is reserved with no data available),
+     * and once a decrypted datagram is pending its exact size drives
+     * the growth and the read, so a datagram of any size is delivered
+     * intact up to the cap. A read capped below the datagram size, and
+     * a nbytes == 0 call, consume up to the cap and discard the rest
+     * of THAT record so the next call receives the next datagram - the
+     * net/recv-from datagram contract; nbytes == 0 therefore returns
+     * the peer address with 0 bytes appended (net/recv-from's
+     * address-returning shape) instead of the target buffer. */
     if (session->state == DTLS_STATE_ESTABLISHED) {
         uint8_t dummy;
         ERR_clear_error();
@@ -522,11 +529,27 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         if (ret > 0) {
             int32_t avail = (int32_t)SSL_pending(session->ssl);
             if (avail < 1) avail = 1;
-            janet_buffer_extra(out_buf, avail);
-            ERR_clear_error();
-            ret = SSL_read(session->ssl, out_buf->data + out_buf->count, avail);
+            int32_t to_copy = (nbytes < 0 || nbytes > avail) ? avail : nbytes;
+            if (to_copy > 0) {
+                janet_buffer_extra(out_buf, to_copy);
+                ERR_clear_error();
+                ret = SSL_read(session->ssl, out_buf->data + out_buf->count,
+                               to_copy);
+                if (ret > 0) {
+                    out_buf->count += ret;
+                }
+            } else {
+                ret = 1; /* nothing to copy: the record is discarded below */
+            }
+            /* Discard the unconsumed remainder of this record */
+            while (SSL_pending(session->ssl) > 0) {
+                uint8_t discard[512];
+                int drop = SSL_read(session->ssl, discard, (int)sizeof(discard));
+                if (drop <= 0) {
+                    break;
+                }
+            }
             if (ret > 0) {
-                out_buf->count += ret;
                 /* Return address (data is in buffer per Janet convention) */
                 DTLSAddress *ret_addr =
                     janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
@@ -675,7 +698,8 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
             Janet result = process_datagram(server, state->recv_buf,
                                             (int)bytes_transferred,
-                                            &peer_addr, state->buffer);
+                                            &peer_addr, state->buffer,
+                                            state->nbytes);
 
             if (janet_checktype(result, JANET_ABSTRACT)) {
                 /* Got application data - return to caller */
@@ -731,7 +755,8 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
                 /* Process datagram - may be handshake or app data */
                 Janet result = process_datagram(server, recv_buf, (int)n,
-                                                &peer_addr, state->buffer);
+                                                &peer_addr, state->buffer,
+                                                state->nbytes);
 
                 if (janet_checktype(result, JANET_ABSTRACT)) {
                     /* Got application data - return to caller */

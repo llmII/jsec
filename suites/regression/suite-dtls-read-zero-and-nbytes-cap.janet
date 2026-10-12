@@ -224,7 +224,7 @@
           (def buf @"")
           (def peer (dtls/recv-from server 4 buf))
           (assert peer "recv-from should return the peer address")
-          (assert (= "ABC" (string buf))
+          (assert (= "ABCD" (string buf))
                   (string/format
                     (string "dtls/recv-from with nbytes 4 put %s in "
                             "the buffer instead of the first 4 bytes "
