@@ -182,7 +182,6 @@ Janet cfun_load_key(int32_t argc, Janet *argv) {
 static const EVP_CIPHER *get_export_cipher(const char *name) {
     if (strcmp(name, "aes-256-cbc") == 0) return EVP_aes_256_cbc();
     if (strcmp(name, "aes-128-cbc") == 0) return EVP_aes_128_cbc();
-    if (strcmp(name, "des-ede3-cbc") == 0) return EVP_des_ede3_cbc();
     return NULL;
 }
 
@@ -217,7 +216,7 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
             if (!cipher) {
                 crypto_panic_param(
                     "unsupported cipher: %s (supported: aes-256-cbc, "
-                    "aes-128-cbc, des-ede3-cbc)",
+                    "aes-128-cbc)",
                     (const char *)cipher_kw);
             }
         }
@@ -238,7 +237,7 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
             if (!cipher) {
                 crypto_panic_param(
                     "unsupported cipher: %s (supported: aes-256-cbc, "
-                    "aes-128-cbc, des-ede3-cbc)",
+                    "aes-128-cbc)",
                     (const char *)cipher_kw);
             }
         }
