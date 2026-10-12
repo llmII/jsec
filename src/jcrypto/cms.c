@@ -80,14 +80,14 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
 
     /* Optional: trusted certificates for verification */
     STACK_OF(X509) *certs = NULL;
-    X509_STORE *store = NULL;
-    unsigned int flags = CMS_BINARY | (unsigned int)CMS_NO_SIGNER_CERT_VERIFY;
+    X509_STORE *store = X509_STORE_new();
+    BIO *dcont = NULL;
+    unsigned int flags = CMS_BINARY;
 
     if (argc > 1 && !janet_checktype(argv[1], JANET_NIL)) {
         /* Load trusted certs */
         JanetByteView trust_pem = janet_getbytes(argv, 1);
         BIO *trust_bio = BIO_new_mem_buf(trust_pem.bytes, trust_pem.len);
-        store = X509_STORE_new();
         X509 *trust_cert;
         while ((trust_cert =
                     PEM_read_bio_X509(trust_bio, NULL, NULL, NULL)) != NULL) {
@@ -95,15 +95,12 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
             X509_free(trust_cert);
         }
         BIO_free(trust_bio);
-        flags = CMS_BINARY; /* Enable full verification */
     }
 
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
         JanetByteView detached_data = janet_getbytes(argv, 2);
         flags |= (unsigned int)CMS_DETACHED;
-        /* Note: detached data handling would need additional implementation
-         */
-        (void)detached_data;
+        dcont = BIO_new_mem_buf(detached_data.bytes, detached_data.len);
     }
 
     /* Parse CMS */
@@ -112,13 +109,16 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
     BIO_free(cms_bio);
 
     if (!cms) {
+        if (dcont) BIO_free(dcont);
         if (store) X509_STORE_free(store);
         crypto_panic_ssl("failed to parse CMS data");
     }
 
     /* Verify and extract content */
     BIO *content = BIO_new(BIO_s_mem());
-    int verify_result = CMS_verify(cms, certs, store, NULL, content, flags);
+    int verify_result = CMS_verify(cms, certs, store, dcont, content, flags);
+    if (dcont) BIO_free(dcont);
+    ERR_clear_error();
 
     JanetTable *result = janet_table(3);
     janet_table_put(result, janet_ckeywordv("valid"),
