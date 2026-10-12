@@ -106,7 +106,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org341a8e7)).
+        -   `:security`: Table. Security options (see [Security Options](#org2bf9780)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -1553,6 +1553,7 @@ The `:security` option in `connect` and `accept` allows fine-grained control:
 -   `:curves`: Keyword or string. Supported elliptic curves (e.g., :prime256v1, "prime256v1:secp384r1").
 -   `:ca-file`: CA certificate (path or PEM content).
 -   `:ca-path`: CA directory path.
+-   `:ocsp-stapling`: Boolean (server only). Installs the OCSP stapling callback at context creation so an OCSP response set with `tls-stream/set-ocsp-response` staples to clients that request status. Calling `tls-stream/set-ocsp-response` installs the same callback on its own, so this option is not needed for stapling; a context that sets no response and leaves this unset serves no staple.
 
 **Note**: Keyword symbols are preferred for idiomatic Janet code.
 

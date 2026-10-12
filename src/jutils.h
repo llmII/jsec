@@ -126,12 +126,13 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
  */
 
 /* Apply security options to SSL_CTX
- * Accepts a Janet table with the following optional keys:
+ * Accepts a Janet table or struct with the following optional keys:
  *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3,
  * :DTLS1.2) :max-version - Maximum TLS/DTLS version :ciphers - Cipher suite
  * string (OpenSSL format) :curves - EC curves for ECDHE (e.g., :prime256v1 or
  * "prime256v1:secp384r1") :ca-file - CA file path or PEM string/buffer
  *   :ca-path - CA directory path
+ *   :ocsp-stapling - Arm OCSP response stapling on server contexts
  */
 int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls);
 

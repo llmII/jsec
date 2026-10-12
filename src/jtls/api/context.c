@@ -182,6 +182,13 @@ Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
         tls_panic_ssl("failed to set OCSP data");
     }
 
+    /* Arm stapling with the store: setting the response must be enough
+     * for it to staple when a client requests status, with no separate
+     * context option. Contexts that never set a response keep no
+     * callback. */
+    SSL_CTX_set_tlsext_status_cb(tls_ctx->ctx, jtls_ocsp_status_cb);
+    SSL_CTX_set_tlsext_status_arg(tls_ctx->ctx, NULL);
+
     return janet_wrap_nil();
 }
 

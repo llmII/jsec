@@ -39,7 +39,7 @@ static int parse_dtls_version(const char *ver_str) {
 /*============================================================================
  * APPLY SECURITY OPTIONS
  *============================================================================
- * Apply a Janet table of security options to an SSL_CTX.
+ * Apply a Janet table or struct of security options to an SSL_CTX.
  *
  * Supported options:
  *   :min-version - Minimum TLS/DTLS version (e.g., "TLS1.2", "DTLS1.2")
@@ -49,6 +49,7 @@ static int parse_dtls_version(const char *ver_str) {
  *   :curves      - EC curves for ECDHE (e.g., "prime256v1:secp384r1")
  *   :ca-file     - CA file path or PEM data
  *   :ca-path     - CA directory path
+ *   :ocsp-stapling - Arm OCSP response stapling on server contexts
  */
 int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls) {
     /* Always set secure minimum version default */

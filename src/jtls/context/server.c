@@ -37,6 +37,31 @@ static int extract_credential(Janet value, const char **out_path,
 }
 
 /*============================================================================
+ * HELPER: SECURITY OPTION LOOKUP
+ *============================================================================
+ * Read one key from a :security dictionary, whether it is given as a
+ * Janet table or a Janet struct.
+ */
+static Janet security_opt(Janet security_opts, const char *name) {
+    Janet key = janet_ckeywordv(name);
+    if (!janet_checktype(security_opts, JANET_TABLE) &&
+        !janet_checktype(security_opts, JANET_STRUCT)) {
+        return janet_wrap_nil();
+    }
+    const JanetKV *kvs = NULL;
+    int32_t len = 0;
+    int32_t cap = 0;
+    janet_dictionary_view(security_opts, &kvs, &len, &cap);
+    for (int32_t i = 0; i < cap; i++) {
+        if (!janet_checktype(kvs[i].key, JANET_NIL) &&
+            janet_equals(kvs[i].key, key)) {
+            return kvs[i].value;
+        }
+    }
+    return janet_wrap_nil();
+}
+
+/*============================================================================
  * HELPER: APPLY SESSION OPTIONS
  *============================================================================
  * Configure session cache, tickets, OCSP stapling from security options.
@@ -44,26 +69,18 @@ static int extract_credential(Janet value, const char **out_path,
 static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
     /* Handle session cache option - default enabled for server */
     int session_cache = 1;
-    if (janet_checktype(security_opts, JANET_TABLE)) {
-        JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet cache_opt =
-            janet_table_get(opts_table, janet_ckeywordv("session-cache"));
-        if (!janet_checktype(cache_opt, JANET_NIL)) {
-            session_cache = janet_truthy(cache_opt);
-        }
+    Janet cache_opt = security_opt(security_opts, "session-cache");
+    if (!janet_checktype(cache_opt, JANET_NIL)) {
+        session_cache = janet_truthy(cache_opt);
     }
     SSL_CTX_set_session_cache_mode(ctx, session_cache ? SSL_SESS_CACHE_SERVER
                                                       : SSL_SESS_CACHE_OFF);
 
     /* Handle session tickets */
     int tickets = 1;
-    if (janet_checktype(security_opts, JANET_TABLE)) {
-        JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ticket_opt =
-            janet_table_get(opts_table, janet_ckeywordv("session-tickets"));
-        if (!janet_checktype(ticket_opt, JANET_NIL)) {
-            tickets = janet_truthy(ticket_opt);
-        }
+    Janet ticket_opt = security_opt(security_opts, "session-tickets");
+    if (!janet_checktype(ticket_opt, JANET_NIL)) {
+        tickets = janet_truthy(ticket_opt);
     }
     if (!tickets) {
         SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
@@ -71,13 +88,9 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
 
     /* Handle OCSP stapling option */
     int ocsp_stapling = 0;
-    if (janet_checktype(security_opts, JANET_TABLE)) {
-        JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet ocsp_opt =
-            janet_table_get(opts_table, janet_ckeywordv("ocsp-stapling"));
-        if (!janet_checktype(ocsp_opt, JANET_NIL)) {
-            ocsp_stapling = janet_truthy(ocsp_opt);
-        }
+    Janet ocsp_opt = security_opt(security_opts, "ocsp-stapling");
+    if (!janet_checktype(ocsp_opt, JANET_NIL)) {
+        ocsp_stapling = janet_truthy(ocsp_opt);
     }
     if (ocsp_stapling) {
         SSL_CTX_set_tlsext_status_cb(ctx, jtls_ocsp_status_cb);
@@ -86,14 +99,10 @@ static void apply_session_options(SSL_CTX *ctx, Janet security_opts) {
 
     /* Get cache size from security options */
     long cache_size = 1000;
-    if (janet_checktype(security_opts, JANET_TABLE)) {
-        JanetTable *opts_table = janet_unwrap_table(security_opts);
-        Janet size_opt = janet_table_get(
-            opts_table, janet_ckeywordv("session-cache-size"));
-        if (janet_checktype(size_opt, JANET_NUMBER)) {
-            cache_size = (long)janet_unwrap_number(size_opt);
-            if (cache_size < 0) cache_size = 1000;
-        }
+    Janet size_opt = security_opt(security_opts, "session-cache-size");
+    if (janet_checktype(size_opt, JANET_NUMBER)) {
+        cache_size = (long)janet_unwrap_number(size_opt);
+        if (cache_size < 0) cache_size = 1000;
     }
     SSL_CTX_sess_set_cache_size(ctx, cache_size);
 
