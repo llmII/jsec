@@ -15,8 +15,39 @@
 
 #include "../internal.h"
 #ifndef _WIN32
+#include <arpa/inet.h>
 #include <sys/un.h>
 #endif
+
+/*============================================================================
+ * HELPER: OCSP STAPLING OPTION
+ *============================================================================
+ * True when per-connection options ask for an OCSP status request
+ * (top-level :ocsp-stapling, or the same key in :security).
+ */
+static int opts_ocsp_stapling(Janet opts) {
+    if (janet_checktype(opts, JANET_NIL)) return 0;
+    Janet v = janet_get(opts, janet_ckeywordv("ocsp-stapling"));
+    if (janet_checktype(v, JANET_NIL)) {
+        v = janet_get(janet_get(opts, janet_ckeywordv("security")),
+                      janet_ckeywordv("ocsp-stapling"));
+    }
+    return janet_truthy(v);
+}
+
+/*============================================================================
+ * HELPER: IP-literal host detection
+ *============================================================================*/
+/* An IP literal is not a DNS name: verification matches it through
+ * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
+ * the server_name extension. */
+static int host_is_ip_literal(const char *host) {
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!host) return 0;
+    return inet_pton(AF_INET, host, &a4) == 1 ||
+           inet_pton(AF_INET6, host, &a6) == 1;
+}
 
 /*============================================================================
  * WRAP - Wrap an existing stream with TLS
@@ -58,13 +89,17 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
     Janet security_opts = janet_wrap_nil();
     Janet alpn_opt = janet_wrap_nil();
     Janet session_opt = janet_wrap_nil();
+    Janet ca_opt = janet_wrap_nil();
     Janet opts = janet_wrap_nil();
 
     /* Check if argv[1] is a TLSContext */
     if (argc >= 2 && janet_checktype(argv[1], JANET_ABSTRACT) &&
-        janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx =
-            (TLSContext *)janet_getabstract(argv, 1, &tls_context_type);
+        janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx = (TLSContext *)janet_getabstract(
+            argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
@@ -105,14 +140,28 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
             security_opts = janet_get(opts, janet_ckeywordv("security"));
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
 
-            ctx =
-                jtls_create_server_ctx(cert, key, security_opts, alpn_opt, 1);
+            /* Handle server-side client certificate verification (mTLS) */
+            Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
+            Janet trusted_cert =
+                janet_get(opts, janet_ckeywordv("trusted-cert"));
+            Janet ca_file_opt = janet_get(opts, janet_ckeywordv("ca"));
+
+            /* Per-connection verify/trust/:security configuration must
+             * never mutate or inherit the process-shared cached server
+             * context: a wrap carrying any of those options gets its own
+             * private context (copy-on-write), and only default-configured
+             * wraps use and populate the cache. */
+            int shareable = !janet_truthy(verify_opt) &&
+                            janet_checktype(trusted_cert, JANET_NIL) &&
+                            janet_checktype(ca_file_opt, JANET_NIL) &&
+                            janet_checktype(security_opts, JANET_NIL);
+
+            ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt,
+                                         shareable);
             if (!ctx) {
                 tls_panic_ssl("failed to create server context");
             }
 
-            /* Handle server-side client certificate verification (mTLS) */
-            Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
             if (janet_truthy(verify_opt)) {
                 /* Require client certificate */
                 SSL_CTX_set_verify(
@@ -121,8 +170,6 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
 
                 /* Handle :trusted-cert option for trusting specific client
                  * certs */
-                Janet trusted_cert =
-                    janet_get(opts, janet_ckeywordv("trusted-cert"));
                 if (!janet_checktype(trusted_cert, JANET_NIL)) {
                     if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
                         SSL_CTX_free(ctx);
@@ -131,10 +178,9 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
                 }
 
                 /* Handle :ca option for CA file path */
-                Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
-                if (janet_checktype(ca_opt, JANET_STRING)) {
+                if (janet_checktype(ca_file_opt, JANET_STRING)) {
                     const char *ca_path =
-                        (const char *)janet_unwrap_string(ca_opt);
+                        (const char *)janet_unwrap_string(ca_file_opt);
                     if (SSL_CTX_load_verify_locations(ctx, ca_path, NULL) <=
                         0) {
                         SSL_CTX_free(ctx);
@@ -160,25 +206,31 @@ client_setup:
             /* Check for pre-built context first */
             Janet context_opt = janet_get(opts, janet_ckeywordv("context"));
             if (!janet_checktype(context_opt, JANET_NIL)) {
-                if (janet_checkabstract(context_opt, &tls_context_type)) {
-                    TLSContext *tls_ctx =
-                        (TLSContext *)janet_unwrap_abstract(context_opt);
-                    ctx = tls_ctx->ctx;
-                    SSL_CTX_up_ref(ctx);
-                    owns_ctx = 1;
-
-                    /* Still need hostname for SNI */
-                    Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
-                    if (janet_checktype(hn, JANET_STRING)) {
-                        hostname = (const char *)janet_unwrap_string(hn);
-                    }
-
-                    /* Check if context was created with verification */
-                    verify =
-                        (SSL_CTX_get_verify_mode(ctx) & SSL_VERIFY_PEER) != 0;
-
-                    goto common_setup;
+                if (!janet_checkabstract(context_opt,
+                                         jutils_get_context_type())) {
+                    tls_panic_config(":context must be a jsec/ssl-context");
                 }
+                TLSContext *tls_ctx =
+                    (TLSContext *)janet_unwrap_abstract(context_opt);
+                if (tls_ctx->is_dtls) {
+                    tls_panic_config(
+                        "cannot use DTLS context for TLS connection");
+                }
+                ctx = tls_ctx->ctx;
+                SSL_CTX_up_ref(ctx);
+                owns_ctx = 1;
+
+                /* Still need hostname for SNI */
+                Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
+                if (janet_checktype(hn, JANET_STRING)) {
+                    hostname = (const char *)janet_unwrap_string(hn);
+                }
+
+                /* Check if context was created with verification */
+                verify =
+                    (SSL_CTX_get_verify_mode(ctx) & SSL_VERIFY_PEER) != 0;
+
+                goto common_setup;
             }
 
             Janet verify_opt = janet_get(opts, janet_ckeywordv("verify"));
@@ -188,6 +240,12 @@ client_setup:
             security_opts = janet_get(opts, janet_ckeywordv("security"));
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
             session_opt = janet_get(opts, janet_ckeywordv("session"));
+            if (!janet_checktype(session_opt, JANET_NIL) &&
+                !janet_checktype(session_opt, JANET_STRING) &&
+                !janet_checktype(session_opt, JANET_BUFFER)) {
+                tls_panic_param("session must be a byte string or buffer");
+            }
+            ca_opt = janet_get(opts, janet_ckeywordv("ca"));
 
             if (!hostname) {
                 Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
@@ -195,19 +253,16 @@ client_setup:
                     hostname = (const char *)janet_unwrap_string(hn);
                 }
             }
-
-            /* :verify-hostname option allows verifying cert against a
-             * different hostname than SNI Useful for: connecting to IP
-             * addresses with hostname certs, CDNs, load balancers */
-            Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
-            if (janet_checktype(vh, JANET_STRING)) {
-                verify_hostname = (const char *)janet_unwrap_string(vh);
-            }
         }
 
-        ctx = jtls_create_client_ctx(verify, security_opts);
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
         if (!ctx) {
             tls_panic_ssl("failed to create client context");
+        }
+
+        /* Top-level :ocsp-stapling opts in status requests on the wire */
+        if (opts_ocsp_stapling(opts)) {
+            SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp);
         }
 
         /* Handle :trusted-cert option for certificate pinning */
@@ -265,6 +320,12 @@ common_setup:
 
         if (janet_checktype(session_opt, JANET_NIL)) {
             session_opt = janet_get(opts, janet_ckeywordv("session"));
+            if (!janet_checktype(session_opt, JANET_NIL) &&
+                !janet_checktype(session_opt, JANET_STRING) &&
+                !janet_checktype(session_opt, JANET_BUFFER)) {
+                SSL_CTX_free(ctx);
+                tls_panic_param("session must be a byte string or buffer");
+            }
         }
         if (janet_checktype(alpn_opt, JANET_NIL)) {
             alpn_opt = janet_get(opts, janet_ckeywordv("alpn"));
@@ -290,21 +351,49 @@ common_setup:
         }
     }
 
+    /* :verify-hostname option allows verifying cert against a different
+     * hostname than SNI. Parsed here in common_setup so every client call
+     * shape honors it: positional TLSContext, :context, and ad-hoc client
+     * options alike */
+    if (!is_server && !janet_checktype(opts, JANET_NIL)) {
+        Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
+        if (janet_checktype(vh, JANET_STRING)) {
+            verify_hostname = (const char *)janet_unwrap_string(vh);
+        }
+    }
+
     /* Create the TLS stream */
     TLSStream *tls =
         jtls_setup_stream(transport, ctx, is_server, owns_ctx, buffer_size,
                           tcp_nodelay, track_handshake_time);
 
+    /* Per-connection :ocsp-stapling arms the status request on the
+     * connection itself, which is the only lever when the context is
+     * shared */
+    if (!is_server && opts_ocsp_stapling(opts)) {
+        SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
+    }
+
     /* Set SNI hostname for client */
     if (hostname && !is_server) {
-        SSL_set_tlsext_host_name(tls->ssl, hostname);
+        /* IP literals send no server_name extension at all */
+        if (!host_is_ip_literal(hostname)) {
+            SSL_set_tlsext_host_name(tls->ssl, hostname);
+        }
         /* Enable hostname verification for security
          * Use verify_hostname if provided, otherwise use hostname (SNI) */
         if (verify) {
             const char *host_to_verify =
                 verify_hostname ? verify_hostname : hostname;
             SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            if (!SSL_set1_host(tls->ssl, host_to_verify)) {
+            if (host_is_ip_literal(host_to_verify)) {
+                if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
+                                                   host_to_verify)) {
+                    tls_panic_verify(
+                        "failed to set hostname verification for %s",
+                        host_to_verify);
+                }
+            } else if (!SSL_set1_host(tls->ssl, host_to_verify)) {
                 tls_panic_verify("failed to set hostname verification for %s",
                                  host_to_verify);
             }
@@ -313,7 +402,13 @@ common_setup:
         /* verify_hostname without hostname - just set hostname verification
          */
         SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        if (!SSL_set1_host(tls->ssl, verify_hostname)) {
+        if (host_is_ip_literal(verify_hostname)) {
+            if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
+                                               verify_hostname)) {
+                tls_panic_verify("failed to set hostname verification for %s",
+                                 verify_hostname);
+            }
+        } else if (!SSL_set1_host(tls->ssl, verify_hostname)) {
             tls_panic_verify("failed to set hostname verification for %s",
                              verify_hostname);
         }
@@ -334,26 +429,14 @@ common_setup:
         }
     }
 
-    /* Set session for resumption (client) */
+    /* Set session for resumption (client; validated at option parse) */
     if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
-        JanetByteView session_data;
-        if (janet_checktype(session_opt, JANET_STRING)) {
-            session_data.bytes = janet_unwrap_string(session_opt);
-            session_data.len =
-                janet_string_length(janet_unwrap_string(session_opt));
-        } else if (janet_checktype(session_opt, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_opt);
-            session_data.bytes = buf->data;
-            session_data.len = buf->count;
-        } else {
-            session_data.bytes = NULL;
-            session_data.len = 0;
-        }
-
-        if (session_data.bytes && session_data.len > 0) {
-            const unsigned char *der_ptr = session_data.bytes;
+        const uint8_t *bytes;
+        int32_t len;
+        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+            const unsigned char *der_ptr = bytes;
             SSL_SESSION *session =
-                d2i_SSL_SESSION(NULL, &der_ptr, session_data.len);
+                d2i_SSL_SESSION(NULL, &der_ptr, len);
             if (session) {
                 SSL_set_session(tls->ssl, session);
                 SSL_SESSION_free(session);
@@ -500,10 +583,28 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (!janet_checktype(opts, JANET_NIL)) {
                 Janet context_opt =
                     janet_get(opts, janet_ckeywordv("context"));
-                if (janet_checktype(context_opt, JANET_ABSTRACT) &&
-                    janet_checkabstract(context_opt, &tls_context_type)) {
+                if (!janet_checktype(context_opt, JANET_NIL)) {
+                    if (!janet_checkabstract(context_opt,
+                                             jutils_get_context_type())) {
+                        janet_free(hostname);
+                        janet_cancel(fiber,
+                                     janet_cstringv("[TLS:CONFIG] :context "
+                                                    "must be a jsec/ssl-"
+                                                    "context"));
+                        janet_async_end(fiber);
+                        return;
+                    }
                     TLSContext *tls_ctx =
                         (TLSContext *)janet_unwrap_abstract(context_opt);
+                    if (tls_ctx->is_dtls) {
+                        janet_free(hostname);
+                        janet_cancel(
+                            fiber,
+                            janet_cstringv("[TLS:CONFIG] cannot use DTLS "
+                                           "context for TLS connection"));
+                        janet_async_end(fiber);
+                        return;
+                    }
                     ctx = tls_ctx->ctx;
                     SSL_CTX_up_ref(ctx);
                     owns_ctx = 1;
@@ -518,18 +619,27 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Create context if not provided */
             if (!ctx) {
                 Janet security_opts = janet_wrap_nil();
+                Janet ca_opt = janet_wrap_nil();
                 if (!janet_checktype(opts, JANET_NIL)) {
                     security_opts =
                         janet_get(opts, janet_ckeywordv("security"));
+                    ca_opt = janet_get(opts, janet_ckeywordv("ca"));
                 }
 
-                ctx = jtls_create_client_ctx(verify, security_opts);
+                ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
                 if (!ctx) {
                     janet_free(hostname);
                     janet_cancel(fiber, janet_cstringv(
                                             "failed to create SSL context"));
                     janet_async_end(fiber);
                     return;
+                }
+
+                /* Top-level :ocsp-stapling opts in status requests on the
+                 * wire */
+                if (opts_ocsp_stapling(opts)) {
+                    SSL_CTX_set_tlsext_status_type(ctx,
+                                                   TLSEXT_STATUSTYPE_ocsp);
                 }
 
                 /* Handle trusted-cert option (only when creating new context)
@@ -595,6 +705,21 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 jtls_setup_stream(stream, ctx, 0, owns_ctx, buffer_size,
                                   tcp_nodelay, track_handshake_time);
 
+            /* Per-connection :ocsp-stapling arms the status request on
+             * the connection itself, which is the only lever when the
+             * context is shared. It also emits the first handshake flight
+             * with the connect so the request reaches the server without
+             * waiting for application I/O; the handshake still completes
+             * on first I/O. Without the option nothing changes. */
+            if (opts_ocsp_stapling(opts)) {
+                TLSState kick;
+                SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
+                memset(&kick, 0, sizeof(TLSState));
+                kick.tls = tls;
+                kick.op = TLS_OP_HANDSHAKE;
+                jtls_process_operation(&kick);
+            }
+
             /* Check for :hostname option to override SNI (allows connecting
              * by IP but using hostname for SNI) */
             const char *sni_hostname = hostname;
@@ -617,7 +742,7 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             }
 
             /* Set SNI hostname */
-            if (sni_hostname) {
+            if (sni_hostname && !host_is_ip_literal(sni_hostname)) {
                 SSL_set_tlsext_host_name(tls->ssl, sni_hostname);
             }
 
@@ -629,7 +754,12 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (cert_verify_host) {
                     SSL_set_hostflags(tls->ssl,
                                       X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-                    SSL_set1_host(tls->ssl, cert_verify_host);
+                    if (host_is_ip_literal(cert_verify_host)) {
+                        X509_VERIFY_PARAM_set1_ip_asc(
+                            SSL_get0_param(tls->ssl), cert_verify_host);
+                    } else {
+                        SSL_set1_host(tls->ssl, cert_verify_host);
+                    }
                 }
             }
 
@@ -673,6 +803,22 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
             port = janet_getcstring(argv, 1);
         }
         if (argc >= 3) opts = argv[2];
+    }
+
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        Janet ctx_opt = janet_get(opts, janet_ckeywordv("context"));
+        if (!janet_checktype(ctx_opt, JANET_NIL)) {
+            if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
+                tls_panic_config(":context must be a jsec/ssl-context");
+            }
+            TLSContext *shared_ctx =
+                (TLSContext *)janet_unwrap_abstract(ctx_opt);
+            if (shared_ctx->is_dtls) {
+                tls_panic_config(
+                    "cannot use DTLS context for TLS connection");
+            }
+        }
     }
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;

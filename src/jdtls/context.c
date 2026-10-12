@@ -2,7 +2,8 @@
  * context.c - DTLS reusable context implementation
  *
  * Now uses the unified SSLContext type from jshared.c.
- * The dtls_context_type macro aliases ssl_context_type.
+ * Type identity is resolved through jutils_get_context_type; there is no
+ * per-module dtls_context_type object.
  *
  * A DTLSContext (SSLContext) can be passed to dtls/connect or dtls/listen via
  * the :context option to reuse SSL_CTX settings across multiple connections.

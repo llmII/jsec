@@ -183,7 +183,7 @@
 
             # Test session directly
             (let [session (dtls-stream/session client)]
-              (assert (buffer? session) "session returns buffer"))
+              (assert (string? session) "session returns byte string"))
 
             # Test session-reused? directly
             (let [reused (dtls-stream/session-reused? client)]

@@ -16,9 +16,30 @@
 #endif
 
 #include "../internal.h"
+#include <math.h>
 #ifndef JANET_WINDOWS
 #include <sys/un.h>
+#include <time.h>
 #endif
+
+/*============================================================================
+ * ACCEPT ERROR BACK-OFF
+ *============================================================================
+ * Brief pause taken after a hard accept error before returning to the
+ * event loop. A persistent failure (EMFILE/ENFILE/EBADF) leaves the
+ * listener readable, so retrying without a pause busy-loops the event
+ * callback and starves every other fiber in the process.
+ */
+static void tls_accept_backoff(void) {
+#ifdef JANET_WINDOWS
+    Sleep(1);
+#else
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1000000L; /* 1 ms */
+    nanosleep(&ts, NULL);
+#endif
+}
 
 /*============================================================================
  * ACCEPT-LOOP - Continuously accept TLS connections
@@ -210,8 +231,12 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                         /* No more connections ready - wait for next event */
                         break;
                     }
-                    /* Other error - continue trying */
-                    continue;
+                    /* Other accept error - back off briefly and stop
+                     * draining, matching Janet core's accept handling.
+                     * Continuing here spins inside the event callback on
+                     * persistent errors like EMFILE/ENFILE/EBADF. */
+                    tls_accept_backoff();
+                    break;
                 }
 
                 /* Got a connection - set non-blocking */
@@ -267,8 +292,12 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
     SSL_CTX *ctx = NULL;
     int owns_ctx = 0;
 
-    if (janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx = janet_getabstract(argv, 1, &tls_context_type);
+    if (janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx =
+            janet_getabstract(argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
@@ -366,6 +395,20 @@ Janet cfun_server(int32_t argc, Janet *argv) {
     return cfun_listen(argc, argv);
 }
 
+/* Method table for the raw listener JanetStream returned by cfun_listen.
+ * The default Janet stream method table lacks :localname and :accept, so
+ * the listener gets its own table: :localname works via cfun_localname's
+ * core/stream dispatch, and :accept / :accept-loop wrap with TLS. */
+static const JanetMethod tls_listener_methods[] = {
+    {"close", janet_cfun_stream_close},
+    {"localname", cfun_localname},
+    {"read", janet_cfun_stream_read},
+    {"chunk", janet_cfun_stream_chunk},
+    {"write", janet_cfun_stream_write},
+    {"accept", cfun_accept},
+    {"accept-loop", cfun_accept_loop},
+    {NULL, NULL}};
+
 /*============================================================================
  * LISTEN - Create a TCP/Unix listener for TLS server
  *============================================================================
@@ -443,10 +486,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         }
 #endif
 
-        /* Remove existing socket file (if not abstract) */
-        if (unix_path[0] != '@') {
-            unlink(unix_path);
-        }
+        /* Leave any pre-existing path in place: matching Janet's
+         * net/listen, bind must fail EADDRINUSE on an occupied path
+         * rather than unlinking it first. */
 
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd == -1) {
@@ -526,9 +568,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
 #endif
 
     /* Return a Janet stream */
-    return janet_wrap_abstract(
-        janet_stream((JanetHandle)fd,
-                     JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
+    return janet_wrap_abstract(janet_stream(
+        (JanetHandle)fd, JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE,
+        tls_listener_methods));
 }
 
 /*============================================================================
@@ -609,10 +651,20 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Nothing to mark - ctx is not a Janet value */
             break;
 
-        case JANET_ASYNC_EVENT_CLOSE:
+        case JANET_ASYNC_EVENT_DEINIT:
+            /* Every terminal path ends here through janet_async_end. A
+             * cancelled (ev/cancel) or timed-out accept never reaches the
+             * success path, so release a still-owned context; successful
+             * accepts transfer ownership to the TLS stream first and leave
+             * owns_ctx cleared. */
             if (state && state->owns_ctx && state->ctx) {
                 SSL_CTX_free(state->ctx);
+                state->ctx = NULL;
+                state->owns_ctx = 0;
             }
+            break;
+
+        case JANET_ASYNC_EVENT_CLOSE:
 #ifdef JANET_WINDOWS
             if (state && state->accept_socket != INVALID_SOCKET) {
                 closesocket(state->accept_socket);
@@ -626,9 +678,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_INIT:
             /* Windows: Start AcceptEx operation */
             if (tls_start_acceptex_single(state, listener, fiber) < 0) {
-                if (state->owns_ctx && state->ctx) {
-                    SSL_CTX_free(state->ctx);
-                }
                 janet_cancel(fiber,
                              janet_cstringv("Failed to start AcceptEx"));
                 janet_async_end(fiber);
@@ -647,9 +696,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                            SO_UPDATE_ACCEPT_CONTEXT, (char *)&lsock,
                            sizeof(lsock)) != 0) {
                 closesocket(state->accept_socket);
-                if (state->owns_ctx && state->ctx) {
-                    SSL_CTX_free(state->ctx);
-                }
                 janet_cancel(
                     fiber, janet_cstringv("Failed to update accept context"));
                 janet_async_end(fiber);
@@ -730,9 +776,6 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 int sock_err = jsec_socket_errno;
                 if (sock_err != JSEC_EAGAIN && sock_err != JSEC_EWOULDBLOCK) {
                     /* Real error */
-                    if (state->owns_ctx && state->ctx) {
-                        SSL_CTX_free(state->ctx);
-                    }
                     janet_cancel(fiber, janet_cstringv(
                                             jsec_socket_strerror(sock_err)));
                     janet_async_end(fiber);
@@ -755,8 +798,12 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     SSL_CTX *ctx = NULL;
     int owns_ctx = 0;
 
-    if (janet_checkabstract(argv[1], &tls_context_type)) {
-        TLSContext *tls_ctx = janet_getabstract(argv, 1, &tls_context_type);
+    if (janet_checkabstract(argv[1], jutils_get_context_type())) {
+        TLSContext *tls_ctx =
+            janet_getabstract(argv, 1, jutils_get_context_type());
+        if (tls_ctx->is_dtls) {
+            tls_panic_config("cannot use DTLS context for TLS connection");
+        }
         ctx = tls_ctx->ctx;
         SSL_CTX_up_ref(ctx);
         owns_ctx = 1;
@@ -821,6 +868,11 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
     state->buffer_size = buffer_size;
     state->tcp_nodelay = tcp_nodelay;
     state->track_handshake_time = track_handshake_time;
+
+    /* Optional timeout: arm like timed Janet I/O (net/accept, ev/read) so
+     * the fiber raises "timeout" when the deadline expires. */
+    double to = janet_optnumber(argv, argc, 2, INFINITY);
+    if (isinf(to) == 0) janet_addtimeout(to);
 
     /* Start async accept operation */
     janet_async_start(listener, JANET_ASYNC_LISTEN_READ, tls_accept_callback,

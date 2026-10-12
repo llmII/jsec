@@ -113,7 +113,9 @@ void jtls_module_init(JanetTable *env) {
          "Create a TCP listener socket for TLS server.\n"
          "Options table can include:\n"
          "  :backlog - listen backlog size (default 1024)\n"
-         "Returns a stream usable with net/localname and accept.\n"},
+         "Returns a stream usable with net/localname and accept.\n"
+         "The listener supports (:localname listener) and\n"
+         "(tls-stream/localname listener) as well as net/localname.\n"},
         {"accept", cfun_accept,
          "(accept listener context &opt timeout)\n\n"
          "Accept a connection on a listener and wrap with TLS.\n"
@@ -142,6 +144,16 @@ void jtls_module_init(JanetTable *env) {
          "(shutdown stream &opt direction)\n\n"
          "Perform TLS shutdown but keep underlying socket open.\n"
          "Useful for transitioning back to raw TCP.\n"},
+        {"localname", cfun_localname,
+         "(localname stream)\n\n"
+         "Get the local address of a TLS stream or listener as a "
+         "[host port] tuple\n"
+         "(or [unix-path] tuple for Unix domain sockets)."},
+        {"peername", cfun_peername,
+         "(peername stream)\n\n"
+         "Get the peer address of a connected TLS stream as a "
+         "[host port] tuple\n"
+         "(or [unix-path] tuple for Unix domain sockets)."},
         {"session-reused?", cfun_session_reused,
          "(session-reused? stream)\n\n"
          "Check if TLS session was resumed from cache.\n"},
@@ -187,6 +199,15 @@ void jtls_module_init(JanetTable *env) {
          "(get-handshake-time stream)\n\n"
          "Get handshake duration in seconds as a floating-point number.\n"
          "Returns nil if handshake hasn't completed yet.\n"},
+        {"get-peer-cert", cfun_get_peer_cert,
+         "(get-peer-cert stream)\n\n"
+         "Export the peer certificate as an immutable X.509 DER byte "
+         "string.\n"
+         "Returns nil when there is no peer certificate: before the "
+         "handshake\n"
+         "completes or when the peer presented none. Raises on a closed "
+         "stream.\n"
+         "Call after handshake completes.\n"},
         {NULL, NULL, NULL}};
 
     janet_cfuns(env, "jsec/tls", cfuns);
