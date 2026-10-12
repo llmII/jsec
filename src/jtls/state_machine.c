@@ -586,16 +586,6 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                 tls->pending_write = NULL;
             }
 
-            /* For TLS_OP_CLOSE, close transport in both sync and async cases
-             */
-            if (state->op == TLS_OP_CLOSE) {
-                if (tls->transport &&
-                    !(tls->transport->flags & JANET_STREAM_CLOSED)) {
-                    janet_stream_close(tls->transport);
-                }
-                tls->stream.flags |= JANET_STREAM_CLOSED;
-            }
-
             if (is_async) {
                 Janet result;
 
@@ -630,6 +620,26 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                  * heap-allocated) */
                 fiber->ev_state = NULL;
                 janet_async_end(fiber);
+            }
+
+            /* For TLS_OP_CLOSE, close transport in both sync and async
+             * cases. In the async case this must run after the schedule
+             * and detach above: the close completed through a WANT_WRITE
+             * suspension, so the fiber is still registered as the
+             * transport's write fiber, and janet_stream_close delivers
+             * CLOSE to that registration. The CLOSE case of
+             * jtls_async_callback cancels the fiber with "Connection
+             * closed", and that janet_cancel queues a newer task which
+             * supersedes the result just scheduled - only the newest
+             * schedule runs. janet_async_end has detached the fiber, so
+             * the CLOSE now reaches only fibers still legitimately bound
+             * to the transport. */
+            if (state->op == TLS_OP_CLOSE) {
+                if (tls->transport &&
+                    !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+                    janet_stream_close(tls->transport);
+                }
+                tls->stream.flags |= JANET_STREAM_CLOSED;
             }
             return 1;
         }
