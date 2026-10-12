@@ -194,6 +194,7 @@ int dtls_generate_cookie(SSL *ssl, unsigned char *cookie,
         struct sockaddr_in s4;
         struct sockaddr_in6 s6;
     } peer;
+    memset(&peer, 0, sizeof(peer));
 
     /* BIO_dgram_get_peer returns address for dgram BIO */
     if (BIO_dgram_get_peer(bio, &peer) <= 0) {

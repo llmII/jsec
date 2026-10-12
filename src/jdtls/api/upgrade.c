@@ -87,6 +87,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     /* Get peer address from socket */
     struct sockaddr_storage peer_addr;
+    memset(&peer_addr, 0, sizeof(peer_addr));
     socklen_t peer_len = sizeof(peer_addr);
     if (getpeername(fd, (struct sockaddr *)&peer_addr, &peer_len) < 0) {
         dtls_panic_socket(

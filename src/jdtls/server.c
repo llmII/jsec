@@ -156,6 +156,7 @@ static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
         struct sockaddr_in s4;
         struct sockaddr_in6 s6;
     } peer;
+    memset(&peer, 0, sizeof(peer));
     socklen_t peerlen = sizeof(peer);
 
     /* For memory BIO, peer address should be stored in ex_data */
@@ -538,6 +539,7 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
     /* Reset overlapped struct */
     memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
     state->wsa_flags = 0;
+    memset(&state->peer_addr, 0, sizeof(state->peer_addr));
     state->peer_addrlen = sizeof(state->peer_addr);
     state->bytes_received = 0;
 
@@ -667,6 +669,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             while (1) {
                 uint8_t recv_buf[65536];
                 DTLSAddress peer_addr;
+                memset(&peer_addr, 0, sizeof(peer_addr));
                 peer_addr.addrlen = sizeof(peer_addr.addr);
 
                 ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
@@ -870,6 +873,7 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     DTLSServer *server = janet_getabstract(argv, 0, &dtls_server_type);
 
     struct sockaddr_storage addr;
+    memset(&addr, 0, sizeof(addr));
     socklen_t addrlen = sizeof(addr);
 
     if (getsockname((jsec_socket_t)server->transport->handle,
