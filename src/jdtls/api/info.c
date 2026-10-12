@@ -201,32 +201,37 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
  * Set session data for resumption before connect.
  * The session-data should be a byte string or buffer from a previous
  * dtls/get-session call.
- * Returns true if session was set successfully, false otherwise.
+ * Returns nil on success, matching tls/set-session. Raises when the
+ * session data does not parse or cannot be attached, draining the
+ * OpenSSL error queue.
  */
 Janet cfun_dtls_set_session(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
     if (!client->ssl) {
-        return janet_wrap_false();
+        dtls_panic_io("stream not initialized");
     }
 
     JanetByteView bytes = janet_getbytes(argv, 1);
-    if (bytes.len == 0) {
-        return janet_wrap_false();
-    }
 
     /* Deserialize session from DER */
     const unsigned char *p = bytes.bytes;
-    SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, bytes.len);
+    SSL_SESSION *session =
+        (bytes.bytes && bytes.len > 0) ? d2i_SSL_SESSION(NULL, &p, bytes.len)
+                                       : NULL;
     if (!session) {
-        return janet_wrap_false();
+        dtls_panic_ssl("failed to parse session data");
     }
 
-    int result = SSL_set_session(client->ssl, session);
+    int ret = SSL_set_session(client->ssl, session);
     SSL_SESSION_free(session);
 
-    return janet_wrap_boolean(result == 1);
+    if (ret != 1) {
+        dtls_panic_ssl("failed to set session");
+    }
+
+    return janet_wrap_nil();
 }
 
 /*

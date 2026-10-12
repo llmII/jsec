@@ -316,13 +316,19 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     if (!janet_checktype(session_opt, JANET_NIL)) {
         const uint8_t *bytes;
         int32_t len;
-        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
-            const unsigned char *p = bytes;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
-            if (session) {
-                SSL_set_session(client->ssl, session);
-                SSL_SESSION_free(session);
-            }
+        if (!janet_bytes_view(session_opt, &bytes, &len)) {
+            dtls_panic_param("session must be a byte string or buffer");
+        }
+        const unsigned char *p = bytes;
+        SSL_SESSION *session =
+            (len > 0) ? d2i_SSL_SESSION(NULL, &p, len) : NULL;
+        if (!session) {
+            dtls_panic_ssl("failed to parse session data");
+        }
+        int ret = SSL_set_session(client->ssl, session);
+        SSL_SESSION_free(session);
+        if (ret != 1) {
+            dtls_panic_ssl("failed to set session");
         }
     }
 

@@ -115,7 +115,8 @@ static const JanetReg client_cfuns[] = {
      "Set session data for resumption.\n"
      "The session-data should be a byte string or buffer from a previous "
      "dtls/get-session call.\n"
-     "Returns true if session was set successfully, false otherwise."},
+     "Returns nil on success, matching tls/set-session. Raises when the "
+     "session data does not parse or cannot be attached."},
     {"trust-cert", cfun_dtls_trust_cert,
      "(dtls/trust-cert client cert-pem)\n\n"
      "Trust a specific certificate for this connection.\n"

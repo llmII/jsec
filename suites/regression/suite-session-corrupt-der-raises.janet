@@ -68,7 +68,10 @@
               (do
                 (def addr1 (:recv-from server 1024 (buffer/new 1024)))
                 (when addr1 (:send-to server addr1 "pong"))
-                (forever (:recv-from server 1024 (buffer/new 1024))))
+                (forever
+                  (def drain-peer
+                    (:recv-from server 1024 (buffer/new 1024)))
+                  (when (nil? drain-peer) (break))))
               ([_] nil))))
 
         (def conn (tls/connect "127.0.0.1" (string port)
@@ -102,7 +105,10 @@
               (do
                 (def addr1 (:recv-from server 1024 (buffer/new 1024)))
                 (when addr1 (:send-to server addr1 "pong"))
-                (forever (:recv-from server 1024 (buffer/new 1024))))
+                (forever
+                  (def drain-peer
+                    (:recv-from server 1024 (buffer/new 1024)))
+                  (when (nil? drain-peer) (break))))
               ([_] nil))))
 
         (def conn (tls/connect "127.0.0.1" (string port)
@@ -133,7 +139,9 @@
         (ev/go
           (fn []
             (try
-              (forever (:recv-from server 1024 (buffer/new 1024)))
+              (forever
+                (def drain-peer (:recv-from server 1024 (buffer/new 1024)))
+                (when (nil? drain-peer) (break)))
               ([_] nil))))
 
         # (c1) dtls/connect with explicit corrupt :session bytes must
@@ -160,7 +168,9 @@
         (ev/go
           (fn []
             (try
-              (forever (:recv-from server 1024 (buffer/new 1024)))
+              (forever
+                (def drain-peer (:recv-from server 1024 (buffer/new 1024)))
+                (when (nil? drain-peer) (break)))
               ([_] nil))))
 
         (def raw (net/connect "127.0.0.1" (string port) :datagram))

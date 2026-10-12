@@ -323,7 +323,8 @@ These methods are available on TLS stream objects. Access via method syntax
   not re-exported from the ~jsec/tls~ facade.
 
 - ~(:set-session stream data)~ or ~(tls-stream/set-session stream data)~
-  Sets session data (usually passed in ~connect~ options instead)
+  Sets session data (usually passed in ~connect~ options instead). Returns
+  ~nil~ on success; raises on corrupt or unattachable session data
 
 *** TLS Operations
 
@@ -526,7 +527,8 @@ syntax ~(:method obj args...)~ or import ~jsec/dtls-stream~ for function version
     re-exported from the jsec/tls facade.
 
 - ~(:set-session client data)~ or ~(dtls-stream/set-session client data)~
-  Sets session data (byte string or buffer)
+  Sets session data (byte string or buffer). Returns ~nil~ on success;
+  raises on corrupt or unattachable session data
 
 *** DTLS Operations
 
