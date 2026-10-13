@@ -329,7 +329,10 @@ typedef enum {
     DTLS_RESULT_OK = 0,     /* Operation complete */
     DTLS_RESULT_WANT_READ,  /* Need to wait for readable */
     DTLS_RESULT_WANT_WRITE, /* Need to wait for writable */
-    DTLS_RESULT_EOF,        /* Peer closed */
+    DTLS_RESULT_EOF,        /* Peer closed cleanly (close_notify) */
+    DTLS_RESULT_UNEXPECTED_EOF, /* Peer closed without close_notify:
+                                 * a truncation; read surfaces raise
+                                 * JSEC_UNEXPECTED_EOF_ERROR */
     DTLS_RESULT_ERROR       /* Error occurred */
 } DTLSResult;
 

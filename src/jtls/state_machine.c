@@ -102,28 +102,36 @@ void jtls_keylog_callback(const SSL *ssl, const char *line) {
 }
 
 /*============================================================================
- * HELPER: Record handshake completion time if just finished
+ * HELPER: Record handshake completion on implicit completion
  *============================================================================
- * OpenSSL can complete the handshake implicitly during SSL_read/SSL_write.
- * This helper checks if the handshake just completed and records the
- * timestamp.
+ * OpenSSL can complete the handshake implicitly during SSL_read/SSL_write,
+ * the lazy path taken by accepted streams (handshake on first I/O). This
+ * helper marks the connection TLS_CONN_READY whenever the handshake has
+ * finished - readiness must not depend on the handshake-timing option,
+ * or a lazy-handshake stream closes without close_notify (cfun_close
+ * force-closes anything not TLS_CONN_READY). The completion timestamp is
+ * recorded only when handshake timing is tracked.
  */
 static inline void check_record_handshake_time(TLSStream *tls) {
-    if (tls->track_handshake_time && tls->conn_state != TLS_CONN_READY &&
-        SSL_is_init_finished(tls->ssl) && tls->ts_handshake.tv_sec == 0 &&
-        tls->ts_handshake.tv_nsec == 0) {
-        clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
+    if (tls->conn_state != TLS_CONN_READY && SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
+        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
+            tls->ts_handshake.tv_nsec == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
+        }
     }
 }
 
 /*============================================================================
- * HELPER: Resolve an EOF-shaped peer close for an operation
+ * HELPER: Resolve a clean close_notify for an operation
  *============================================================================
- * SSL_ERROR_ZERO_RETURN and SSL_ERROR_SYSCALL with ret 0 or sock_err 0
- * all mean the peer closed cleanly. That legitimately ends only the
- * read-style operations: a write still holding bytes would silently drop
- * them, and a handshake that never reached TLS_CONN_READY has failed.
+ * SSL_ERROR_ZERO_RETURN is the only clean close: the peer sent the
+ * close_notify alert. An EOF-shaped SSL_ERROR_SYSCALL (ret 0 or sock_err
+ * 0) is NOT clean - it is a truncation without close_notify and raises
+ * JSEC_UNEXPECTED_EOF_ERROR in handle_ssl_error. A clean close
+ * legitimately ends only the read-style operations: a write still holding
+ * bytes would silently drop them, and a handshake that never reached
+ * TLS_CONN_READY has failed.
  * Returns TLS_IO_COMPLETE where completion is honest, otherwise fills
  * state->error_msg and returns TLS_IO_ERROR.
  */
@@ -183,8 +191,14 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
                 return has_data ? TLS_IO_COMPLETE : TLS_IO_WANT_BOTH;
             }
             if (ret == 0 || sock_err == 0) {
-                /* EOF: a clean close cannot complete every operation */
-                return handle_eof_close(state, op_name);
+                /* Unexpected EOF: the transport ended without a
+                 * close_notify, so the stream is truncated, not
+                 * complete. Normalise the 1.1.1/LibreSSL surface of the
+                 * condition into the one documented error (the OpenSSL
+                 * 3.x surface is the SSL_ERROR_SSL arm below). */
+                snprintf(state->error_msg, sizeof(state->error_msg), "%s",
+                         JSEC_UNEXPECTED_EOF_ERROR);
+                return TLS_IO_ERROR;
             }
 #ifdef JANET_WINDOWS
             /* Windows: format socket error code */
@@ -199,6 +213,16 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
         }
 
         default:
+            if (jutils_is_unexpected_eof()) {
+                /* OpenSSL 3.x reports a transport EOF without
+                 * close_notify as SSL_ERROR_SSL with reason
+                 * SSL_R_UNEXPECTED_EOF_WHILE_READING. Normalise it into
+                 * the one documented error shared with the 1.1.1 and
+                 * LibreSSL SSL_ERROR_SYSCALL ret-0 surface. */
+                snprintf(state->error_msg, sizeof(state->error_msg), "%s",
+                         JSEC_UNEXPECTED_EOF_ERROR);
+                return TLS_IO_ERROR;
+            }
             snprintf(state->error_msg, sizeof(state->error_msg),
                      "%s error: %s", op_name, get_ssl_error_string());
             return TLS_IO_ERROR;
@@ -670,15 +694,19 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                         break;
 
                     case TLS_OP_READ:
+                    case TLS_OP_CHUNK:
+                        /* One completion rule for both read shapes,
+                         * serving tls/read and tls/chunk and (tls/read s
+                         * :all): the buffer holding the bytes appended
+                         * during this call when at least one was
+                         * appended before the clean close_notify, nil
+                         * when zero were. A returned buffer is truthy
+                         * and would never terminate a read loop, and an
+                         * empty or unchanged caller buffer is not
+                         * application data. */
                         result = (state->user_buf->count > state->buf_start)
                                      ? janet_wrap_buffer(state->user_buf)
                                      : janet_wrap_nil();
-                        break;
-
-                    case TLS_OP_CHUNK:
-                        /* Chunk always returns buffer (may be empty on EOF)
-                         */
-                        result = janet_wrap_buffer(state->user_buf);
                         break;
 
                     case TLS_OP_WRITE:
@@ -989,46 +1017,43 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     janet_async_end(fiber);
                     return;
                 } else {
-                    /* Check if there's a real error vs just EOF */
+                    /* A clean close_notify is the only completion this
+                     * drain may report; the same completion rule as the
+                     * TLS_IO_COMPLETE read arms: the bytes appended
+                     * during this call, or nil when zero were. Any other
+                     * outcome of a HUP'd transport is a truncation or an
+                     * error and raises, so a platform reaching this
+                     * drain through a HUP-only wakeup cannot regress the
+                     * rule. */
                     int ssl_err = SSL_get_error(tls->ssl, ret);
                     if (ssl_err == SSL_ERROR_ZERO_RETURN) {
-                        /* Clean shutdown - return what we have or nil */
                         Janet result =
                             (state->user_buf->count > state->buf_start)
                                 ? janet_wrap_buffer(state->user_buf)
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
-                        clear_pending_for(state);
-                        janet_async_end(fiber);
-                        return;
-                    } else if (ssl_err == SSL_ERROR_SYSCALL &&
-                               (errno == 0 || errno == ECONNRESET)) {
-                        /* Connection reset - return what we have or nil */
-                        Janet result =
-                            (state->user_buf->count > state->buf_start)
-                                ? janet_wrap_buffer(state->user_buf)
-                                : janet_wrap_nil();
-                        janet_schedule(fiber, result);
-                        clear_pending_for(state);
-                        janet_async_end(fiber);
-                        return;
-                    } else if (ssl_err == SSL_ERROR_SSL) {
-                        /* TLS protocol error - propagate as error */
-                        janet_cancel(fiber,
-                                     janet_cstringv(get_ssl_error_string()));
-                        clear_pending_for(state);
-                        janet_async_end(fiber);
-                        return;
-                    } else if (state->user_buf->count > state->buf_start) {
-                        /* Some data was read before error - return it */
-                        janet_schedule(fiber,
-                                       janet_wrap_buffer(state->user_buf));
                         clear_pending_for(state);
                         janet_async_end(fiber);
                         return;
                     }
-                    /* No data and error - fall through to connection closed
-                     */
+                    /* Without close_notify the stream is truncated: the
+                     * 1.1.1/LibreSSL SSL_ERROR_SYSCALL ret-0 surface and
+                     * the OpenSSL 3.x SSL_ERROR_SSL surface both raise
+                     * the one documented unexpected-EOF error. */
+                    const char *err_msg;
+                    if (jutils_is_unexpected_eof() ||
+                        (ssl_err == SSL_ERROR_SYSCALL &&
+                         (errno == 0 || errno == ECONNRESET))) {
+                        err_msg = JSEC_UNEXPECTED_EOF_ERROR;
+                    } else if (ssl_err == SSL_ERROR_SSL) {
+                        err_msg = get_ssl_error_string();
+                    } else {
+                        err_msg = "Connection closed";
+                    }
+                    janet_cancel(fiber, janet_cstringv(err_msg));
+                    clear_pending_for(state);
+                    janet_async_end(fiber);
+                    return;
                 }
             }
             /* Fall through for non-read operations or read failures */

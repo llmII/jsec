@@ -188,18 +188,23 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         client->ssl, state->buffer,
                         state->nbytes -
                             (state->buffer->count - state->buf_start));
-                    if (state->buffer->count > before) {
-                        /* For datagrams, return after first successful read
-                         */
-                        retval = janet_wrap_buffer(state->buffer);
-                        result = DTLS_RESULT_OK;
-                    }
-                    if (result == DTLS_RESULT_EOF) {
-                        /* Return what this call appended or nil */
-                        retval = state->buffer->count > state->buf_start
-                                     ? janet_wrap_buffer(state->buffer)
-                                     : janet_wrap_nil();
-                        result = DTLS_RESULT_OK;
+                    if (result == DTLS_RESULT_UNEXPECTED_EOF) {
+                        /* A truncation raises below - it must never
+                         * look like a clean end of data */
+                    } else {
+                        if (state->buffer->count > before) {
+                            /* For datagrams, return after first
+                             * successful read */
+                            retval = janet_wrap_buffer(state->buffer);
+                            result = DTLS_RESULT_OK;
+                        }
+                        if (result == DTLS_RESULT_EOF) {
+                            /* Clean EOF: what this call appended or nil */
+                            retval = state->buffer->count > state->buf_start
+                                         ? janet_wrap_buffer(state->buffer)
+                                         : janet_wrap_nil();
+                            result = DTLS_RESULT_OK;
+                        }
                     }
                     break;
                 }
@@ -218,7 +223,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 case CLIENT_OP_CLOSE:
                     result = dtls_do_shutdown(client->ssl);
                     if (result == DTLS_RESULT_OK ||
-                        result == DTLS_RESULT_EOF) {
+                        result == DTLS_RESULT_EOF ||
+                        result == DTLS_RESULT_UNEXPECTED_EOF) {
                         client->closed = 1;
                         client->state = DTLS_STATE_CLOSED;
                         /* Close transport after successful shutdown */
@@ -270,6 +276,13 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     janet_async_end(fiber);
                     break;
 
+                case DTLS_RESULT_UNEXPECTED_EOF:
+                    client->state = DTLS_STATE_ERROR;
+                    janet_cancel(fiber,
+                                 janet_cstringv(JSEC_UNEXPECTED_EOF_ERROR));
+                    janet_async_end(fiber);
+                    break;
+
                 case DTLS_RESULT_ERROR: {
                     char buf[256];
                     unsigned long err = ERR_get_error();
@@ -310,7 +323,8 @@ int dtls_client_start_handshake(DTLSClient *client) {
         return 1; /* Completed synchronously */
     }
 
-    if (result == DTLS_RESULT_ERROR) {
+    if (result == DTLS_RESULT_ERROR ||
+        result == DTLS_RESULT_UNEXPECTED_EOF) {
         client->state = DTLS_STATE_ERROR;
         dtls_panic_ssl("DTLS handshake failed");
     }

@@ -138,8 +138,9 @@ Janet cfun_read(int32_t argc, Janet *argv) {
  * (chunk stream n &opt buffer timeout)
  *
  * Same as read, but will not return early if less than n bytes are available.
- * If an end of stream is reached, will also return early with the collected
- * bytes. Takes an optional timeout in seconds.
+ * If an end of stream is reached, will also return early: the buffer with
+ * the bytes appended during the call when at least one was read, nil when
+ * zero were. Takes an optional timeout in seconds.
  */
 Janet cfun_chunk(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 4);
@@ -165,6 +166,12 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     state->has_timeout = !is_infinite_timeout(timeout);
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
+        /* Same EOF rule as cfun_read and the async read completions:
+         * the buffer when at least one byte was appended during this
+         * call, nil when zero were appended and bytes were requested. */
+        if (buffer->count == state->buf_start && bytes_to_read > 0) {
+            return janet_wrap_nil();
+        }
         return janet_wrap_buffer(buffer);
     }
 
