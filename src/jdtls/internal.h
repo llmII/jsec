@@ -261,6 +261,7 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
 
 #define DTLS_SESSION_TABLE_SIZE 256 /* Hash table buckets */
 #define DTLS_SESSION_TIMEOUT 300.0  /* 5 minutes default timeout */
+#define DTLS_MAX_SESSIONS_DEFAULT 1024 /* Default session table bound */
 
 typedef struct {
     JanetStream stream;     /* Embedded stream for method dispatch */
@@ -268,6 +269,7 @@ typedef struct {
     SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
     int session_count;      /* Number of active sessions */
+    int max_sessions;       /* Upper bound on session_count */
     double session_timeout; /* Session timeout in seconds */
     int closed;             /* Server has been closed */
 } DTLSServer;

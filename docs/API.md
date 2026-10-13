@@ -108,7 +108,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org2c77a23)).
+        -   `:security`: Table. Security options (see [Security Options](#org1eb9c47)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -409,6 +409,10 @@ Create a DTLS server bound to an address.
     -   `:verify`: Boolean (default `false`). Request client certificates (mTLS).
     -   `:ca`: CA certificates for client verification.
     -   `:session-timeout`: Session timeout in seconds (default 300).
+    -   `:max-sessions`: Maximum peer sessions kept in the server session
+        table (default 1024). When the table is full, expired sessions are
+        cleaned up first, then the oldest unestablished session is evicted;
+        a new peer is rejected when every session is established.
 
 **Returns**: A DTLS server object.
 

@@ -16,6 +16,7 @@
  */
 
 #include "internal.h"
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 #include <fcntl.h>
@@ -221,6 +222,7 @@ static int server_verify_cookie(SSL *ssl, const unsigned char *cookie,
  *   :verify - Require client certificates (default false)
  *   :ca - CA certificates for client verification
  *   :session-timeout - Session timeout in seconds (default 300)
+ *   :max-sessions - Maximum peer sessions in the table (default 1024)
  */
 static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
@@ -318,6 +320,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     server->transport = transport;
     server->session_timeout = DTLS_SESSION_TIMEOUT;
+    server->max_sessions = DTLS_MAX_SESSIONS_DEFAULT;
 
     /* Get session timeout from options */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -334,6 +337,20 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
                                  "finite non-negative number of seconds", t);
             }
             server->session_timeout = timeout;
+        }
+        Janet m = janet_get(opts, janet_ckeywordv("max-sessions"));
+        if (!janet_checktype(m, JANET_NIL)) {
+            if (!janet_checktype(m, JANET_NUMBER)) {
+                dtls_panic_param("invalid :max-sessions %v: expected a "
+                                 "positive integer", m);
+            }
+            double limit = janet_unwrap_number(m);
+            if (!isfinite(limit) || limit < 1.0 || limit > floor(limit) ||
+                limit > (double)INT_MAX) {
+                dtls_panic_param("invalid :max-sessions %v: expected a "
+                                 "positive integer", m);
+            }
+            server->max_sessions = (int)limit;
         }
     }
 
@@ -979,7 +996,8 @@ static const JanetReg server_cfuns[] = {
      "  :key - Server private key (required)\n"
      "  :verify - Require client certificates (default false)\n"
      "  :ca - CA certificates for client verification\n"
-     "  :session-timeout - Session timeout in seconds (default 300)"},
+     "  :session-timeout - Session timeout in seconds (default 300)\n"
+     "  :max-sessions - Maximum peer sessions in the table (default 1024)"},
     {"recv-from", cfun_dtls_recv_from,
      "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
      "Receive a datagram from any peer.\n"

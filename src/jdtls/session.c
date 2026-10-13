@@ -130,6 +130,36 @@ DTLSSession *dtls_server_create_session(DTLSServer *server,
         return existing;
     }
 
+    if (server->session_count >= server->max_sessions) {
+        dtls_server_cleanup_expired(server, get_current_time());
+        if (server->session_count >= server->max_sessions) {
+            DTLSSession **victim_link = NULL;
+            double victim_activity = 0.0;
+            for (int i = 0; i < DTLS_SESSION_TABLE_SIZE; i++) {
+                DTLSSession **pp = &server->sessions[i];
+                while (*pp) {
+                    DTLSSession *cur = *pp;
+                    if (cur->state == DTLS_STATE_IDLE ||
+                        cur->state == DTLS_STATE_HANDSHAKING) {
+                        if (!victim_link ||
+                            cur->last_activity < victim_activity) {
+                            victim_link = pp;
+                            victim_activity = cur->last_activity;
+                        }
+                    }
+                    pp = &cur->next;
+                }
+            }
+            if (!victim_link) {
+                return NULL;
+            }
+            DTLSSession *victim = *victim_link;
+            *victim_link = victim->next;
+            dtls_session_free(victim);
+            server->session_count--;
+        }
+    }
+
     /* Create new session */
     DTLSSession *session = dtls_session_new(server->ctx, addr);
     if (!session) return NULL;
