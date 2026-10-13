@@ -796,6 +796,9 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
 
     /* Start async receive */
     DTLSRecvFromState *state = janet_malloc(sizeof(DTLSRecvFromState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
     state->server = server;
     state->buffer = buf;
     state->nbytes = nbytes;

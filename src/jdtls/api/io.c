@@ -11,9 +11,8 @@ extern void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
                                          int32_t nbytes, int32_t buf_start,
                                          int mode,
                                          double timeout);
-extern void dtls_client_start_async_write(DTLSClient *client,
-                                          JanetByteView data, int mode,
-                                          double timeout);
+extern void dtls_client_start_async_write(DTLSClient *client, Janet src,
+                                          int mode, double timeout);
 
 /*============================================================================
  * HELPER: Parse timeout from argument
@@ -186,7 +185,7 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
     /* Need to wait */
     int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
                                                  : JANET_ASYNC_LISTEN_WRITE;
-    dtls_client_start_async_write(client, data, mode, timeout);
+    dtls_client_start_async_write(client, argv[1], mode, timeout);
     return janet_wrap_nil(); /* Will be replaced by async result */
 }
 

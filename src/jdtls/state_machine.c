@@ -519,6 +519,9 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 void dtls_async_handshake(JanetStream *transport, SSL *ssl,
                           DTLSState *state_ptr, void *owner) {
     DTLSAsyncData *data = janet_malloc(sizeof(DTLSAsyncData));
+    if (!data) {
+        dtls_panic_io("out of memory");
+    }
     memset(data, 0, sizeof(DTLSAsyncData));
 
     data->state.op = DTLS_OP_HANDSHAKE;
@@ -546,6 +549,9 @@ void dtls_async_handshake(JanetStream *transport, SSL *ssl,
 void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
                      double timeout, void *owner) {
     DTLSAsyncData *data = janet_malloc(sizeof(DTLSAsyncData));
+    if (!data) {
+        dtls_panic_io("out of memory");
+    }
     memset(data, 0, sizeof(DTLSAsyncData));
 
     data->state.op = DTLS_OP_READ;
@@ -577,6 +583,9 @@ void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
 void dtls_async_write(JanetStream *transport, SSL *ssl,
                       JanetByteView data_view, double timeout, void *owner) {
     DTLSAsyncData *data = janet_malloc(sizeof(DTLSAsyncData));
+    if (!data) {
+        dtls_panic_io("out of memory");
+    }
     memset(data, 0, sizeof(DTLSAsyncData));
 
     data->state.op = DTLS_OP_WRITE;
@@ -606,6 +615,9 @@ void dtls_async_write(JanetStream *transport, SSL *ssl,
 void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
                          DTLSState *state_ptr, void *owner) {
     DTLSAsyncData *data = janet_malloc(sizeof(DTLSAsyncData));
+    if (!data) {
+        dtls_panic_io("out of memory");
+    }
     memset(data, 0, sizeof(DTLSAsyncData));
 
     data->state.op = DTLS_OP_SHUTDOWN;

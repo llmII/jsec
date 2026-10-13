@@ -24,7 +24,8 @@ typedef struct {
 #endif
     DTLSClient *client;
     JanetBuffer *buffer;      /* For read */
-    JanetByteView write_data; /* For write */
+    Janet write_src;          /* For write */
+    int32_t write_len;        /* For write length at entry */
     int32_t nbytes;           /* For read */
     int32_t buf_start;        /* buffer->count when read op began; n is
                                * relative to this, matching ev/read append
@@ -81,7 +82,6 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (status == SOCKET_ERROR &&
                     WSAGetLastError() != WSA_IO_PENDING) {
                     janet_cancel(fiber, janet_cstringv("WSARecv failed"));
-                    fiber->ev_state = NULL;
                     janet_async_end(fiber);
                     return;
                 }
@@ -105,6 +105,9 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 janet_mark(janet_wrap_abstract(state->client));
                 if (state->buffer) {
                     janet_mark(janet_wrap_buffer(state->buffer));
+                }
+                if (state->op == CLIENT_OP_WRITE) {
+                    janet_mark(state->write_src);
                 }
             }
             break;
@@ -205,10 +208,18 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 
                 case CLIENT_OP_WRITE: {
+                    JanetByteView view =
+                        janet_getbytes(&state->write_src, 0);
+                    if (view.len != state->write_len) {
+                        janet_cancel(
+                            fiber, janet_cstringv(
+                                       "write source changed during write"));
+                        janet_async_end(fiber);
+                        return;
+                    }
                     int32_t nwritten = 0;
-                    result =
-                        dtls_do_write(client->ssl, state->write_data.bytes,
-                                      state->write_data.len, &nwritten);
+                    result = dtls_do_write(client->ssl, view.bytes, view.len,
+                                           &nwritten);
                     if (result == DTLS_RESULT_OK) {
                         retval = janet_wrap_integer(nwritten);
                     }
@@ -317,6 +328,9 @@ int dtls_client_start_handshake(DTLSClient *client) {
 
     /* Need to wait - start async */
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->op = CLIENT_OP_HANDSHAKE;
@@ -334,6 +348,9 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
                                   int32_t nbytes, int32_t buf_start,
                                   int mode, double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->buffer = buf;
@@ -352,12 +369,16 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
 }
 
 /* Helper to create and start async write */
-void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
-                                   int mode, double timeout) {
+void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
+                                   double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
-    state->write_data = data;
+    state->write_src = src;
+    state->write_len = janet_getbytes(&state->write_src, 0).len;
     state->op = CLIENT_OP_WRITE;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
     /* Arm once here, at initial suspension: the deadline is absolute
@@ -373,6 +394,9 @@ void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
 /* Helper to create and start async close */
 void dtls_client_start_async_close(DTLSClient *client, int mode) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
     state->op = CLIENT_OP_CLOSE;
