@@ -110,23 +110,6 @@ typedef enum {
 
 /*
  * =============================================================================
- * DTLS Operations (for async callback)
- * =============================================================================
- */
-
-typedef enum {
-    DTLS_OP_NONE = 0,
-    DTLS_OP_HANDSHAKE,
-    DTLS_OP_READ,
-    DTLS_OP_WRITE,
-    DTLS_OP_SHUTDOWN,
-    DTLS_OP_ACCEPT,    /* Server waiting for new connection */
-    DTLS_OP_RECV_FROM, /* Server recv-from operation */
-    DTLS_OP_SEND_TO    /* Server send-to operation */
-} DTLSOperation;
-
-/*
- * =============================================================================
  * DTLSAddress - Our address type (Janet's janet_address_type is internal)
  * =============================================================================
  * Wraps sockaddr_storage for IPv4/IPv6 support.
@@ -170,8 +153,9 @@ typedef struct DTLSSession {
     DTLSState state;          /* Session state */
     double last_activity;     /* Time of last activity (for timeout) */
     int cookie_verified;      /* Has client passed cookie exchange? */
-    int wire_msg_off;         /* Gate bridge: inbound message_seq base */
-    uint64_t wire_rec_base;   /* Gate bridge: outbound epoch-0 record base */
+    uint64_t rec_seq_off;     /* Record sequence alignment: constant
+                               * offset added to outbound epoch-0 record
+                               * headers (RFC 6347 section 4.2.1) */
     struct DTLSSession *next; /* For linked list in hash bucket */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
@@ -285,25 +269,6 @@ DTLSSession *dtls_server_create_session(DTLSServer *server,
                                         const DTLSAddress *addr);
 void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr);
 void dtls_server_cleanup_expired(DTLSServer *server, double now);
-
-/*
- * =============================================================================
- * Async State (for janet_async_start callbacks)
- * =============================================================================
- */
-
-typedef struct {
-    DTLSOperation op;         /* Current operation */
-    JanetBuffer *buffer;      /* Buffer for read operations */
-    JanetByteView write_data; /* Data for write operations */
-    int32_t nbytes;           /* Requested bytes for read */
-    int32_t buf_start;        /* buffer->count when read op began; n is
-                               * relative to this, matching ev/read append
-                               * semantics (never treat n as buffer total) */
-    double timeout;           /* Operation timeout */
-    int flags;                /* Operation flags */
-    DTLSAddress *out_addr;    /* Output address for recv-from */
-} DTLSAsyncState;
 
 /*
  * =============================================================================

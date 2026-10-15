@@ -36,90 +36,50 @@
  */
 
 /*
- * Wire sequence bridge for sessions admitted through the cookie gate
- * (RFC 6347 section 4.2.1).
+ * Record sequence alignment for sessions admitted through the cookie
+ * gate (RFC 6347 section 4.2.1).
  *
- * The stateless gate consumes the client's first ClientHello and the
- * server's HelloVerifyRequest outside any session, but DTLS numbers
- * handshake messages per direction from 0: the cookie resend carries
- * the client's next message_seq, and the session handshake must
- * continue the server's numbering after the HelloVerifyRequest (the
- * reference exchange numbers the ServerHello one past the
- * HelloVerifyRequest). A session SSL born after the gate therefore
- * speaks a sequence space one behind the wire. Incoming handshake
- * message_seq values are translated down into the session's space and
- * outgoing ones up onto the wire, and outgoing epoch-0 record
- * sequence numbers continue from the verified resend's own record
- * sequence - which is what section 4.2.1 mandates for the initial
- * ServerHello. DTLS handshake hashes cover the reassembled messages
- * without the message_seq and fragment fields, so the translation
- * leaves both handshake transcripts identical.
+ * The verified resend that admits a session carries the wire record
+ * sequence its epoch-0 stream has reached - 1 in a single-round
+ * exchange, larger when a multi-round cookie exchange advanced the
+ * client's counter - and the initial ServerHello MUST echo that
+ * number. The session's own write counter restarts at 1 (the
+ * discarded in-session HelloVerifyRequest consumed sequence 0), so
+ * outbound epoch-0 record headers are rewritten with the constant
+ * offset established at admit time. Epoch-0 handshake records carry
+ * no MAC over the header and the handshake hashes cover message
+ * bodies only, so the rewrite is integrity-neutral. Epoch-1 records
+ * (MAC/AEAD over the sequence number) are never touched, and neither
+ * is handshake message_seq.
  */
-
-static void server_wire_outbound(DTLSSession *session, uint8_t *data,
-                                int len) {
+static void server_align_outbound_records(DTLSSession *session, uint8_t *data,
+                                          int len) {
     int o = 0;
+    if (session->rec_seq_off == 0) {
+        return;
+    }
     while (o + 13 <= len) {
         int rl = (data[o + 11] << 8) | data[o + 12];
-        int epoch = (data[o + 3] << 8) | data[o + 4];
         int end = o + 13 + rl;
+        int epoch;
         if (end > len) {
             end = len;
         }
+        epoch = (data[o + 3] << 8) | data[o + 4];
         if (epoch == 0) {
             uint64_t rs = 0;
             int i;
             for (i = 5; i < 11; i++) {
                 rs = (rs << 8) | data[o + i];
             }
-            rs += session->wire_rec_base;
+            rs = (rs + session->rec_seq_off) & 0xffffffffffffULL;
             for (i = 10; i >= 5; i--) {
                 data[o + i] = (uint8_t)(rs & 0xff);
                 rs >>= 8;
             }
         }
-        if (data[o] == 0x16) {
-            int m = o + 13;
-            while (m + 12 <= end) {
-                int flen = (data[m + 9] << 16) | (data[m + 10] << 8) |
-                           data[m + 11];
-                int seq = ((data[m + 4] << 8) | data[m + 5]) + 1;
-                data[m + 4] = (uint8_t)(seq >> 8);
-                data[m + 5] = (uint8_t)(seq & 0xff);
-                m += 12 + flen;
-            }
-        }
         o = end;
     }
-}
-
-static int server_wire_inbound(DTLSSession *session, uint8_t *data,
-                               int len) {
-    int o = 0;
-    while (o + 13 <= len) {
-        int rl = (data[o + 11] << 8) | data[o + 12];
-        int end = o + 13 + rl;
-        if (end > len) {
-            end = len;
-        }
-        if (data[o] == 0x16) {
-            int m = o + 13;
-            while (m + 12 <= end) {
-                int flen = (data[m + 9] << 16) | (data[m + 10] << 8) |
-                           data[m + 11];
-                int seq = ((data[m + 4] << 8) | data[m + 5]) -
-                          session->wire_msg_off;
-                if (seq < 0) {
-                    return 0;
-                }
-                data[m + 4] = (uint8_t)(seq >> 8);
-                data[m + 5] = (uint8_t)(seq & 0xff);
-                m += 12 + flen;
-            }
-        }
-        o = end;
-    }
-    return 1;
 }
 
 /*
@@ -143,29 +103,7 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     ssize_t sent = 0;
 
     if (send_len > 0) {
-        server_wire_outbound(session, send_buf, send_len);
-        int o = 0;
-        fprintf(stderr, "TX %d bytes:", send_len);
-        while (o + 13 <= send_len && send_buf[o] == 0x16) {
-            int rl = (send_buf[o + 11] << 8) | send_buf[o + 12];
-            unsigned rs = ((unsigned)send_buf[o + 8] << 16) | ((unsigned)send_buf[o + 9] << 8) | send_buf[o + 10];
-            fprintf(stderr, " [rec_seq=%u len=%d", rs, rl);
-            int m = o + 13;
-            int me = o + 13 + rl;
-            while (m + 12 <= me) {
-                int mt = send_buf[m];
-                int ms = (send_buf[m + 4] << 8) | send_buf[m + 5];
-                int ml = (send_buf[m + 1] << 16) | (send_buf[m + 2] << 8) | send_buf[m + 3];
-                fprintf(stderr, " msg(type=%d seq=%d len=%d)", mt, ms, ml);
-                m += 12 + ml;
-            }
-            fprintf(stderr, "]");
-            o += 13 + rl;
-        }
-        fprintf(stderr, "\n");
-    }
-
-    if (send_len > 0) {
+        server_align_outbound_records(session, send_buf, send_len);
         sent = sendto((jsec_socket_t)transport->handle,
                       (const char *)send_buf, (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
@@ -790,21 +728,133 @@ static int dtls_server_cookie_gate(DTLSServer *server, const uint8_t *data,
     int cookie_off, echo_len;
 
     if (!server_client_hello_cookie(data, datalen, &cookie_off, &echo_len)) {
-        fprintf(stderr, "GATE drop: not a parseable hello datalen=%d b0=%02x b13=%02x\n", datalen, datalen > 0 ? data[0] : 0, datalen > 13 ? data[13] : 0);
         return 0;
     }
     if (echo_len > 0 && server_cookie_verify(peer, data + cookie_off,
                                              (unsigned int)echo_len)) {
-        fprintf(stderr, "GATE admit: cookie verified len=%d msg_seq=%u rec_seq=%02x%02x%02x\n", echo_len, ((unsigned)data[17] << 8) | data[18], data[8], data[9], data[10]);
         return 1; /* Verified resend - admit to the session handshake */
     }
     if (!server_cookie_generate(peer, cookie, &cookie_len)) {
-        fprintf(stderr, "GATE drop: generate failed\n");
         return 0;
     }
-    fprintf(stderr, "GATE hvr: echo_len=%d cookie_len=%u msg_seq=%u rec_seq=%02x%02x%02x\n", echo_len, cookie_len, ((unsigned)data[17] << 8) | data[18], data[8], data[9], data[10]);
     server_send_hello_verify(server, peer, data, datalen, cookie, cookie_len);
     return 0;
+}
+
+static int server_synth_client_hello(const uint8_t *data, int datalen,
+                                     uint8_t *out, int *out_len) {
+    unsigned int rec_len, msg_len, frag_len;
+    int cookie_off, cookie_len, drop;
+
+    if (!server_client_hello_cookie(data, datalen, &cookie_off, &cookie_len)) {
+        return 0;
+    }
+    rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
+    msg_len = ((unsigned int)data[14] << 16) | ((unsigned int)data[15] << 8) |
+              (unsigned int)data[16];
+    frag_len = ((unsigned int)data[22] << 16) | ((unsigned int)data[23] << 8) |
+               (unsigned int)data[24];
+    if ((int)rec_len + 13 != datalen || msg_len != frag_len ||
+        frag_len != rec_len - 12) {
+        return 0;
+    }
+    drop = cookie_len + 1;
+    memcpy(out, data, (size_t)(cookie_off - 1));
+    memcpy(out + cookie_off - 1, data + cookie_off + cookie_len,
+           (size_t)(datalen - cookie_off - cookie_len));
+    memset(out + 5, 0, 6);
+    out[11] = (uint8_t)((rec_len - (unsigned int)drop) >> 8);
+    out[12] = (uint8_t)((rec_len - (unsigned int)drop) & 0xff);
+    out[14] = (uint8_t)(((msg_len - (unsigned int)drop) >> 16) & 0xff);
+    out[15] = (uint8_t)(((msg_len - (unsigned int)drop) >> 8) & 0xff);
+    out[16] = (uint8_t)((msg_len - (unsigned int)drop) & 0xff);
+    out[17] = 0;
+    out[18] = 0;
+    out[22] = out[14];
+    out[23] = out[15];
+    out[24] = out[16];
+    *out_len = datalen - drop;
+    return 1;
+}
+
+static void server_drain_wbio(DTLSSession *session) {
+    uint8_t sink[512];
+    while (BIO_read(session->wbio, sink, (int)sizeof(sink)) > 0) {
+    }
+}
+
+static int dtls_server_admit_resend(DTLSSession *session, const uint8_t *data,
+                                    int datalen) {
+    uint8_t *synth;
+    int synth_len = 0;
+    BIO_ADDR *peer;
+    int ret;
+
+    /* Record sequence alignment: read the verified resend's wire
+     * record sequence (bytes 5..10, big-endian; epoch at bytes 3..4)
+     * and advance the session's epoch-0 write counter to it, so the
+     * ServerHello flight echoes that number on the wire. The write
+     * counter restarts at 1 for this session (the discarded
+     * in-session HelloVerifyRequest consumed sequence 0), so the
+     * alignment offset is wire_seq - 1. Zero offset keeps the
+     * single-round case byte-identical. */
+    if (datalen >= 11 && ((data[3] << 8) | data[4]) == 0) {
+        uint64_t wire_seq = 0;
+        int i;
+        for (i = 5; i < 11; i++) {
+            wire_seq = (wire_seq << 8) | data[i];
+        }
+        session->rec_seq_off = wire_seq - 1;
+    }
+
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        return 0;
+    }
+    peer = BIO_ADDR_new();
+    if (!peer) {
+        janet_free(synth);
+        return 0;
+    }
+    if (!server_synth_client_hello(data, datalen, synth, &synth_len) ||
+        BIO_write(session->rbio, synth, synth_len) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    if (ret != 0) {
+        BIO_ADDR_free(peer);
+        server_drain_wbio(session);
+        return 0;
+    }
+    server_drain_wbio(session);
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    memcpy(synth, data, (size_t)datalen);
+    memset(synth + 5, 0, 5);
+    synth[10] = 1;
+    synth[17] = 0;
+    synth[18] = 1;
+    if (BIO_write(session->rbio, synth, datalen) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    BIO_ADDR_free(peer);
+    if (ret != 1) {
+        server_drain_wbio(session);
+        return 0;
+    }
+    return 1;
 }
 
 /*
@@ -828,6 +878,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
     /* Look up or create session for this peer */
     DTLSSession *session = dtls_server_get_session(server, peer_addr);
 
+    int fresh = 0;
+
     if (!session) {
         /* New connection - run the stateless cookie gate before any
          * session state is allocated */
@@ -842,50 +894,16 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         /* Store peer address in SSL ex_data for cookie generation */
         SSL_set_ex_data(session->ssl, dtls_peer_addr_ex_index,
                         &session->peer_addr);
-        /* Bridge the sequence space the gate skipped (see
-         * server_wire_outbound): the resend numbers the hello from
-         * the client's earlier unanswered one and its record sequence
-         * continues that stream. */
-        session->wire_msg_off =
-            (datalen >= 19) ? ((data[17] << 8) | data[18]) : 0;
-        session->wire_rec_base = 0;
-        if (datalen >= 11) {
-            int i;
-            for (i = 5; i < 11; i++) {
-                session->wire_rec_base =
-                    (session->wire_rec_base << 8) | data[i];
-            }
+        if (!dtls_server_admit_resend(session, data, datalen)) {
+            dtls_server_remove_session(server, peer_addr);
+            return janet_wrap_nil();
         }
-    }
-    if (session->cookie_verified &&
-        !server_wire_inbound(session, data, datalen)) {
-        return janet_wrap_nil();
+        fresh = 1;
     }
 
-    {
-        int o = 0;
-        fprintf(stderr, "RX %d bytes:", datalen);
-        while (o + 13 <= datalen) {
-            int rl = (data[o + 11] << 8) | data[o + 12];
-            int end = o + 13 + rl;
-            if (end > datalen) end = datalen;
-            fprintf(stderr, " [t=%d ep=%d rec=%02x%02x%02x len=%d", data[o], (data[o + 3] << 8) | data[o + 4], data[o + 8], data[o + 9], data[o + 10], rl);
-            if (data[o] == 0x16) {
-                int m = o + 13;
-                while (m + 12 <= end) {
-                    int fl = (data[m + 9] << 16) | (data[m + 10] << 8) | data[m + 11];
-                    fprintf(stderr, " msg(t=%d seq=%d flen=%d)", data[m], (data[m + 4] << 8) | data[m + 5], fl);
-                    m += 12 + fl;
-                }
-            }
-            fprintf(stderr, "]");
-            o = end;
-        }
-        fprintf(stderr, "\n");
-    }
-
-    /* Feed incoming data to SSL via memory BIO */
-    if (BIO_write(session->rbio, data, datalen) <= 0) {
+    /* Feed incoming data to SSL via memory BIO (the verified resend is
+     * already consumed by dtls_server_admit_resend) */
+    if (!fresh && BIO_write(session->rbio, data, datalen) <= 0) {
         return janet_wrap_nil();
     }
 
@@ -902,13 +920,13 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         } else {
             int err = SSL_get_error(session->ssl, ret);
             if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+                ERR_clear_error();
                 /* Handshake failed - clean up */
                 dtls_server_remove_session(server, peer_addr);
                 return janet_wrap_nil();
             }
         }
 
-        fprintf(stderr, "HS ret=%d err=%d state=%d pending=%zu\n", ret, SSL_get_error(session->ssl, ret), (int)session->state, BIO_ctrl_pending(session->wbio));
         /* Send any handshake response data */
         send_dtls_packet(server->transport, session);
 

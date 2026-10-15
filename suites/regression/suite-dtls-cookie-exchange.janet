@@ -27,6 +27,20 @@
 # from a jsec dtls client and replayed verbatim at a jsec DTLSServer
 # over a raw UDP socket.
 #
+# Two further regression guards complete the coverage:
+#   (c) the full jsec DTLS client to jsec DTLSServer handshake
+#       completes through the cookie gate (both Finished messages
+#       exchanged) and application data flows,
+#   (d) a multi-round cookie exchange - a lossy relay drops the
+#       first ClientHello - carries the verified resend at wire
+#       record sequence greater than 1, and the ServerHello flight
+#       echoes that record sequence (RFC 6347 section 4.2.1 record
+#       sequence MUST-echo).
+# Phases (c) and (d) are the guards that would have caught both the
+# handshake message_seq stall behind the gate and the record
+# sequence echo defect: (a)/(b) never complete a handshake, so
+# neither numbering class was observable before.
+#
 # Predicted symptom under the defect: the cookie-less replay is
 # answered with the server's full handshake flight - the first
 # response message is ServerHello (handshake type 2), never
@@ -163,6 +177,93 @@
       (do (net/recv-from sock 65536 reply 3) reply)
       ([err] nil))))
 
+(defn- get-u48
+  "Read a big-endian six-byte field of buffer b at index i."
+  [b i]
+  (var v 0)
+  (for k 0 6
+    (set v (+ (* v 256) (get b (+ i k)))))
+  v)
+
+(defn- put-u48
+  "Patch a big-endian six-byte field of buffer b at index i to value v.
+   Arithmetic (no bitwise ops): Janet shifts count in 32 bits, which
+   cannot express a 48-bit field."
+  [b i v]
+  (var x v)
+  (for k 0 6
+    (put b (+ i (- 5 k)) (mod x 256))
+    (set x (math/floor (/ x 256)))))
+
+(defn- rec-seq-of
+  "Record sequence number of the first DTLS record of datagram dg."
+  [dg]
+  (get-u48 dg 5))
+
+(defn- client-hello-cookie-len
+  "Cookie length of the first handshake message when dg starts with a
+   ClientHello record, else 0."
+  [dg]
+  (if (and (= 0x16 (get dg 0)) (>= (length dg) 61) (= 1 (get dg 13)))
+    (get dg (+ 60 (get dg 59)))
+    0))
+
+(defn- bump-epoch0-rec-seqs
+  "Return a copy of datagram dg with every epoch-0 record's sequence
+   number advanced by delta. Epoch-1 records are left untouched, as
+   is handshake message_seq."
+  [dg delta]
+  (def out (buffer/new (length dg)))
+  (buffer/push out dg)
+  (var o 0)
+  (while (<= (+ o 13) (length out))
+    (def end (min (+ o 13 (get-u16 out (+ o 11))) (length out)))
+    (when (= 0 (get-u16 out (+ o 3)))
+      (put-u48 out (+ o 5) (+ (get-u48 out (+ o 5)) delta)))
+    (set o end))
+  out)
+
+(defn- start-server-and-echo
+  "Start a DTLSServer on a loopback ephemeral port and a worker fiber
+   that answers every application datagram with PONG, recording what
+   it received in the returned buffer. Returns [server port received]."
+  []
+  (def server (dtls/listen "127.0.0.1" "0"
+                           {:cert (certs :cert) :key (certs :key)}))
+  (def [_ port] (dtls/localname server))
+  (def received (buffer/new 64))
+  (ev/go (fn []
+           (try
+             (do
+               (def b (buffer/new 4096))
+               (while true
+                 (def addr (dtls/recv-from server 4096 b 5))
+                 (when addr
+                   (buffer/push received b)
+                   (buffer/clear b)
+                   (dtls/send-to server addr "PONG"))))
+             ([err] nil))))
+  (ev/sleep 0.2)
+  [server port received])
+
+(defn- relay-pump
+  "Fiber: receive datagrams on sock and hand each to (f from buf)
+   until the stop box holds true. Timeouts and forwarding errors are
+   absorbed so teardown is quiet."
+  [sock stop f]
+  (ev/go
+    (fn []
+      (while (not (stop))
+        (def buf (buffer/new 65536))
+        (var from nil)
+        (try
+          (set from (net/recv-from sock 65536 buf 0.1))
+          ([err] nil))
+        (when from
+          (try
+            (f from buf)
+            ([err] nil)))))))
+
 (def-suite :name "DTLS Server Cookie Exchange Regression"
   :description "Ticket 0eb5178852: a cookie-less ClientHello must draw a HelloVerifyRequest before the session handshake proceeds"
 
@@ -232,4 +333,189 @@
                         "HelloVerifyRequest must be admitted to the "
                         "session handshake (the server answers with its "
                         "ServerHello flight); got %s")
-                (msg-desc second))))))
+                (msg-desc second)))))
+
+  (def-test "cookie exchange completes through Finished and application data"
+    :timeout 30
+
+    # Regression guard: a jsec dtls client and a jsec DTLSServer must
+    # complete the full handshake through the stateless cookie gate -
+    # both Finished messages exchanged - and carry application data.
+    # Phases (a)/(b) stop at the first server flight, so a handshake
+    # sequence stall behind the gate was invisible to them.
+
+    (def [server port received] (start-server-and-echo))
+    (defer (:close server)
+      (def client (dtls/connect "127.0.0.1" (string port) {:verify false}))
+      (defer (try (:close client) ([err] nil))
+        (:write client "PING")
+        (def got (ev/with-deadline 10 (:read client 1024)))
+        (assert got
+                (string "the client must receive application data once "
+                        "the handshake completes through the cookie gate"))
+        (assert (= "PONG" (string got))
+                (string/format
+                  (string "the server must echo the client's application "
+                          "data through the established DTLS session; "
+                          "got %q")
+                  (string got)))
+        (assert (= "PING" (string received))
+                (string/format
+                  (string "the server must receive the client's "
+                          "application data after the cookie-gated "
+                          "handshake completes; got %q")
+                  (string received))))))
+
+  (def-test "multi-round cookie exchange aligns the ServerHello record sequence"
+    :timeout 30
+
+    # Regression guard: record sequence alignment for a multi-round
+    # cookie exchange (RFC 6347 section 4.2.1 record sequence
+    # MUST-echo). When the verified resend arrives with wire record
+    # sequence k greater than 1, the ServerHello flight must leave at
+    # record sequence k, not at the session's restarted counter - a
+    # misaligned flight can collide in a strict client's replay
+    # window. The lossy relay drops the client's first ClientHello
+    # (the delayed first round) and forwards only the copy standing
+    # in for the client's retransmission, advancing every forwarded
+    # epoch-0 record sequence by one, so the wire sees the resend at
+    # record sequence 2. The jsec DTLS client runs a real handshake
+    # through that wire, to Finished and application data.
+
+    (def [server port received] (start-server-and-echo))
+    (def cs (net/listen "127.0.0.1" "0" :datagram))
+    (def [_ cs-port] (net/localname cs))
+    (def ss (net/socket :datagram :ipv4))
+    (def looked (net/address "127.0.0.1" port :datagram))
+    (def server-dest (if (indexed? looked) (first looked) looked))
+    (def obs @{:dropped-first-hello false
+               :hvr-delivered 0
+               :resend-seq nil
+               :flight-seq nil})
+    (var client-addr nil)
+    (var client-box nil)
+    (var conn-err nil)
+    (var stopped false)
+    (def stop-fn (fn [] stopped))
+    (defer (do
+             (set stopped true)
+             (net/close cs)
+             (net/close ss)
+             (try (when client-box (:close client-box)) ([err] nil))
+             (:close server))
+
+      (relay-pump cs stop-fn
+        (fn [from buf]
+          (when (nil? client-addr)
+            (set client-addr from))
+          (def parsed (parse-first-msg buf))
+          (cond
+            # The lossy relay drops the first cookie-less
+            # ClientHello; the bumped copy stands in for the
+            # client's retransmission at a fresh record sequence.
+            (and (= 1 (parsed :msg-type))
+                 (zero? (client-hello-cookie-len buf))
+                 (not (obs :dropped-first-hello)))
+            (do
+              (put obs :dropped-first-hello true)
+              (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))
+
+            # The verified resend carries the client's advanced wire
+            # record sequence - the alignment pin watches it arrive.
+            (and (= 1 (parsed :msg-type))
+                 (pos? (client-hello-cookie-len buf))
+                 (nil? (obs :resend-seq)))
+            (do
+              (def bumped (bump-epoch0-rec-seqs buf 1))
+              (put obs :resend-seq (rec-seq-of bumped))
+              (net/send-to ss server-dest bumped))
+
+            # Later client flights and application data pass through
+            # with epoch-0 record sequences advanced the same way.
+            (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))))
+
+      (relay-pump ss stop-fn
+        (fn [_ buf]
+          (when client-addr
+            (def parsed (parse-first-msg buf))
+            (cond
+              # Exactly one HelloVerifyRequest reaches the client.
+              (= 3 (parsed :msg-type))
+              (when (zero? (obs :hvr-delivered))
+                (put obs :hvr-delivered (inc (obs :hvr-delivered)))
+                (net/send-to cs client-addr buf))
+
+              # The ServerHello flight: pin its record sequence.
+              (= 2 (parsed :msg-type))
+              (do
+                (when (nil? (obs :flight-seq))
+                  (put obs :flight-seq (rec-seq-of buf)))
+                (net/send-to cs client-addr buf))
+
+              (net/send-to cs client-addr buf)))))
+
+      (ev/go (fn []
+               (try
+                 (set client-box
+                      (dtls/connect "127.0.0.1" (string cs-port)
+                                    {:verify false}))
+                 ([err] (set conn-err err)))))
+
+      # Wait for the ServerHello flight to appear at the relay.
+      (var waited 0.0)
+      (while (and (nil? (obs :flight-seq)) (< waited 8))
+        (ev/sleep 0.05)
+        (+= waited 0.05))
+
+      (assert (obs :dropped-first-hello)
+              (string "the lossy relay must drop the first ClientHello "
+                      "so the cookie exchange takes two rounds"))
+      (assert (and (obs :resend-seq) (> (obs :resend-seq) 1))
+              (string/format
+                (string "the verified resend must arrive with wire "
+                        "record sequence greater than 1 in a "
+                        "multi-round cookie exchange; got %q")
+                (obs :resend-seq)))
+      (assert (obs :flight-seq)
+              (string "the server must answer the verified resend "
+                      "with its ServerHello flight"))
+      (assert (= (obs :flight-seq) (obs :resend-seq))
+              (string/format
+                (string "record sequence alignment: the ServerHello "
+                        "flight's epoch-0 record sequence must equal "
+                        "the verified resend's wire record sequence "
+                        "(RFC 6347 section 4.2.1 record sequence "
+                        "MUST-echo; multi-round cookie exchange; "
+                        "replay window); the resend arrived at %d and "
+                        "the flight left at %d")
+                (obs :resend-seq) (obs :flight-seq)))
+
+      # The handshake must still complete through Finished.
+      (var waited2 0.0)
+      (while (and (nil? client-box) (nil? conn-err) (< waited2 8))
+        (ev/sleep 0.05)
+        (+= waited2 0.05))
+      (assert client-box
+              (string/format
+                (string "the handshake must still complete through the "
+                        "multi-round cookie exchange (through Finished); "
+                        "dtls/connect did not return: %q")
+                conn-err))
+
+      # Application data flows through the established session.
+      (:write client-box "PING")
+      (def got (ev/with-deadline 10 (:read client-box 1024)))
+      (assert got
+              (string "the client must receive application data after "
+                      "the aligned multi-round handshake"))
+      (assert (= "PONG" (string got))
+              (string/format
+                (string "the server must echo application data through "
+                        "the session; got %q")
+                (string got)))
+      (assert (= "PING" (string received))
+              (string/format
+                (string "the server must receive the client's "
+                        "application data after the aligned "
+                        "multi-round handshake; got %q")
+                (string received))))))
