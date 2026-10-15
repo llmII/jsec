@@ -42,6 +42,7 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
     STACK_OF(X509) *ca = NULL;
 
     if (!PKCS12_parse(p12, password, &pkey, &cert, &ca)) {
+        if (ca) sk_X509_pop_free(ca, X509_free);
         PKCS12_free(p12);
         crypto_panic_ssl("failed to decrypt PKCS#12 (wrong password?)");
     }
@@ -105,8 +106,11 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
         }
         janet_table_put(result, janet_ckeywordv("chain"),
                         janet_wrap_array(chain));
-        sk_X509_pop_free(ca, X509_free);
     }
+
+    /* Free the CA container unconditionally: a non-NULL empty stack
+       still owns its container */
+    if (ca) sk_X509_pop_free(ca, X509_free);
 
     PKCS12_free(p12);
 
@@ -195,6 +199,19 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         crypto_panic_param("password is required for PKCS#12 creation");
     }
 
+    /* Extract every :chain element's bytes BEFORE the certificate and
+       key parses and the chain stack allocation, so a bad element
+       raises with nothing held */
+    JanetArray *chain_pems = NULL;
+    if (chain_arr && chain_arr->count > 0) {
+        chain_pems = janet_array(chain_arr->count);
+        for (int32_t i = 0; i < chain_arr->count; i++) {
+            JanetByteView ca_pem = janet_getbytes(&chain_arr->data[i], 0);
+            const uint8_t *pem = janet_string(ca_pem.bytes, ca_pem.len);
+            janet_array_push(chain_pems, janet_wrap_string(pem));
+        }
+    }
+
     /* Load certificate */
     BIO *cert_bio = BIO_new_mem_buf(cert_pem.bytes, (int)cert_pem.len);
     if (!cert_bio) crypto_panic_resource("failed to create BIO");
@@ -222,13 +239,14 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to parse private key");
     }
 
-    /* Load CA chain if provided */
+    /* Load CA chain if provided (bytes extracted above) */
     STACK_OF(X509) *ca = NULL;
-    if (chain_arr && chain_arr->count > 0) {
+    if (chain_pems && chain_pems->count > 0) {
         ca = sk_X509_new_null();
-        for (int32_t i = 0; i < chain_arr->count; i++) {
-            JanetByteView ca_pem = janet_getbytes(&chain_arr->data[i], 0);
-            BIO *ca_bio = BIO_new_mem_buf(ca_pem.bytes, (int)ca_pem.len);
+        for (int32_t i = 0; i < chain_pems->count; i++) {
+            JanetString ca_pem = janet_unwrap_string(chain_pems->data[i]);
+            BIO *ca_bio =
+                BIO_new_mem_buf(ca_pem, (int)janet_string_length(ca_pem));
             if (ca_bio) {
                 X509 *ca_cert = PEM_read_bio_X509(ca_bio, NULL, NULL, NULL);
                 BIO_free(ca_bio);
