@@ -41,6 +41,7 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
     /* Create SSL object */
     session->ssl = SSL_new(ctx);
     if (!session->ssl) {
+        ERR_clear_error();
         janet_free(session);
         return NULL;
     }
@@ -55,13 +56,23 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
         if (session->rbio) BIO_free(session->rbio);
         if (session->wbio) BIO_free(session->wbio);
         SSL_free(session->ssl);
+        ERR_clear_error();
         janet_free(session);
         return NULL;
     }
 
-    /* Set non-blocking mode on BIOs */
-    BIO_set_nbio(session->rbio, 1);
-    BIO_set_nbio(session->wbio, 1);
+    /* Set non-blocking mode on BIOs. A memory BIO never blocks and
+     * reports the control as unhandled (0), so only a negative return
+     * is a real failure. */
+    if (BIO_set_nbio(session->rbio, 1) < 0 ||
+        BIO_set_nbio(session->wbio, 1) < 0) {
+        BIO_free(session->rbio);
+        BIO_free(session->wbio);
+        SSL_free(session->ssl);
+        ERR_clear_error();
+        janet_free(session);
+        return NULL;
+    }
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(session->ssl, session->rbio, session->wbio);
