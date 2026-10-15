@@ -232,12 +232,16 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         const char *port_str = (const char *)janet_unwrap_string(argv[1]);
         char *endptr;
         long port_val = strtol(port_str, &endptr, 10);
-        if (*endptr != '\0' || port_val < 0 || port_val > 65535) {
+        if (endptr == port_str || *endptr != '\0' || port_val < 0 ||
+            port_val > 65535) {
             dtls_panic_param("invalid port: %s", port_str);
         }
         port = (int)port_val;
     } else {
         port = janet_getinteger(argv, 1);
+        if (port < 0 || port > 65535) {
+            dtls_panic_param("invalid port: %d", port);
+        }
     }
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
@@ -259,6 +263,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     }
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;
+    int bind_err = 0;
 
     struct addrinfo *rp;
     for (rp = ai; rp != NULL; rp = rp->ai_next) {
@@ -292,12 +297,17 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
         if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
 
+        bind_err = jsec_socket_errno;
         jsec_close_socket(fd);
         fd = JSEC_INVALID_SOCKET;
     }
     freeaddrinfo(ai);
 
     if (fd == JSEC_INVALID_SOCKET) {
+        if (bind_err != 0) {
+            jsec_panic(JSEC_MOD_DTLS, "SOCKET", "bind failed: %s",
+                       jsec_socket_strerror(bind_err));
+        }
         dtls_panic_socket("bind failed");
     }
 

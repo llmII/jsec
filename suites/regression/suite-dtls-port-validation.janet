@@ -18,7 +18,10 @@
 #   (b) out-of-range integer ports must raise a parameter error on both
 #       entry points - dtls/listen accepts 0 through 65535 and
 #       dtls/connect accepts 1 through 65535 - rather than being wrapped
-#       modulo 65536 and used as a real port.
+#       modulo 65536 and used as a real port,
+#   (c) dtls/connect must reject the string "0" with the same parameter
+#       error as its integer twin - the accepted range starts at 1 on
+#       both forms.
 #
 # Predicted symptom: the empty string port and the out-of-range integer
 # ports raise parameter errors rather than producing a bound server or a
@@ -40,7 +43,7 @@
 (def certs (generate-temp-certs {:common-name "127.0.0.1"}))
 
 (def-suite :name "DTLS Port Validation Regression"
-  :description "dtls/listen and dtls/connect must reject an empty string port and out-of-range integer ports with a parameter error"
+  :description "dtls/listen and dtls/connect must reject an empty string port and out-of-range integer ports with a parameter error, and dtls/connect must reject the string \"0\""
 
   (def-test "empty-string-port-in-listen-must-raise-parameter-error"
     :timeout 15
@@ -135,10 +138,20 @@
             (:close c true)
             (string "client connected to peer port " p))))
 
+      (def connect-string-zero
+        (attempt
+          (fn []
+            (def c (ev/with-deadline 2
+                     (dtls/connect "127.0.0.1" "0" {:verify false})))
+            (def p (dtls/address-port (dtls/peername c)))
+            (:close c true)
+            (string "client connected to peer port " p))))
+
       (def outcomes {:listen-65536 listen-hi
                      :listen-minus-one listen-neg
                      :connect-wrap connect-wrap
-                     :connect-zero connect-zero})
+                     :connect-zero connect-zero
+                     :connect-string-zero connect-string-zero})
 
       (assert (and (= :raised (get listen-hi 0))
                    (string/find "[DTLS:PARAM]" (get listen-hi 1)))
@@ -195,4 +208,18 @@
                   "check); instead of being rejected as a parameter the "
                   "zero port was accepted and the call proceeded toward "
                   "connecting to port 0; observed: %q")
+                outcomes))
+
+      (assert (and (= :raised (get connect-string-zero 0))
+                   (string/find "[DTLS:PARAM]" (get connect-string-zero 1)))
+              (string/format
+                (string
+                  "dtls/connect with the string port \"0\" must raise a "
+                  "parameter error before any socket work (a destination "
+                  "port of 0 is not a meaningful peer endpoint and the "
+                  "string path at src/jdtls/api/connect.c:61 still "
+                  "permits 0 there); instead of being rejected as a "
+                  "parameter the zero port string was accepted and the "
+                  "call proceeded toward connecting to port 0; observed: "
+                  "%q")
                 outcomes)))))
