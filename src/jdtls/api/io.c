@@ -62,6 +62,28 @@ static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
 }
 
 /*
+ * Raise a synchronous operation failure as a [DTLS:IO] error carrying
+ * the SSL/socket error detail, mirroring the jtls operation error
+ * shape (tls/read and tls/write report "Read error: ..." / "Write
+ * error: ..." with the failure detail). The queued OpenSSL error is
+ * preferred; a bare syscall failure falls back to the socket errno
+ * string.
+ */
+static void dtls_raise_sync_io_error(const char *op_name) {
+    char detail[256];
+    unsigned long err = ERR_get_error();
+    if (err != 0) {
+        ERR_error_string_n(err, detail, sizeof(detail));
+        ERR_clear_error();
+    } else if (errno != 0) {
+        snprintf(detail, sizeof(detail), "%s", jsec_socket_strerror(errno));
+    } else {
+        snprintf(detail, sizeof(detail), "unknown I/O error");
+    }
+    dtls_panic_io("%s error: %s", op_name, detail);
+}
+
+/*
  * dtls_do_read - read one datagram into buf, sized from the datagram.
  *
  * SSL_peek runs before any buffer growth: with no decrypted datagram
@@ -139,6 +161,11 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
                                       : janet_wrap_nil();
     }
 
+    if (result == DTLS_RESULT_ERROR) {
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Read");
+    }
+
     /* Need to wait */
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
@@ -181,6 +208,21 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
 
     if (result == DTLS_RESULT_OK) {
         return janet_wrap_integer(nwritten);
+    }
+
+    if (result == DTLS_RESULT_EOF) {
+        /* Peer closed with unwritten bytes: fail the write like
+         * tls/write and Janet's ev/write / net/write instead of
+         * completing nil */
+        client->state = DTLS_STATE_CLOSED;
+        dtls_panic_io(
+            "Write error: connection closed with %d of %d bytes unwritten",
+            (int)(data.len - nwritten), (int)data.len);
+    }
+
+    if (result == DTLS_RESULT_ERROR) {
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Write");
     }
 
     /* Need to wait */

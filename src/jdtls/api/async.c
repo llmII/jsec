@@ -166,6 +166,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
             DTLSResult result = DTLS_RESULT_ERROR;
             Janet retval = janet_wrap_nil();
+            int32_t nwritten = 0;
+            int close_transport = 0;
 
             switch (state->op) {
                 case CLIENT_OP_HANDSHAKE:
@@ -205,7 +207,6 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 
                 case CLIENT_OP_WRITE: {
-                    int32_t nwritten = 0;
                     result =
                         dtls_do_write(client->ssl, state->write_data.bytes,
                                       state->write_data.len, &nwritten);
@@ -221,10 +222,12 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         result == DTLS_RESULT_EOF) {
                         client->closed = 1;
                         client->state = DTLS_STATE_CLOSED;
-                        /* Close transport after successful shutdown */
-                        if (client->transport) {
-                            janet_stream_close(client->transport);
-                        }
+                        /* The transport close is deferred past the
+                         * completion below: closing it here let its
+                         * close event reach this still-registered
+                         * listener and cancel the completing fiber
+                         * with "stream error" */
+                        close_transport = 1;
                         retval = janet_wrap_nil();
                         result = DTLS_RESULT_OK;
                     }
@@ -236,10 +239,15 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
             /* Handle result */
             switch (result) {
-                case DTLS_RESULT_OK:
+                case DTLS_RESULT_OK: {
+                    JanetStream *transport = client->transport;
                     janet_schedule(fiber, retval);
                     janet_async_end(fiber);
+                    if (close_transport && transport) {
+                        janet_stream_close(transport);
+                    }
                     break;
+                }
 
                 case DTLS_RESULT_WANT_READ: {
                     /* Need to switch async modes - end current, start new */
@@ -266,8 +274,23 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
                 case DTLS_RESULT_EOF:
                     client->state = DTLS_STATE_CLOSED;
-                    janet_schedule(fiber, janet_wrap_nil());
-                    janet_async_end(fiber);
+                    if (state->op == CLIENT_OP_WRITE) {
+                        /* Peer closed with the write's bytes unwritten:
+                         * fail the write like tls/write and Janet's
+                         * ev/write / net/write instead of completing
+                         * nil */
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                                 "[DTLS:IO] Write error: connection closed "
+                                 "with %d of %d bytes unwritten",
+                                 (int)(state->write_data.len - nwritten),
+                                 (int)state->write_data.len);
+                        janet_cancel(fiber, janet_cstringv(msg));
+                        janet_async_end(fiber);
+                    } else {
+                        janet_schedule(fiber, janet_wrap_nil());
+                        janet_async_end(fiber);
+                    }
                     break;
 
                 case DTLS_RESULT_ERROR: {
