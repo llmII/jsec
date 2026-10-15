@@ -66,6 +66,12 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     return sent;
 }
 
+/* Flight-timer flush: a retransmitted flight in the session's wbio goes
+ * out to the peer over the server's transport. */
+static void dtls_session_flight_flush(void *owner, JanetStream *transport) {
+    send_dtls_packet(transport, (DTLSSession *)owner);
+}
+
 /*
  * =============================================================================
  * DTLSServer Abstract Type
@@ -81,7 +87,7 @@ static int dtls_server_gc(void *p, size_t s) {
         DTLSSession *session = server->sessions[i];
         while (session) {
             DTLSSession *next = session->next;
-            dtls_session_free(session);
+            dtls_session_free(session, 1);
             session = next;
         }
         server->sessions[i] = NULL;
@@ -505,8 +511,15 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         send_dtls_packet(server->transport, session);
 
         if (session->state != DTLS_STATE_ESTABLISHED) {
+            /* Handshake still pending on WANT_READ/WANT_WRITE: arm the
+             * DTLS flight timer so a lost flight is retransmitted even
+             * when no peer datagram arrives. */
+            dtls_flight_timer_arm(&session->flight_timer, session->ssl,
+                                  session, server->transport,
+                                  dtls_session_flight_flush);
             return janet_wrap_nil(); /* Handshake still in progress */
         }
+        dtls_flight_timer_disarm(&session->flight_timer, 0);
         /* Fall through - handshake complete, may have application data */
     }
 
@@ -881,7 +894,7 @@ static Janet cfun_dtls_close_server(int32_t argc, Janet *argv) {
                 SSL_shutdown(session->ssl);
                 send_dtls_packet(server->transport, session);
             }
-            dtls_session_free(session);
+            dtls_session_free(session, 0);
             session = next;
         }
         server->sessions[i] = NULL;

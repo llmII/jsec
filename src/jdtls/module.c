@@ -32,6 +32,9 @@
 #include "internal.h"
 
 JANET_MODULE_ENTRY(JanetTable *env) {
+    /* Compile the flight timer's helper-fiber boot body once, here at
+     * module load, and root it in module-level state. */
+    jdtls_flight_timer_init(env);
     /* Register all components */
     jdtls_register_address(env);
     jdtls_register_context(env);

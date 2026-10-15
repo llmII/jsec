@@ -44,6 +44,14 @@ typedef struct {
  */
 #define dtls_client_flush_wbio(client) dtls_client_flush_wbio_to_peer(client)
 
+/* Flight-timer flush: a retransmitted flight in wbio goes out to the
+ * peer over the client's transport (no-op on the Unix dgram-BIO path,
+ * where DTLSv1_handle_timeout writes the socket directly). */
+static void dtls_client_flight_flush(void *owner, JanetStream *transport) {
+    (void)transport;
+    dtls_client_flush_wbio_to_peer((DTLSClient *)owner);
+}
+
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     DTLSClientAsyncState *state = (DTLSClientAsyncState *)fiber->ev_state;
 
@@ -97,7 +105,11 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             break;
 #endif
         case JANET_ASYNC_EVENT_DEINIT:
-            /* Nothing to do */
+            /* Real teardown (state was not stolen for a mode switch):
+             * retire the handshake flight timer with the registration. */
+            if (state) {
+                dtls_flight_timer_disarm(&state->client->flight_timer, 0);
+            }
             break;
 
         case JANET_ASYNC_EVENT_MARK:
@@ -250,6 +262,15 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     janet_async_start_fiber(
                         fiber, client->transport, JANET_ASYNC_LISTEN_READ,
                         dtls_client_async_callback, saved);
+                    /* Handshake pending on WANT_READ: arm the DTLS
+                     * flight timer so a lost flight is retransmitted
+                     * even when no peer datagram arrives. */
+                    if (state->op == CLIENT_OP_HANDSHAKE) {
+                        dtls_flight_timer_arm(&client->flight_timer,
+                                              client->ssl, client,
+                                              client->transport,
+                                              dtls_client_flight_flush);
+                    }
                     break;
                 }
 
@@ -324,6 +345,12 @@ int dtls_client_start_handshake(DTLSClient *client) {
 
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
+    /* Handshake pending on WANT_READ: arm the DTLS flight timer so a
+     * lost flight is retransmitted even when no peer datagram arrives. */
+    if (result == DTLS_RESULT_WANT_READ) {
+        dtls_flight_timer_arm(&client->flight_timer, client->ssl, client,
+                              client->transport, dtls_client_flight_flush);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
     return 0; /* Async started, caller should return nil */

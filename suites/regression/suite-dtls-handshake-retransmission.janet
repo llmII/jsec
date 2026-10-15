@@ -96,7 +96,7 @@
           (def src (net/recv-from relay 2048 buf))
           (cond
             (same-peer? src client-addr)
-            (do (net/send-to relay client-addr buf) (++ forwarded))
+            (do (net/send-to relay server-addr buf) (++ forwarded))
 
             (and client-addr (= (last (net/address-unpack src)) server-port))
             (do (net/send-to relay client-addr buf) (++ forwarded))
