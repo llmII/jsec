@@ -403,6 +403,8 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
             Janet comp_val =
                 janet_struct_get(opts, janet_ckeywordv("compressed"));
             compressed = janet_truthy(comp_val);
+        } else {
+            crypto_panic_param("options must be a table or struct");
         }
     }
 

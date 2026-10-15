@@ -108,9 +108,21 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
             if (janet_checktype(argv[2], JANET_STRING)) {
                 hostname = janet_getcstring(argv, 2);
                 is_server = 0;
-                if (argc >= 4) opts = argv[3];
+                if (argc >= 4) {
+                    opts = argv[3];
+                    if (!janet_checktype(opts, JANET_NIL) &&
+                        !janet_checktype(opts, JANET_TABLE) &&
+                        !janet_checktype(opts, JANET_STRUCT)) {
+                        tls_panic_param("options must be a table or struct");
+                    }
+                }
             } else {
                 opts = argv[2];
+                if (!janet_checktype(opts, JANET_NIL) &&
+                    !janet_checktype(opts, JANET_TABLE) &&
+                    !janet_checktype(opts, JANET_STRUCT)) {
+                    tls_panic_param("options must be a table or struct");
+                }
                 is_server = 1;
                 if (!janet_checktype(opts, JANET_NIL)) {
                     Janet hn = janet_get(opts, janet_ckeywordv("hostname"));
@@ -198,7 +210,16 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
         /* Client mode with hostname string */
         if (argc >= 2 && janet_checktype(argv[1], JANET_STRING)) {
             hostname = janet_getcstring(argv, 1);
-            if (argc >= 3) opts = argv[2];
+            if (argc >= 3) {
+                opts = argv[2];
+                if (!janet_checktype(opts, JANET_NIL) &&
+                    !janet_checktype(opts, JANET_TABLE) &&
+                    !janet_checktype(opts, JANET_STRUCT)) {
+                    tls_panic_param("options must be a table or struct");
+                }
+            }
+        } else if (argc >= 2 && !janet_checktype(argv[1], JANET_NIL)) {
+            tls_panic_param("options must be a table or struct");
         }
 
 client_setup:
@@ -819,6 +840,8 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                     "cannot use DTLS context for TLS connection");
             }
         }
+    } else if (!janet_checktype(opts, JANET_NIL)) {
+        tls_panic_param("options must be a table or struct");
     }
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;

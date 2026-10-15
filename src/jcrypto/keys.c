@@ -246,6 +246,8 @@ Janet cfun_export_key(int32_t argc, Janet *argv) {
                     (const char *)cipher_kw);
             }
         }
+    } else if (argc > 1 && !janet_checktype(argv[1], JANET_NIL)) {
+        crypto_panic_param("options must be a table or struct");
     }
 
     /* Load the key */
