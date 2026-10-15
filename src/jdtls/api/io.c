@@ -109,7 +109,7 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     int32_t n = janet_getinteger(argv, 1);
 
     if (client->closed || client->state == DTLS_STATE_CLOSED) {
-        return janet_wrap_nil();
+        dtls_panic_io("DTLS client is closed");
     }
 
     if (client->state != DTLS_STATE_ESTABLISHED) {
