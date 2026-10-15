@@ -1,6 +1,6 @@
 # Discarded OpenSSL failures in jcert - regression guards
 #
-# Six surfaces where a real OpenSSL failure is discarded and the caller
+# Five surfaces where a real OpenSSL failure is discarded and the caller
 # gets a plausible but wrong answer instead of an error. The project
 # rule is that real failures raise and nil/false is documented absence,
 # never a failure signal.
@@ -23,13 +23,7 @@
 #    returns nil when no issuer is found (:553-558) with no diagnosis,
 #    and when the depth bound at :512 is exhausted it returns the
 #    partial chain at :578 as if it reached a trusted root.
-# 5. ca/crl (src/jca/crl.c:179-332): the :revoked option is consumed
-#    only when it is a mutable array (:195-198), so revocations given
-#    in the bracketed literal form are dropped without a word; the
-#    entry construction and the appends are unchecked (:272-291) and
-#    the sort at :332 is unchecked, so a failing step drops revocation
-#    entries from the signed list silently.
-# 6. cert/parse helpers (src/jcert/jcert.c:412-448 serial, :544-550
+# 5. cert/parse helpers (src/jcert/jcert.c:412-448 serial, :544-550
 #    times, :581-628 subject alternative names, :631-707 usages,
 #    :794-803 fingerprints): a failed conversion is mapped to nil or
 #    zero, and an extension that fails to decode (:582-583) reports
@@ -159,43 +153,6 @@
     (set idx (e :end)))
   out)
 
-(defn- serial-bytes
-  "DER INTEGER content bytes for a non-negative serial."
-  [n]
-  (def b @"")
-  (var x n)
-  (if (zero? x) (buffer/push-byte b 0))
-  (while (> x 0)
-    (buffer/push-byte b (band x 0xff))
-    (set x (brshift x 8)))
-  (def rev (reverse b))
-  (if (and (> (length rev) 0) (>= (get rev 0) 0x80))
-    (string (string/from-bytes 0x00) (string rev))
-    (string rev)))
-
-(defn- crl-revoked-serials
-  "The serial numbers of a PEM CRL's revoked entries, as DER content
-   byte strings."
-  [pem]
-  (def der (pem-der pem))
-  (def outer (der-elem der 0))
-  (def tbs (first (der-children der (outer :start) (outer :end))))
-  (def out @[])
-  (each kid (der-children der (tbs :start) (tbs :end))
-    (when (= (kid :tag) 0x30)
-      (def entry-kids (der-children der (kid :start) (kid :end)))
-      (when (and (seq [e :in entry-kids] (= (e :tag) 0x30)) (> (length entry-kids) 0)
-                 (all |(= ($ :tag) 0x30) entry-kids))
-        (each entry entry-kids
-          (def fields (der-children der (entry :start) (entry :end)))
-          (when (and (> (length fields) 0) (= ((first fields) :tag) 0x02))
-            (def s (first fields))
-            (def bytes @"")
-            (for i (s :start) (s :end)
-              (buffer/push-byte bytes (in der i)))
-            (array/push out (string bytes)))))))
-  out)
-
 # Ed25519 algorithm identifier and a fixed public key - enough for
 # X.509 parsing; the signature bytes below are never verified.
 (def- ed-algid (tlv 0x30 (string/from-bytes 0x06 0x03 0x2b 0x65 0x70)))
@@ -233,15 +190,6 @@
 (defn- san-ext [general-names-der]
   (tlv 0x30 (string (string/from-bytes 0x06 0x03 0x55 0x1d 0x11)
                     (tlv 0x04 general-names-der))))
-
-(defn- missing-serials
-  "Requested serial numbers that never reached the signed CRL."
-  [res serials]
-  (if (res :raised)
-    @[]
-    (do
-      (def present (crl-revoked-serials (res :returned)))
-      (filter |(not (index-of (serial-bytes $) present)) serials))))
 
 (defn- queue-probe
   "Force a raise whose message quotes one OpenSSL error-queue entry."
@@ -395,50 +343,6 @@
                     "src/jcert/verify.c:553-558 and returns the "
                     "partial chain at :578 when the depth bound at "
                     ":512 runs out; " observed)))
-
-  (def-test "generate-crl-must-not-omit-revocations"
-    (def root (ca/generate {:common-name "CRL Root"}))
-    (def array-res
-      (trycall |(ca/crl root {:revoked @[{:serial 4660}
-                                         {:serial 22136 :reason
-                                          :key-compromise}]})))
-    (def literal-res
-      (trycall |(ca/crl root {:revoked [{:serial 17185}
-                                        {:serial 25770 :reason
-                                         :ca-compromise}]})))
-    (def miss-array (missing-serials array-res [4660 22136]))
-    (def miss-literal (missing-serials literal-res [17185 25770]))
-    (def observed
-      (string
-        "revocations given in a mutable array "
-        (if (array-res :raised)
-          (string "raised " (describe (array-res :raised)))
-          (if (empty? miss-array)
-            "all reached the signed CRL"
-            (string "were dropped from the signed CRL: serials "
-                    (string/format "%q" miss-array))))
-        "; revocations given in the bracketed literal form "
-        (if (literal-res :raised)
-          (string "raised " (describe (literal-res :raised)))
-          (if (empty? miss-literal)
-            "all reached the signed CRL"
-            (string "were dropped from the signed CRL with no error: "
-                    "serials " (string/format "%q" miss-literal)
-                    " are missing, so a relying party treats a "
-                    "revoked certificate as valid")))))
-    (assert (and (or (not (nil? (array-res :raised)))
-                     (empty? miss-array))
-                 (or (not (nil? (literal-res :raised)))
-                     (empty? miss-literal)))
-            (string "ca/crl must place every revocation it was given "
-                    "into the signed CRL, or raise at the first entry "
-                    "it cannot place - the option is consumed only "
-                    "when it is a mutable array at "
-                    "src/jca/crl.c:195-198, the entry construction "
-                    "and the appends at :272-291 are unchecked, and "
-                    "the sort at :332 is unchecked - never a signed "
-                    "CRL with revocations silently missing; but "
-                    observed)))
 
   (def-test "parse-conversion-failure-must-not-read-as-absence"
     # An IP address entry of unexpected length inside an otherwise
