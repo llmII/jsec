@@ -77,7 +77,9 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt,
                                      use_cache);
         if (!ctx) {
-            tls_panic_ssl("failed to create server context");
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to create server context: %s",
+                       jutils_cert_load_error());
         }
 
         /* A top-level :ocsp-response staples on this context and is the
@@ -193,7 +195,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                         free(data);
                         SSL_CTX_free(ctx);
                         tls_panic_config(
-                            "failed to create SNI context for %s", hostname);
+                            "failed to create SNI context for %s: %s", hostname,
+                            jutils_cert_load_error());
                     }
 
                     if (has_ocsp_resp &&
@@ -257,7 +260,9 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
         ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
         if (!ctx) {
-            tls_panic_ssl("failed to create client context");
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to create client context: %s",
+                       jutils_cert_load_error());
         }
 
         /* Trust specific certificate (:trusted-cert) */
@@ -266,7 +271,9 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         if (!janet_checktype(trusted_cert, JANET_NIL)) {
             if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
                 SSL_CTX_free(ctx);
-                tls_panic_ssl("failed to add trusted certificate");
+                jsec_panic(JSEC_MOD_TLS, "SSL",
+                           "failed to add trusted certificate: %s",
+                           jutils_cert_load_error());
             }
         }
 
@@ -337,7 +344,9 @@ Janet cfun_trust_cert(int32_t argc, Janet *argv) {
         janet_getabstract(argv, 0, jutils_get_context_type());
 
     if (!jtls_add_trusted_cert(tls_ctx->ctx, argv[1])) {
-        tls_panic_ssl("failed to add trusted certificate");
+        jsec_panic(JSEC_MOD_TLS, "SSL",
+                   "failed to add trusted certificate: %s",
+                   jutils_cert_load_error());
     }
 
     return janet_wrap_nil();

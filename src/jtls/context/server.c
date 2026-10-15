@@ -260,6 +260,12 @@ static void update_cache(SSL_CTX *ctx, const char *cert_path,
  */
 SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
                                 Janet alpn_opt, int use_cache) {
+    /* Never raises between the lock and the unlocks: a raise here
+     * would leave ctx_cache_lock held and the half-built SSL_CTX
+     * leaked. Failures record the cause and return NULL after the
+     * error label's cleanup; the Janet-visible boundary raises with
+     * the recorded cause. */
+    jutils_cert_load_error_clear();
     janet_os_mutex_lock(ctx_cache_lock);
 
     const char *cert_path = NULL;

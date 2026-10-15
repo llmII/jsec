@@ -30,7 +30,12 @@
 #     the caller with no cause text (:59-60);
 #   - src/jutils/error.c:19-24 (the string behind every SSL raise) pops
 #     exactly one error from the thread queue and drops the rest, so an
-#     operation that queued several failures reports only the earliest.
+#     operation that queued several failures reports only the earliest;
+#   - the :min-version / :max-version validation in apply_security_options
+#     (src/jutils/security.c:70-110) raises from inside
+#     jtls_create_server_ctx while it holds ctx_cache_lock, so a bad
+#     version value longjmps past the unlock and strands the lock and the
+#     half-built SSL_CTX, and the panic names no bad-value type.
 #
 # This test demonstrates:
 #   (a) a PEM certificate chain whose second block is corrupt raises
@@ -48,7 +53,11 @@
 #   (f) an operation whose probes queued several OpenSSL errors raises a
 #       message carrying all of them, not only the earliest,
 #   (g) tls/trust-cert is idempotent on the same CA certificate and
-#       leaves the OpenSSL error queue clean (matching cfun_dtls_trust_cert).
+#       leaves the OpenSSL error queue clean (matching cfun_dtls_trust_cert),
+#   (h) a wrong-type :min-version security option raises naming the type
+#       problem and a later valid server-context build still succeeds -
+#       the cleanup-safety contract that the raise never leaves
+#       ctx_cache_lock held.
 #
 # Proof contract: under the defect each proof test (a)-(f) fails with
 # exactly the predicted symptom named in its final assertion - the
@@ -59,7 +68,12 @@
 # and PASSES
 # under the defect on this OpenSSL (X509_STORE_add_cert already reports
 # success for an already-present certificate); it must keep passing when
-# add_trusted_cert is hardened. Under fixed code every test passes.
+# add_trusted_cert is hardened. Guard (h) covers the security-option
+# validation path: its raise half requires the bad value's type named in
+# the raise, and its second half is a contract pin that passes under the
+# fixed behavior - a later valid server-context build must still succeed,
+# which holds only when the failed build released ctx_cache_lock.
+# Under fixed code every test passes.
 
 (use assay)
 (import jsec/crypto :as crypto)
@@ -298,4 +312,53 @@
                       "only its earliest cause and the newer causes vanish "
                       "from the message")
               reported
-              (short-q outcome)))))
+              (short-q outcome))))
+
+  (def-test "min-version-wrong-type-must-raise-and-release-ctx-cache-lock"
+    :timeout 60
+
+    # The :min-version validation used to raise from inside
+    # apply_security_options (src/jutils/security.c) while
+    # jtls_create_server_ctx held ctx_cache_lock: the raise longjmps past
+    # the unlock and strands the mutex and the half-built SSL_CTX, and
+    # its text names no bad-value type. The validation now records its
+    # detail and returns failure status, and the callers free the
+    # SSL_CTX, release the lock, then raise with the recorded detail.
+    (def outcome
+      (capture
+        (fn []
+          (tls/new-context {:cert (certs :cert)
+                            :key (certs :key)
+                            :security {:min-version 5}}))))
+    (assert (and (= :raised (get outcome 0))
+                 (string/find ":min-version" (get outcome 1))
+                 (string/find "string or keyword" (get outcome 1))
+                 (string/find "number" (get outcome 1))
+                 (not (string/find "No SSL error" (get outcome 1))))
+            (string/format
+              (string "a wrong-type :min-version (the number 5) must raise "
+                      "naming the type problem and the bad value's type, "
+                      "but it %s - apply_security_options "
+                      "(src/jutils/security.c) must record the detail and "
+                      "return failure status so the callers can free the "
+                      "SSL_CTX, release ctx_cache_lock, then raise with "
+                      "the recorded detail")
+              (short-q outcome)))
+
+    # Contract pin: a later valid server-context build must still
+    # succeed. This half is a contract pin that passes under the fixed
+    # behavior - it holds only when the failed build above released
+    # ctx_cache_lock and freed its SSL_CTX; a raise that escaped while
+    # the lock was held would make this build block forever.
+    (def after-outcome
+      (capture
+        (fn []
+          (tls/new-context {:cert (certs :cert) :key (certs :key)}))))
+    (assert (= :returned (get after-outcome 0))
+            (string/format
+              (string "after a failed security-option build a valid "
+                      "server-context build must still succeed - the "
+                      "cleanup-safety contract pin that the raise never "
+                      "leaves ctx_cache_lock held - but it %s")
+              (short-q after-outcome))))
+)

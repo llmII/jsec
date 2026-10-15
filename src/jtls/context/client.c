@@ -20,6 +20,7 @@
  * default roots are NOT loaded: the supplied CA replaces them.
  */
 SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
+    jutils_cert_load_error_clear();
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) return NULL;
@@ -44,7 +45,9 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
     if (have_ca) {
         if (!jutils_load_ca(ctx, ca_opt)) {
             SSL_CTX_free(ctx);
-            return NULL;
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to load CA certificates: %s",
+                       jutils_cert_load_error());
         }
     }
 

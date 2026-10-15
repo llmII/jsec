@@ -23,7 +23,9 @@ int jtls_sni_callback(SSL *ssl, int *ad, void *arg) {
 
     for (int i = 0; i < data->count; i++) {
         if (strcmp(servername, data->hostnames[i]) == 0) {
-            SSL_set_SSL_CTX(ssl, data->contexts[i]);
+            if (SSL_set_SSL_CTX(ssl, data->contexts[i]) == NULL) {
+                return SSL_TLSEXT_ERR_ALERT_FATAL;
+            }
             /* Pin the per-vhost session ID context on the connection so a
              * session for one vhost cannot resume for another. */
             unsigned char sid_ctx[SSL_MAX_SID_CTX_LENGTH];
