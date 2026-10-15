@@ -771,7 +771,12 @@ Get list of revoked certificate serials.
 
 Parse an OCSP request (DER-encoded bytes).
 
-*Returns*: ~{:issuer-name-hash :issuer-key-hash :serial :nonce}~
+*Returns*: ~{:issuer-name-hash :issuer-key-hash :serial :digest :nonce}~
+
+~:nonce~ is the nonce extension's content bytes - the exact value
+~OCSP_check_nonce~ compares - echoed byte for byte into the response
+nonce extension. ~:digest~ is the CertID digest name the request named
+(like ~"sha256"~).
 
 ** (:create-ocsp-response ca request-info status &opt opts)
 
@@ -785,6 +790,14 @@ Create an OCSP response for a certificate status query.
   - ~:this-update~ - Response validity start (default: now).
   - ~:next-update~ - Response validity end (default: +1 day).
   - ~:include-nonce~ - Echo nonce from request (default ~true~).
+  - ~:nonce~ - Generate a response nonce when the request carries
+    none. A generated nonce is wrapped in an OCTET STRING while an
+    echoed request nonce is copied verbatim: echo and generate differ
+    by design.
+
+A ~<time>~ is a number (unix timestamp) or string (ISO 8601 or
+~YYYYMMDDHHMMSSZ~). The response CertID uses the digest the request
+named (~:digest~, SHA-1 when absent) and the request's ~:serial~.
 
 *Returns*: DER-encoded OCSP response bytes.
 
