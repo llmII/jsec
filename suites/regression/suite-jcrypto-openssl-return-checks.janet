@@ -49,6 +49,7 @@
 (use assay)
 (import jsec/crypto :as crypto)
 (import jsec/cert :as cert)
+(import jsec/ca :as ca)
 (import ../helpers :prefix "")
 
 (def authority (cert/generate-self-signed-cert
@@ -67,6 +68,10 @@
   [x]
   (def s (string/format "%q" x))
   (string/slice s 0 (min 200 (length s))))
+
+# AES-256-CBC content-encryption OID (2.16.840.1.101.3.4.1.42) as DER.
+(def- aes-256-cbc-oid
+  (string/from-bytes 6 9 0x60 0x86 0x48 1 0x65 3 4 1 0x2a))
 
 (def-suite :name "Jcrypto OpenSSL Return Checks Regression"
   :description "Ticket b346579869: key-info, cms-encrypt, and create-pkcs12 stop discarding OpenSSL failures and invalid option values"
@@ -134,4 +139,58 @@
                       "instead of the explicit Janet byte length, so "
                       "everything from the NUL on is silently dropped")
               (string/format "%q" name-bytes)
-              (string/format "%q" got) (length got)))))
+              (string/format "%q" got) (length got))))
+
+  (def-test "cms-encrypt-unknown-cipher-must-raise"
+    (def ca (ca/generate {:common-name "Discard Root"}))
+    (def cert (ca/get-cert ca))
+    (def outcome
+      (try
+        {:returned (crypto/cms-encrypt "payload" cert {:cipher :aes-256-gcm})}
+        ([err] {:raised err})))
+    (def observed
+      (if-let [der-bytes (outcome :returned)]
+        (string "returned " (length der-bytes) " bytes of CMS data "
+                "encrypted with AES-256-CBC"
+                (if (string/find aes-256-cbc-oid (string der-bytes))
+                  " (the AES-256-CBC content-encryption OID is in the output)"
+                  "")
+                " - the unknown :cipher silently fell back to the default")
+        (string "raised " (describe (outcome :raised)))))
+    (assert (not (nil? (outcome :raised)))
+            (string "crypto/cms-encrypt with an unsupported :cipher "
+                    "must raise an unsupported-cipher error (as "
+                    "crypto/export-key already does at "
+                    "src/jcrypto/keys.c:221-224) instead of silently "
+                    "encrypting with the AES-256-CBC default at "
+                    "src/jcrypto/cms.c:210 because the cipher chain at "
+                    "src/jcrypto/cms.c:213-228 matches nothing for "
+                    ":aes-256-gcm, but it " observed)))
+
+  (def-test "generate-key-invalid-rsa-bits-must-raise"
+    (def outcome
+      (try
+        {:returned (crypto/generate-key :rsa 7)}
+        ([err] {:raised err})))
+    (def err-text (if (outcome :raised) (string (outcome :raised)) ""))
+    (def at-keygen (string/find "failed to generate key" err-text))
+    (def observed
+      (if (nil? (outcome :raised))
+        (string "silently returned a key of "
+                (get (crypto/key-info (outcome :returned)) :bits) " bits")
+        (string "raised " (describe (outcome :raised))
+                (if at-keygen
+                  " - the failure surfaced later inside key generation, not at the :bits argument"
+                  ""))))
+    (assert (and (not (nil? (outcome :raised))) (nil? at-keygen))
+            (string "crypto/generate-key with an RSA size OpenSSL "
+                    "rejects (7 is not a positive multiple of 8) must "
+                    "raise at the :bits argument - bits must be a "
+                    "positive multiple of 8 - or raise the key-size "
+                    "setter error at src/jcrypto/keys.c:73, whose "
+                    "return is discarded today; instead the failure "
+                    "falls through into key generation and surfaces "
+                    "there with a different, confusing error, so it "
+                    observed)))
+
+)

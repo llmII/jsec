@@ -51,22 +51,34 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
     /* Export certificate */
     if (cert) {
         BIO *cert_bio = BIO_new(BIO_s_mem());
-        if (cert_bio) {
-            PEM_write_bio_X509(cert_bio, cert);
-            char *data;
-            long len = BIO_get_mem_data(cert_bio, &data);
-            janet_table_put(
-                result, janet_ckeywordv("cert"),
-                janet_stringv((const uint8_t *)data, (int32_t)len));
-            BIO_free(cert_bio);
+        if (!cert_bio) {
+            X509_free(cert);
+            if (pkey) EVP_PKEY_free(pkey);
+            if (ca) sk_X509_pop_free(ca, X509_free);
+            PKCS12_free(p12);
+            crypto_panic_resource("failed to create BIO");
         }
+        if (!PEM_write_bio_X509(cert_bio, cert)) {
+            BIO_free(cert_bio);
+            X509_free(cert);
+            if (pkey) EVP_PKEY_free(pkey);
+            if (ca) sk_X509_pop_free(ca, X509_free);
+            PKCS12_free(p12);
+            crypto_panic_ssl("failed to export the certificate as PEM");
+        }
+        char *data;
+        long len = BIO_get_mem_data(cert_bio, &data);
+        janet_table_put(
+            result, janet_ckeywordv("cert"),
+            janet_stringv((const uint8_t *)data, (int32_t)len));
+        BIO_free(cert_bio);
 
         /* Get friendly name if present */
-        int len;
-        char *name = (char *)X509_alias_get0(cert, &len);
-        if (name && len > 0) {
+        int name_len;
+        char *name = (char *)X509_alias_get0(cert, &name_len);
+        if (name && name_len > 0) {
             janet_table_put(result, janet_ckeywordv("friendly-name"),
-                            janet_stringv((const uint8_t *)name, len));
+                            janet_stringv((const uint8_t *)name, name_len));
         }
 
         X509_free(cert);
@@ -75,16 +87,26 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
     /* Export private key */
     if (pkey) {
         BIO *key_bio = BIO_new(BIO_s_mem());
-        if (key_bio) {
-            PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL,
-                                     NULL);
-            char *data;
-            long len = BIO_get_mem_data(key_bio, &data);
-            janet_table_put(
-                result, janet_ckeywordv("key"),
-                janet_stringv((const uint8_t *)data, (int32_t)len));
-            BIO_free(key_bio);
+        if (!key_bio) {
+            EVP_PKEY_free(pkey);
+            if (ca) sk_X509_pop_free(ca, X509_free);
+            PKCS12_free(p12);
+            crypto_panic_resource("failed to create BIO");
         }
+        if (!PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL,
+                                      NULL)) {
+            BIO_free(key_bio);
+            EVP_PKEY_free(pkey);
+            if (ca) sk_X509_pop_free(ca, X509_free);
+            PKCS12_free(p12);
+            crypto_panic_ssl("failed to export the private key as PEM");
+        }
+        char *data;
+        long len = BIO_get_mem_data(key_bio, &data);
+        janet_table_put(
+            result, janet_ckeywordv("key"),
+            janet_stringv((const uint8_t *)data, (int32_t)len));
+        BIO_free(key_bio);
         EVP_PKEY_free(pkey);
     }
 
@@ -94,14 +116,22 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
         for (int i = 0; i < sk_X509_num(ca); i++) {
             X509 *ca_cert = sk_X509_value(ca, i);
             BIO *ca_bio = BIO_new(BIO_s_mem());
-            if (ca_bio) {
-                PEM_write_bio_X509(ca_bio, ca_cert);
-                char *data;
-                long len = BIO_get_mem_data(ca_bio, &data);
-                janet_array_push(chain, janet_stringv((const uint8_t *)data,
-                                                      (int32_t)len));
-                BIO_free(ca_bio);
+            if (!ca_bio) {
+                sk_X509_pop_free(ca, X509_free);
+                PKCS12_free(p12);
+                crypto_panic_resource("failed to create BIO");
             }
+            if (!PEM_write_bio_X509(ca_bio, ca_cert)) {
+                BIO_free(ca_bio);
+                sk_X509_pop_free(ca, X509_free);
+                PKCS12_free(p12);
+                crypto_panic_ssl("failed to export a chain certificate as PEM");
+            }
+            char *data;
+            long len = BIO_get_mem_data(ca_bio, &data);
+            janet_array_push(chain, janet_stringv((const uint8_t *)data,
+                                                  (int32_t)len));
+            BIO_free(ca_bio);
         }
         janet_table_put(result, janet_ckeywordv("chain"),
                         janet_wrap_array(chain));
@@ -191,7 +221,7 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
         friendly_name = (const char *)name_buf->data;
     }
 
-    if (!password || strlen(password) == 0) {
+    if (!password || password_bv.len == 0) {
         crypto_panic_param("password is required for PKCS#12 creation");
     }
 
@@ -226,28 +256,58 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
     STACK_OF(X509) *ca = NULL;
     if (chain_arr && chain_arr->count > 0) {
         ca = sk_X509_new_null();
+        if (!ca) {
+            EVP_PKEY_free(pkey);
+            X509_free(cert);
+            crypto_panic_resource("failed to allocate the chain stack");
+        }
         for (int32_t i = 0; i < chain_arr->count; i++) {
             JanetByteView ca_pem = janet_getbytes(&chain_arr->data[i], 0);
             BIO *ca_bio = BIO_new_mem_buf(ca_pem.bytes, (int)ca_pem.len);
-            if (ca_bio) {
-                X509 *ca_cert = PEM_read_bio_X509(ca_bio, NULL, NULL, NULL);
-                BIO_free(ca_bio);
-                if (ca_cert) {
-                    sk_X509_push(ca, ca_cert);
-                }
+            if (!ca_bio) {
+                EVP_PKEY_free(pkey);
+                X509_free(cert);
+                sk_X509_pop_free(ca, X509_free);
+                crypto_panic_resource("failed to create BIO");
+            }
+            X509 *ca_cert = PEM_read_bio_X509(ca_bio, NULL, NULL, NULL);
+            BIO_free(ca_bio);
+            if (!ca_cert) {
+                EVP_PKEY_free(pkey);
+                X509_free(cert);
+                sk_X509_pop_free(ca, X509_free);
+                janet_panicf(
+                    "[CRYPTO:SSL] chain: certificate %d failed to parse: %s",
+                    i, get_ssl_error_string());
+            }
+            if (!sk_X509_push(ca, ca_cert)) {
+                X509_free(ca_cert);
+                EVP_PKEY_free(pkey);
+                X509_free(cert);
+                sk_X509_pop_free(ca, X509_free);
+                crypto_panic_resource("failed to collect chain certificate %d",
+                                      i);
             }
         }
     }
 
-    /* Set friendly name if provided */
+    /* Set friendly name if provided. The alias carries the explicit Janet
+     * byte length, so a name with an embedded NUL keeps every byte; the
+     * NULL name below makes PKCS12_create read the name from the alias
+     * WITH that length (its name parameter is a C string and would
+     * truncate at the NUL). */
     if (friendly_name) {
-        X509_alias_set1(cert, (unsigned char *)friendly_name,
-                        (int)strlen(friendly_name));
+        if (!X509_alias_set1(cert, (unsigned char *)friendly_name,
+                             (int)name_bv.len)) {
+            EVP_PKEY_free(pkey);
+            X509_free(cert);
+            if (ca) sk_X509_pop_free(ca, X509_free);
+            crypto_panic_ssl("failed to set the friendly name");
+        }
     }
 
     /* Create PKCS#12 */
-    PKCS12 *p12 =
-        PKCS12_create(password, friendly_name, pkey, cert, ca, 0, 0, 0, 0, 0);
+    PKCS12 *p12 = PKCS12_create(password, NULL, pkey, cert, ca, 0, 0, 0, 0, 0);
 
     /* Cleanup inputs */
     EVP_PKEY_free(pkey);

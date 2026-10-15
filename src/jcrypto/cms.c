@@ -213,18 +213,28 @@ Janet cfun_cms_encrypt(int32_t argc, Janet *argv) {
         if (janet_checktype(opts, JANET_TABLE) ||
             janet_checktype(opts, JANET_STRUCT)) {
             Janet cipher_val = janet_get(opts, janet_ckeywordv("cipher"));
-            if (janet_checktype(cipher_val, JANET_KEYWORD)) {
+            if (!janet_checktype(cipher_val, JANET_NIL)) {
+                if (!janet_checktype(cipher_val, JANET_KEYWORD)) {
+                    sk_X509_pop_free(recips, X509_free);
+                    crypto_panic_param("unsupported cipher algorithm: %v",
+                                       cipher_val);
+                }
                 const char *cipher_name =
                     (const char *)janet_unwrap_keyword(cipher_val);
-                if (strcmp(cipher_name, "aes-128-cbc") == 0)
+                if (strcmp(cipher_name, "aes-128-cbc") == 0) {
                     cipher = EVP_aes_128_cbc();
-                else if (strcmp(cipher_name, "aes-192-cbc") == 0)
+                } else if (strcmp(cipher_name, "aes-192-cbc") == 0) {
                     cipher = EVP_aes_192_cbc();
-                else if (strcmp(cipher_name, "aes-256-cbc") == 0)
+                } else if (strcmp(cipher_name, "aes-256-cbc") == 0) {
                     cipher = EVP_aes_256_cbc();
-                else if (strcmp(cipher_name, "des3") == 0 ||
-                         strcmp(cipher_name, "3des") == 0)
+                } else if (strcmp(cipher_name, "des3") == 0 ||
+                           strcmp(cipher_name, "3des") == 0) {
                     cipher = EVP_des_ede3_cbc();
+                } else {
+                    sk_X509_pop_free(recips, X509_free);
+                    crypto_panic_param("unsupported cipher algorithm: %v",
+                                       cipher_val);
+                }
             }
         }
     }

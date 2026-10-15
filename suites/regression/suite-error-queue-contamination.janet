@@ -77,11 +77,25 @@
 
 (def certs (generate-temp-certs {:common-name "127.0.0.1"}))
 
+(defn- p12-own-error
+  ``Run crypto/parse-pkcs12 on garbage; return the raised error text (nil
+   if it did not raise). The probe's own failure is an ASN.1 parse error,
+   distinct from the DECODER leftovers a failed key parse would leave, so
+   on a dirty queue the raise names whatever the queue held instead.``
+  []
+  (try
+    (do (crypto/parse-pkcs12 "garbage" "pw") nil)
+    ([err] (string err))))
+
 (def-suite :name "Error Queue Contamination Regression"
   :description "Ticket 1b2ba3616e: leftover OpenSSL errors make SSL_get_error report SSL_ERROR_SSL on a healthy WANT_READ"
 
   (def-test "contaminated error queue makes healthy TLS read raise instead of suspend"
     :timeout 10
+
+    # Control: the queue probe's own error text on a clean queue.
+    (def clean-err (p12-own-error))
+    (assert clean-err "control: the PKCS#12 queue probe must raise")
 
     (with [server (tls/listen "127.0.0.1" "0")]
       (let [[_ port] (net/localname server)
@@ -113,23 +127,44 @@
           (assert (= "hello" (string r1))
                   "first read should receive the hello payload")
 
-          # (a) Contamination in a SEPARATE fiber, matching the ticket's
-          # cross-fiber scenario. ev/give/ev/take order the two fibers
-          # deterministically: the queue is dirty before fiber B reads.
+          # (a) The former quiet contaminant in a SEPARATE fiber: on a
+          # non-key crypto/key-info raises [CRYPTO:PARSE] and drains the
+          # OpenSSL error queue instead of quietly returning {:type
+          # :unknown} with its failed probes left behind. protect observes
+          # the raise so this test asserts it rather than being aborted by
+          # it; ev/give/ev/take keep the cross-fiber shape.
           (ev/go (fn []
-                   (try
-                     (ev/give contaminated
-                              [:ok (crypto/key-info "THIS IS NOT A KEY")])
-                     ([err] (ev/give contaminated [:err err])))))
-          (def [status info] (ev/take contaminated))
-          (assert (= :ok status)
-                  (string/format "contaminating key-info call failed: %q %q"
-                                 status info))
-          (assert (= :unknown (info :type))
+                   (ev/give contaminated
+                            (protect (crypto/key-info "THIS IS NOT A KEY")))))
+          (def [ok? info] (ev/take contaminated))
+          (assert (and (not ok?) (string/find "CRYPTO:PARSE" (string info)))
                   (string/format
-                    (string "key-info on a non-key should report :unknown "
-                            "(both PEM probes failed, queue left dirty), got %q")
-                    info))
+                    (string "key-info on a non-key should raise [CRYPTO:PARSE] "
+                            "instead of quietly returning {:type :unknown}, "
+                            "got %q %q")
+                    ok? info))
+          # ...and leave the OpenSSL error queue clean afterward: a later
+          # operation that consults the queue must report its own error,
+          # not a leftover from the failed probes.
+          (def probe-err (p12-own-error))
+          (assert (= clean-err probe-err)
+                  (string/format
+                    (string "the OpenSSL error queue must be empty after the "
+                            "key-info raise, so a later operation raises its "
+                            "own error instead of a leftover: got (clean=%q "
+                            "after=%q)")
+                    clean-err probe-err))
+          # Garbage merely containing "ENCRYPTED" must take the same
+          # parse-failure path, not the encrypted-key early return.
+          (def [enc-ok? enc-info]
+            (protect (crypto/key-info "ENCRYPTED GARBAGE")))
+          (assert (and (not enc-ok?)
+                       (string/find "CRYPTO:PARSE" (string enc-info)))
+                  (string/format
+                    (string "key-info on garbage containing ENCRYPTED should "
+                            "raise [CRYPTO:PARSE] rather than take the "
+                            "encrypted-key early return, got %q %q")
+                    enc-ok? enc-info))
 
           # (b) The observING read. "world" is not on the wire yet, so a
           # correct SSL_get_error reports WANT_READ and this read
