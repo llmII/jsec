@@ -42,6 +42,22 @@ static Janet cfun_dtls_new_context(int32_t argc, Janet *argv) {
 
     Janet opts = argc > 0 ? argv[0] : janet_wrap_nil();
 
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        Janet cert = janet_get(opts, janet_ckeywordv("cert"));
+        Janet key = janet_get(opts, janet_ckeywordv("key"));
+        if (janet_checktype(cert, JANET_NIL) &&
+            janet_checktype(key, JANET_NIL)) {
+            Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+            if (!janet_checktype(sni, JANET_NIL)) {
+                dtls_panic_param(
+                    ":sni is server-side only (the server virtual-host "
+                    "map on tls/new-context); use :hostname for the "
+                    "client name");
+            }
+        }
+    }
+
     /* Use shared implementation with is_dtls = 1 */
     SSLContext *ctx = jutils_create_context(opts, 1);
 

@@ -108,7 +108,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table. Security options (see [Security Options](#org2c77a23)).
+        -   `:security`: Table. Security options (see [Security Options](#orgdf5498c)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -468,8 +468,8 @@ Create a DTLS client connection. Performs handshake.
     -   `:cert`: Client certificate for mTLS (PEM string).
     -   `:key`: Client private key for mTLS (PEM string).
     -   `:ca`: CA certificate (PEM string).
-    -   `:sni`: Server name for SNI (defaults to host).
-    -   `:verify-hostname`: Hostname to verify against cert.
+    -   `:hostname`: Client name for SNI and certificate verification (overrides the host argument; `:sni` is reserved for the server virtual-host map).
+    -   `:verify-hostname`: Hostname to verify against cert (defaults to `:hostname`).
     -   `:session`: Byte string or buffer. Session data for resumption.
     -   `:handshake-timing`: Boolean. Track handshake duration.
 

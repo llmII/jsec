@@ -35,18 +35,17 @@ static int opts_ocsp_stapling(Janet opts) {
     return janet_truthy(v);
 }
 
-/*============================================================================
- * HELPER: IP-literal host detection
- *============================================================================*/
-/* An IP literal is not a DNS name: verification matches it through
- * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
- * the server_name extension. */
-static int host_is_ip_literal(const char *host) {
-    struct in_addr a4;
-    struct in6_addr a6;
-    if (!host) return 0;
-    return inet_pton(AF_INET, host, &a4) == 1 ||
-           inet_pton(AF_INET6, host, &a6) == 1;
+static void opts_reject_client_sni(Janet opts) {
+    if (!janet_checktype(opts, JANET_TABLE) &&
+        !janet_checktype(opts, JANET_STRUCT)) {
+        return;
+    }
+    Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+    if (!janet_checktype(sni, JANET_NIL)) {
+        tls_panic_param(":sni is server-side only (the server virtual-host "
+                        "map on tls/new-context); use :hostname for the "
+                        "client name");
+    }
 }
 
 /*============================================================================
@@ -77,9 +76,6 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
     }
 
     const char *hostname = NULL;
-    const char *verify_hostname =
-        NULL; /* Hostname for certificate verification (can differ from SNI)
-               */
     int is_server = 0;
     int verify = 1;
     int owns_ctx = 1;
@@ -122,6 +118,9 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
             }
         } else {
             is_server = 1;
+        }
+        if (!is_server) {
+            opts_reject_client_sni(opts);
         }
         goto common_setup;
     }
@@ -202,6 +201,7 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
         }
 
 client_setup:
+        opts_reject_client_sni(opts);
         if (!janet_checktype(opts, JANET_NIL)) {
             /* Check for pre-built context first */
             Janet context_opt = janet_get(opts, janet_ckeywordv("context"));
@@ -351,17 +351,6 @@ common_setup:
         }
     }
 
-    /* :verify-hostname option allows verifying cert against a different
-     * hostname than SNI. Parsed here in common_setup so every client call
-     * shape honors it: positional TLSContext, :context, and ad-hoc client
-     * options alike */
-    if (!is_server && !janet_checktype(opts, JANET_NIL)) {
-        Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
-        if (janet_checktype(vh, JANET_STRING)) {
-            verify_hostname = (const char *)janet_unwrap_string(vh);
-        }
-    }
-
     /* Create the TLS stream */
     TLSStream *tls =
         jtls_setup_stream(transport, ctx, is_server, owns_ctx, buffer_size,
@@ -374,43 +363,14 @@ common_setup:
         SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
     }
 
-    /* Set SNI hostname for client */
-    if (hostname && !is_server) {
-        /* IP literals send no server_name extension at all */
-        if (!host_is_ip_literal(hostname)) {
-            SSL_set_tlsext_host_name(tls->ssl, hostname);
-        }
-        /* Enable hostname verification for security
-         * Use verify_hostname if provided, otherwise use hostname (SNI) */
-        if (verify) {
-            const char *host_to_verify =
-                verify_hostname ? verify_hostname : hostname;
-            SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            if (host_is_ip_literal(host_to_verify)) {
-                if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
-                                                   host_to_verify)) {
-                    tls_panic_verify(
-                        "failed to set hostname verification for %s",
-                        host_to_verify);
-                }
-            } else if (!SSL_set1_host(tls->ssl, host_to_verify)) {
-                tls_panic_verify("failed to set hostname verification for %s",
-                                 host_to_verify);
-            }
-        }
-    } else if (verify_hostname && verify && !is_server) {
-        /* verify_hostname without hostname - just set hostname verification
-         */
-        SSL_set_hostflags(tls->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        if (host_is_ip_literal(verify_hostname)) {
-            if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls->ssl),
-                                               verify_hostname)) {
-                tls_panic_verify("failed to set hostname verification for %s",
-                                 verify_hostname);
-            }
-        } else if (!SSL_set1_host(tls->ssl, verify_hostname)) {
-            tls_panic_verify("failed to set hostname verification for %s",
-                             verify_hostname);
+    /* Client name ranking (:hostname over the positional host), SNI,
+     * certificate name verification and :session attachment: one shared
+     * setup for every entry point (D-01) */
+    if (!is_server) {
+        const char *fail =
+            jutils_client_setup(tls->ssl, opts, hostname, verify);
+        if (fail) {
+            tls_panic_verify("client SSL setup failed in %s", fail);
         }
     }
 
@@ -426,21 +386,6 @@ common_setup:
             janet_free(wire);
         } else {
             tls_panic_param("invalid ALPN protocols");
-        }
-    }
-
-    /* Set session for resumption (client; validated at option parse) */
-    if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
-        const uint8_t *bytes;
-        int32_t len;
-        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
-            const unsigned char *der_ptr = bytes;
-            SSL_SESSION *session =
-                d2i_SSL_SESSION(NULL, &der_ptr, len);
-            if (session) {
-                SSL_set_session(tls->ssl, session);
-                SSL_SESSION_free(session);
-            }
         }
     }
 
@@ -720,47 +665,19 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 jtls_process_operation(&kick);
             }
 
-            /* Check for :hostname option to override SNI (allows connecting
-             * by IP but using hostname for SNI) */
-            const char *sni_hostname = hostname;
-            const char *verify_host = NULL;
-            if (!janet_checktype(opts, JANET_NIL)) {
-                Janet hostname_opt =
-                    janet_get(opts, janet_ckeywordv("hostname"));
-                if (janet_checktype(hostname_opt, JANET_STRING)) {
-                    sni_hostname =
-                        (const char *)janet_unwrap_string(hostname_opt);
-                }
-                /* Check for :verify-hostname to override certificate hostname
-                 * verification */
-                Janet verify_hostname_opt =
-                    janet_get(opts, janet_ckeywordv("verify-hostname"));
-                if (janet_checktype(verify_hostname_opt, JANET_STRING)) {
-                    verify_host = (const char *)janet_unwrap_string(
-                        verify_hostname_opt);
-                }
-            }
-
-            /* Set SNI hostname */
-            if (sni_hostname && !host_is_ip_literal(sni_hostname)) {
-                SSL_set_tlsext_host_name(tls->ssl, sni_hostname);
-            }
-
-            /* Set hostname verification - use verify-hostname if specified,
-             * otherwise use SNI hostname */
-            if (verify) {
-                const char *cert_verify_host =
-                    verify_host ? verify_host : sni_hostname;
-                if (cert_verify_host) {
-                    SSL_set_hostflags(tls->ssl,
-                                      X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-                    if (host_is_ip_literal(cert_verify_host)) {
-                        X509_VERIFY_PARAM_set1_ip_asc(
-                            SSL_get0_param(tls->ssl), cert_verify_host);
-                    } else {
-                        SSL_set1_host(tls->ssl, cert_verify_host);
-                    }
-                }
+            /* Client name ranking (:hostname over the positional host),
+             * SNI, certificate name verification and :session attachment:
+             * one shared setup for every entry point (D-01) */
+            const char *fail =
+                jutils_client_setup(tls->ssl, opts, hostname, verify);
+            if (fail) {
+                janet_free(hostname);
+                janet_cancel(
+                    fiber,
+                    janet_wrap_string(janet_formatc(
+                        "[TLS:VERIFY] client SSL setup failed in %s", fail)));
+                janet_async_end(fiber);
+                return;
             }
 
             /* Free hostname */
@@ -804,6 +721,8 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         }
         if (argc >= 3) opts = argv[2];
     }
+
+    opts_reject_client_sni(opts);
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {

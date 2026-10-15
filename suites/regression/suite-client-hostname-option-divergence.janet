@@ -44,8 +44,13 @@
 #   (d) dtls/upgrade with the :hostname option must bind that name for
 #       certificate verification and reject a certificate valid only
 #       for another name;
-#   (e) dtls/connect must take the client name from :hostname even when
-#       a :sni key is also present.
+#   (e) dtls/connect must take the client name from :hostname when the
+#       :sni key is nil;
+#   and the ruled client contract is guarded at every client entry
+#   point (tls/connect, tls/wrap, dtls/connect, dtls/upgrade) and at
+#   the client context constructors (tls/new-context,
+#   dtls/new-context): a non-nil :sni option must raise :sni is
+#   server-side only, while :sni nil stays a valid no-op.
 #
 # Behaviour under the defect: (a) fails with the TLS handshake error
 # "certificate verify failed" because the positional literal
@@ -56,11 +61,11 @@
 # COMPLETES and the round trip delivers the echo although the
 # certificate is valid only for the other name - no verification name
 # is bound at all; (e) fails with "certificate verify failed" because
-# the :sni key supplies the client name and its name is verified
-# instead of the :hostname value. Exactly those symptoms and nothing
+# the client name falls back to the positional host and 127.0.0.1 is
+# verified instead of the :hostname value. Exactly those symptoms and nothing
 # else. Under fixed code - one shared client SSL setup driven by
 # :hostname over the positional host, :sni reserved for the server
-# virtual-host map - all five tests pass and guard that behaviour.
+# virtual-host map - all eleven tests pass and guard that behaviour.
 
 (use assay)
 (import jsec/tls :as tls)
@@ -277,7 +282,7 @@
       (do
         (def c (dtls/connect "127.0.0.1" (echo :port)
                              {:hostname "server.example"
-                              :sni "other.example"
+                              :sni nil
                               :verify true
                               :trusted-cert (:get-cert ca)}))
         (dtls/write c "Ping")
@@ -289,16 +294,354 @@
     (assert (nil? err)
             (string/format
               (string "dtls/connect with :hostname server.example and "
-                      ":sni other.example must verify the certificate "
-                      "for the :hostname value server.example - the "
-                      "client name comes from :hostname and the :sni "
-                      "key names the server virtual-host map on "
-                      "tls/new-context (src/jtls/api/context.c:73) - "
-                      "but cfun_dtls_connect takes the client name "
-                      "from :sni (src/jdtls/api/connect.c:88-90), so "
-                      "the certificate for server.example failed "
-                      "verification against other.example and the "
+                      ":sni nil must verify the certificate for the "
+                      ":hostname value server.example - :sni nil is a "
+                      "valid no-op, the client name comes from "
+                      ":hostname, and the :sni key names the server "
+                      "virtual-host map on tls/new-context "
+                      "(src/jtls/api/context.c:73) - but "
+                      "cfun_dtls_connect takes the client name from "
+                      ":sni and falls back to the positional host when "
+                      "it is nil (src/jdtls/api/connect.c:88-90), so "
+                      "the positional host was verified and the "
                       "handshake failed: %v")
               err))
     (assert (= "Echo: Ping" data)
-            "the verified DTLS connection must carry application data")))
+            "the verified DTLS connection must carry application data"))
+
+  (def-test "wrap-client-sni-option-must-raise-tls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do (tls/wrap nil {:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "tls/wrap with a non-nil :sni option must raise - "
+                    "the :sni key names the server virtual-host map on "
+                    "tls/new-context (src/jtls/api/context.c:73) and "
+                    "is server-side only - but the call returned "
+                    "without error"))
+    (assert (string/find "[TLS:PARAM]" err)
+            (string/format
+              (string "tls/wrap with a non-nil :sni option must raise "
+                      "[TLS:PARAM] - but the error was %q") err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key and "
+                      "say it is server-side only - but the error was "
+                      "%q") err))
+
+    (set err nil)
+    (try
+      (do (tls/wrap nil @{:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[TLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[TLS:PARAM] for a non-nil client :sni - but the "
+                      "result was %q") err))
+
+    (def srv (start-tls-name-server leaf-server))
+    (var data nil)
+    (set err nil)
+    (try
+      (with [c (tls/wrap (net/connect (srv :host) (srv :port)) "127.0.0.1"
+                         {:hostname "server.example"
+                          :sni nil
+                          :verify true
+                          :trusted-cert (:get-cert ca)})]
+        (:write c "hi")
+        (set data (string (:read c 2 nil 5.0))))
+      ([e] (set err (string e))))
+    (:close (srv :server))
+
+    (assert (nil? err)
+            (string/format
+              (string ":sni nil must stay a valid no-op on tls/wrap and "
+                      ":hostname must still bind server.example - but "
+                      "the call raised %q") err))
+    (assert (= "ok" data)
+            "the verified wrap connection must carry application data"))
+
+  (def-test "connect-client-sni-option-must-raise-tls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do (tls/connect "127.0.0.1" "9" {:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "tls/connect with a non-nil :sni option must "
+                    "raise before any socket or handshake work - the "
+                    ":sni key is server-side only - but the call "
+                    "returned without error"))
+    (assert (string/find "[TLS:PARAM]" err)
+            (string/format
+              (string "tls/connect with a non-nil :sni option must "
+                      "raise [TLS:PARAM] - but the error was %q") err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key and "
+                      "say it is server-side only - but the error was "
+                      "%q") err))
+
+    (set err nil)
+    (try
+      (do (tls/connect "127.0.0.1" "9" @{:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[TLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[TLS:PARAM] for a non-nil client :sni - but the "
+                      "result was %q") err))
+
+    (def srv (start-tls-name-server leaf-server))
+    (var data nil)
+    (set err nil)
+    (try
+      (with [c (tls/connect (srv :host) (srv :port)
+                            {:hostname "server.example"
+                             :sni nil
+                             :verify true
+                             :trusted-cert (:get-cert ca)})]
+        (:write c "hi")
+        (set data (string (:read c 2 nil 5.0))))
+      ([e] (set err (string e))))
+    (:close (srv :server))
+
+    (assert (nil? err)
+            (string/format
+              (string ":sni nil must stay a valid no-op on tls/connect "
+                      "and :hostname must still bind server.example - "
+                      "but the call raised %q") err))
+    (assert (= "ok" data)
+            (string "the verified tls/connect connection must carry "
+                    "application data")))
+
+  (def-test "dtls-connect-client-sni-option-must-raise-dtls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do (dtls/connect "127.0.0.1" "9" {:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "dtls/connect with a non-nil :sni option must "
+                    "raise before any socket or handshake work - the "
+                    ":sni key is server-side only - but the call "
+                    "returned without error"))
+    (assert (string/find "[DTLS:PARAM]" err)
+            (string/format
+              (string "dtls/connect with a non-nil :sni option must "
+                      "raise [DTLS:PARAM] - but the error was %q")
+              err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key and "
+                      "say it is server-side only - but the error was "
+                      "%q") err))
+
+    (set err nil)
+    (try
+      (do (dtls/connect "127.0.0.1" "9" @{:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[DTLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[DTLS:PARAM] for a non-nil client :sni - but "
+                      "the result was %q") err)))
+
+  (def-test "dtls-upgrade-client-sni-option-must-raise-dtls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do
+        (def sock (net/connect "127.0.0.1" "9" :datagram))
+        (dtls/upgrade sock {:sni "other.example"}))
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "dtls/upgrade with a non-nil :sni option must "
+                    "raise before any socket or handshake work - the "
+                    ":sni key is server-side only - but the call "
+                    "returned without error"))
+    (assert (string/find "[DTLS:PARAM]" err)
+            (string/format
+              (string "dtls/upgrade with a non-nil :sni option must "
+                      "raise [DTLS:PARAM] - but the error was %q")
+              err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key and "
+                      "say it is server-side only - but the error was "
+                      "%q") err))
+
+    (set err nil)
+    (try
+      (do
+        (def sock (net/connect "127.0.0.1" "9" :datagram))
+        (dtls/upgrade sock @{:sni "other.example"}))
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[DTLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[DTLS:PARAM] for a non-nil client :sni - but "
+                      "the result was %q") err))
+
+    (def echo (start-dtls-echo-server leaf-server))
+    (var data nil)
+    (set err nil)
+    (try
+      (do
+        (def sock (net/connect "127.0.0.1" (echo :port) :datagram))
+        (def c (dtls/upgrade sock {:hostname "server.example"
+                                   :sni nil
+                                   :verify true
+                                   :trusted-cert (:get-cert ca)}))
+        (dtls/write c "Ping")
+        (set data (string (dtls/read c 1024)))
+        (try (dtls/close c) ([_] nil)))
+      ([e] (set err (string e))))
+    (stop-dtls-echo-server echo)
+
+    (assert (nil? err)
+            (string/format
+              (string ":sni nil must stay a valid no-op on dtls/upgrade "
+                      "and :hostname must still bind server.example - "
+                      "but the call raised %q") err))
+    (assert (= "Echo: Ping" data)
+            (string "the verified DTLS connection must carry "
+                    "application data")))
+
+  (def-test "new-context-client-sni-option-must-raise-tls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do (tls/new-context {:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "tls/new-context (client mode) with a non-nil "
+                    ":sni option must raise before any SSL_CTX "
+                    "allocation - the :sni key names the server "
+                    "virtual-host map on tls/new-context "
+                    "(src/jtls/api/context.c:73) and is server-side "
+                    "only - but the call returned without error"))
+    (assert (string/find "[TLS:PARAM]" err)
+            (string/format
+              (string "tls/new-context with a non-nil :sni option "
+                      "must raise [TLS:PARAM] - but the error was "
+                      "%q") err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key "
+                      "and say it is server-side only - but the "
+                      "error was %q") err))
+
+    (set err nil)
+    (try
+      (do (tls/new-context @{:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[TLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[TLS:PARAM] for a non-nil client :sni - but "
+                      "the result was %q") err))
+
+    (set err nil)
+    (var ctx nil)
+    (try
+      (do (set ctx (tls/new-context {:sni nil})) nil)
+      ([e] (set err (string e))))
+    (assert (nil? err)
+            (string/format
+              (string ":sni nil must stay a valid no-op on "
+                      "tls/new-context - but the call raised %q")
+              err))
+    (assert (not (nil? ctx))
+            (string "tls/new-context with :sni nil must return a "
+                    "client context"))
+
+    (set err nil)
+    (set ctx nil)
+    (try
+      (do (set ctx (tls/new-context {})) nil)
+      ([e] (set err (string e))))
+    (assert (nil? err)
+            (string/format
+              (string "an omitted :sni must stay a valid no-op on "
+                      "tls/new-context - but the call raised %q")
+              err))
+    (assert (not (nil? ctx))
+            (string "tls/new-context with the :sni key omitted must "
+                    "return a client context")))
+
+  (def-test "dtls-new-context-client-sni-option-must-raise-dtls-param"
+    :timeout 15
+
+    (var err nil)
+    (try
+      (do (dtls/new-context {:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+
+    (assert (not (nil? err))
+            (string "dtls/new-context (client mode) with a non-nil "
+                    ":sni option must raise before any SSL_CTX "
+                    "allocation - the :sni key names the server "
+                    "virtual-host map on tls/new-context "
+                    "(src/jtls/api/context.c:73) and is server-side "
+                    "only - but the call returned without error"))
+    (assert (string/find "[DTLS:PARAM]" err)
+            (string/format
+              (string "dtls/new-context with a non-nil :sni option "
+                      "must raise [DTLS:PARAM] - but the error was "
+                      "%q") err))
+    (assert (string/find ":sni is server-side only" err)
+            (string/format
+              (string "the client :sni rejection must name the key "
+                      "and say it is server-side only - but the "
+                      "error was %q") err))
+
+    (set err nil)
+    (try
+      (do (dtls/new-context @{:sni "other.example"}) nil)
+      ([e] (set err (string e))))
+    (assert (and (not (nil? err)) (string/find "[DTLS:PARAM]" err))
+            (string/format
+              (string "the table literal shape must raise the same "
+                      "[DTLS:PARAM] for a non-nil client :sni - but "
+                      "the result was %q") err))
+
+    (set err nil)
+    (var ctx nil)
+    (try
+      (do (set ctx (dtls/new-context {:sni nil})) nil)
+      ([e] (set err (string e))))
+    (assert (nil? err)
+            (string/format
+              (string ":sni nil must stay a valid no-op on "
+                      "dtls/new-context - but the call raised %q")
+              err))
+    (assert (not (nil? ctx))
+            (string "dtls/new-context with :sni nil must return a "
+                    "client context"))
+
+    (set err nil)
+    (set ctx nil)
+    (try
+      (do (set ctx (dtls/new-context {})) nil)
+      ([e] (set err (string e))))
+    (assert (nil? err)
+            (string/format
+              (string "an omitted :sni must stay a valid no-op on "
+                      "dtls/new-context - but the call raised %q")
+              err))
+    (assert (not (nil? ctx))
+            (string "dtls/new-context with the :sni key omitted must "
+                    "return a client context"))))

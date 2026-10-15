@@ -256,10 +256,18 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
             Janet ca = janet_get(opts, janet_ckeywordv("ca"));
             if (janet_checktype(trusted, JANET_NIL) &&
                 janet_checktype(ca, JANET_NIL)) {
-                SSL_CTX_set_default_verify_paths(ssl_ctx->ctx);
+                if (SSL_CTX_set_default_verify_paths(ssl_ctx->ctx) != 1) {
+                    SSL_CTX_free(ssl_ctx->ctx);
+                    ssl_ctx->ctx = NULL;
+                    utils_panic_ssl("failed to set default verify paths");
+                }
             }
         } else {
-            SSL_CTX_set_default_verify_paths(ssl_ctx->ctx);
+            if (SSL_CTX_set_default_verify_paths(ssl_ctx->ctx) != 1) {
+                SSL_CTX_free(ssl_ctx->ctx);
+                ssl_ctx->ctx = NULL;
+                utils_panic_ssl("failed to set default verify paths");
+            }
         }
     } else {
         SSL_CTX_set_verify(ssl_ctx->ctx, SSL_VERIFY_NONE, NULL);

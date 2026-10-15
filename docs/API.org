@@ -443,8 +443,8 @@ Create a DTLS client connection. Performs handshake.
   - ~:cert~: Client certificate for mTLS (PEM string).
   - ~:key~: Client private key for mTLS (PEM string).
   - ~:ca~: CA certificate (PEM string).
-  - ~:sni~: Server name for SNI (defaults to host).
-  - ~:verify-hostname~: Hostname to verify against cert.
+  - ~:hostname~: Client name for SNI and certificate verification (overrides the host argument; ~:sni~ is reserved for the server virtual-host map).
+  - ~:verify-hostname~: Hostname to verify against cert (defaults to ~:hostname~).
   - ~:session~: Byte string or buffer. Session data for resumption.
   - ~:handshake-timing~: Boolean. Track handshake duration.
 
