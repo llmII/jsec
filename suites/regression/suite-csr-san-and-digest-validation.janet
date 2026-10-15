@@ -240,4 +240,27 @@
                       "SHA-256 default CSR: the digest option was "
                       "silently ignored and the fallback signed with "
                       "SHA-256; CSR %q")
-              (string/format "%q" by-string)))))
+              (string/format "%q" by-string))))
+
+  (def-test "generate-csr-subject-entry-add-failure-must-raise"
+    (def csr
+      (try {:returned (crypto/generate-csr key {:common-name "s.example"
+                                                :country "USA"})}
+           ([err] {:raised err})))
+    (def observed
+      (string
+        "; crypto/generate-csr with a three-letter country code "
+        (if (csr :raised) (string "raised " (describe (csr :raised)))
+          "returned a CSR with the country entry silently dropped")))
+    (assert (not (nil? (csr :raised)))
+            (string "a subject entry OpenSSL rejects - a common name "
+                    "over the length limit, a country code that is not "
+                    "two characters - must raise at the failing call "
+                    "(X509_NAME_add_entry_by_txt and its sibling "
+                    "setters are used as bare statements at "
+                    "src/jca/types.c:451-458, src/jca/sign.c:474-481, "
+                    "src/jcrypto/csr.c:40-82, "
+                    "src/jcert/jcert.c:159-163) instead of silently "
+                    "returning a certificate or CSR with a partial or "
+                    "empty subject, but " observed)))
+)
