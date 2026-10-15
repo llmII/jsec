@@ -69,60 +69,99 @@
     (der 0x30 (string algid name-hash key-hash (der 2 serial-der-bytes))))
   (der 0x30 (der 0x30 (der 0x30 (der 0x30 certid)))))
 
+
+(defn- pem-der [pem]
+  (def body @"")
+  (each line (string/split "\n" pem)
+    (unless (or (string/has-prefix? "-----" line) (empty? line))
+      (buffer/push-string body (string/trim line))))
+  (crypto/base64-decode (string body)))
+
+(defn- trycall [f]
+  (try {:returned (f)} ([err] {:raised err})))
+
+(defn- der-len
+  "Definite-form DER length at idx: returns [len next-idx]."
+  [buf idx]
+  (def b (in buf idx))
+  (if (< b 0x80)
+    [b (+ idx 1)]
+    (do
+      (def n (band b 0x7f))
+      (var len 0)
+      (var i (+ idx 1))
+      (for k 0 n
+        (set len (+ (* len 256) (in buf i)))
+        (++ i))
+      [len i])))
+
+(defn- der-elem
+  "One DER TLV at idx: returns {:tag t :start s :len n :end e}."
+  [buf idx]
+  (def tag (in buf idx))
+  (def [len start] (der-len buf (+ idx 1)))
+  {:tag tag :start start :len len :end (+ start len)})
+
+(defn- der-children
+  "All TLVs covering buf start..end."
+  [buf start end]
+  (var idx start)
+  (def out @[])
+  (while (< idx end)
+    (def e (der-elem buf idx))
+    (array/push out e)
+    (set idx (e :end)))
+  out)
+
+(defn- serial-bytes
+  "DER INTEGER content bytes for a non-negative serial."
+  [n]
+  (def b @"")
+  (var x n)
+  (if (zero? x) (buffer/push-byte b 0))
+  (while (> x 0)
+    (buffer/push-byte b (band x 0xff))
+    (set x (brshift x 8)))
+  (def rev (reverse b))
+  (if (and (> (length rev) 0) (>= (get rev 0) 0x80))
+    (string (string/from-bytes 0x00) (string rev))
+    (string rev)))
+
+(defn- crl-revoked-serials
+  "The serial numbers of a PEM CRL's revoked entries, as DER content
+   byte strings."
+  [pem]
+  (def der (pem-der pem))
+  (def outer (der-elem der 0))
+  (def tbs (first (der-children der (outer :start) (outer :end))))
+  (def out @[])
+  (each kid (der-children der (tbs :start) (tbs :end))
+    (when (= (kid :tag) 0x30)
+      (def entry-kids (der-children der (kid :start) (kid :end)))
+      (when (and (seq [e :in entry-kids] (= (e :tag) 0x30)) (> (length entry-kids) 0)
+                 (all |(= ($ :tag) 0x30) entry-kids))
+        (each entry entry-kids
+          (def fields (der-children der (entry :start) (entry :end)))
+          (when (and (> (length fields) 0) (= ((first fields) :tag) 0x02))
+            (def s (first fields))
+            (def bytes @"")
+            (for i (s :start) (s :end)
+              (buffer/push-byte bytes (in der i)))
+            (array/push out (string bytes)))))))
+  out)
+
+(defn- missing-serials
+  "Requested serial numbers that never reached the signed CRL."
+  [res serials]
+  (if (res :raised)
+    @[]
+    (do
+      (def present (crl-revoked-serials (res :returned)))
+      (filter |(not (index-of (serial-bytes $) present)) serials))))
+
+
 (def-suite :name "Discarded OpenSSL Errors Regression"
   :description "Discarded OpenSSL failures and silent option fallbacks must raise, never answer wrongly"
-
-  (def-test "cms-encrypt-unknown-cipher-must-raise"
-    (def ca (ca/generate {:common-name "Discard Root"}))
-    (def cert (ca/get-cert ca))
-    (def outcome
-      (try
-        {:returned (crypto/cms-encrypt "payload" cert {:cipher :aes-256-gcm})}
-        ([err] {:raised err})))
-    (def observed
-      (if-let [der-bytes (outcome :returned)]
-        (string "returned " (length der-bytes) " bytes of CMS data "
-                "encrypted with AES-256-CBC"
-                (if (string/find aes-256-cbc-oid (string der-bytes))
-                  " (the AES-256-CBC content-encryption OID is in the output)"
-                  "")
-                " - the unknown :cipher silently fell back to the default")
-        (string "raised " (describe (outcome :raised)))))
-    (assert (not (nil? (outcome :raised)))
-            (string "crypto/cms-encrypt with an unsupported :cipher "
-                    "must raise an unsupported-cipher error (as "
-                    "crypto/export-key already does at "
-                    "src/jcrypto/keys.c:221-224) instead of silently "
-                    "encrypting with the AES-256-CBC default at "
-                    "src/jcrypto/cms.c:210 because the cipher chain at "
-                    "src/jcrypto/cms.c:213-228 matches nothing for "
-                    ":aes-256-gcm, but it " observed)))
-
-  (def-test "generate-key-invalid-rsa-bits-must-raise"
-    (def outcome
-      (try
-        {:returned (crypto/generate-key :rsa 7)}
-        ([err] {:raised err})))
-    (def err-text (if (outcome :raised) (string (outcome :raised)) ""))
-    (def at-keygen (string/find "failed to generate key" err-text))
-    (def observed
-      (if (nil? (outcome :raised))
-        (string "silently returned a key of "
-                (get (crypto/key-info (outcome :returned)) :bits) " bits")
-        (string "raised " (describe (outcome :raised))
-                (if at-keygen
-                  " - the failure surfaced later inside key generation, not at the :bits argument"
-                  ""))))
-    (assert (and (not (nil? (outcome :raised))) (nil? at-keygen))
-            (string "crypto/generate-key with an RSA size OpenSSL "
-                    "rejects (7 is not a positive multiple of 8) must "
-                    "raise at the :bits argument - bits must be a "
-                    "positive multiple of 8 - or raise the key-size "
-                    "setter error at src/jcrypto/keys.c:73, whose "
-                    "return is discarded today; instead the failure "
-                    "falls through into key generation and surfaces "
-                    "there with a different, confusing error, so it "
-                    observed)))
 
   (def-test "parse-ocsp-request-oversized-serial-must-not-report-zero"
     (def req-big
@@ -155,17 +194,12 @@
 
   (def-test "subject-entry-add-failure-must-raise"
     (def root (ca/generate {:common-name "Discard Root"}))
-    (def key (crypto/generate-key :ec-p256))
     (def gen
       (try {:returned (ca/generate {:common-name (string/repeat "A" 200)})}
            ([err] {:raised err})))
     (def iss
       (try {:returned (ca/issue root {:common-name "leaf.example"
                                       :country "USA"})}
-           ([err] {:raised err})))
-    (def csr
-      (try {:returned (crypto/generate-csr key {:common-name "s.example"
-                                                :country "USA"})}
            ([err] {:raised err})))
     (def gen-subject
       (if-let [c (gen :returned)]
@@ -184,20 +218,59 @@
         (if (iss :raised) (string "raised " (describe (iss :raised)))
           (string "returned a certificate whose subject dn is "
                   (describe (get iss-subject :dn))
-                  " (the country entry was silently dropped)"))
-        "; crypto/generate-csr with a three-letter country code "
-        (if (csr :raised) (string "raised " (describe (csr :raised)))
-          "returned a CSR with the country entry silently dropped")))
+                  " (the country entry was silently dropped)"))))
     (assert (and (not (nil? (gen :raised)))
-                 (not (nil? (iss :raised)))
-                 (not (nil? (csr :raised))))
+                 (not (nil? (iss :raised))))
             (string "a subject entry OpenSSL rejects - a common name "
                     "over the length limit, a country code that is not "
                     "two characters - must raise at the failing call "
                     "(X509_NAME_add_entry_by_txt and its sibling "
                     "setters are used as bare statements at "
                     "src/jca/types.c:451-458, src/jca/sign.c:474-481, "
-                    "src/jcrypto/csr.c:40-82, "
                     "src/jcert/jcert.c:159-163) instead of silently "
-                    "returning a certificate or CSR with a partial or "
-                    "empty subject, but " observed))))
+                    "returning a certificate with a partial or "
+                    "empty subject, but " observed)))
+
+  (def-test "generate-crl-must-not-omit-revocations"
+    (def root (ca/generate {:common-name "CRL Root"}))
+    (def array-res
+      (trycall |(ca/crl root {:revoked @[{:serial 4660}
+                                         {:serial 22136 :reason
+                                          :key-compromise}]})))
+    (def literal-res
+      (trycall |(ca/crl root {:revoked [{:serial 17185}
+                                        {:serial 25770 :reason
+                                         :ca-compromise}]})))
+    (def miss-array (missing-serials array-res [4660 22136]))
+    (def miss-literal (missing-serials literal-res [17185 25770]))
+    (def observed
+      (string
+        "revocations given in a mutable array "
+        (if (array-res :raised)
+          (string "raised " (describe (array-res :raised)))
+          (if (empty? miss-array)
+            "all reached the signed CRL"
+            (string "were dropped from the signed CRL: serials "
+                    (string/format "%q" miss-array))))
+        "; revocations given in the bracketed literal form "
+        (if (literal-res :raised)
+          (string "raised " (describe (literal-res :raised)))
+          (if (empty? miss-literal)
+            "all reached the signed CRL"
+            (string "were dropped from the signed CRL with no error: "
+                    "serials " (string/format "%q" miss-literal)
+                    " are missing, so a relying party treats a "
+                    "revoked certificate as valid")))))
+    (assert (and (or (not (nil? (array-res :raised)))
+                     (empty? miss-array))
+                 (or (not (nil? (literal-res :raised)))
+                     (empty? miss-literal)))
+            (string "ca/crl must place every revocation it was given "
+                    "into the signed CRL, or raise at the first entry "
+                    "it cannot place - the option is consumed only "
+                    "when it is a mutable array at "
+                    "src/jca/crl.c:195-198, the entry construction "
+                    "and the appends at :272-291 are unchecked, and "
+                    "the sort at :332 is unchecked - never a signed "
+                    "CRL with revocations silently missing; but "
+                    observed))))

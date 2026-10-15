@@ -133,29 +133,73 @@ Janet cfun_ca_revoke(int32_t argc, Janet *argv) {
 
     /* Set serial number */
     ASN1_INTEGER *asn_serial = ASN1_INTEGER_new();
-    ASN1_INTEGER_set_int64(asn_serial, serial);
-    X509_REVOKED_set_serialNumber(revoked, asn_serial);
+    if (!asn_serial) {
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to create serial number");
+    }
+    if (!ASN1_INTEGER_set_int64(asn_serial, serial)) {
+        ASN1_INTEGER_free(asn_serial);
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to set serial number");
+    }
+    if (!X509_REVOKED_set_serialNumber(revoked, asn_serial)) {
+        ASN1_INTEGER_free(asn_serial);
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to set revocation serial number");
+    }
     ASN1_INTEGER_free(asn_serial);
 
     /* Set revocation time to now */
     ASN1_TIME *revtime = ASN1_TIME_new();
-    X509_gmtime_adj(revtime, 0);
-    X509_REVOKED_set_revocationDate(revoked, revtime);
+    if (!revtime) {
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to create revocation time");
+    }
+    if (!X509_gmtime_adj(revtime, 0)) {
+        ASN1_TIME_free(revtime);
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to set revocation time");
+    }
+    if (!X509_REVOKED_set_revocationDate(revoked, revtime)) {
+        ASN1_TIME_free(revtime);
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to set revocation date");
+    }
     ASN1_TIME_free(revtime);
 
     /* Set revocation reason if not unspecified */
     if (reason != CA_REVOKE_UNSPECIFIED) {
         ASN1_ENUMERATED *reason_enum = ASN1_ENUMERATED_new();
-        ASN1_ENUMERATED_set(reason_enum, reason);
-        X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason, reason_enum, 0, 0);
+        if (!reason_enum) {
+            X509_REVOKED_free(revoked);
+            ca_panic_ssl("failed to create revocation reason");
+        }
+        if (!ASN1_ENUMERATED_set(reason_enum, reason)) {
+            ASN1_ENUMERATED_free(reason_enum);
+            X509_REVOKED_free(revoked);
+            ca_panic_ssl("failed to set revocation reason");
+        }
+        if (!X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason, reason_enum, 0,
+                                       0)) {
+            ASN1_ENUMERATED_free(reason_enum);
+            X509_REVOKED_free(revoked);
+            ca_panic_ssl("failed to add revocation reason extension");
+        }
         ASN1_ENUMERATED_free(reason_enum);
     }
 
     /* Add to revoked list */
     if (!ca->revoked) {
         ca->revoked = sk_X509_REVOKED_new_null();
+        if (!ca->revoked) {
+            X509_REVOKED_free(revoked);
+            ca_panic_ssl("failed to create revocation list");
+        }
     }
-    sk_X509_REVOKED_push(ca->revoked, revoked);
+    if (!sk_X509_REVOKED_push(ca->revoked, revoked)) {
+        X509_REVOKED_free(revoked);
+        ca_panic_ssl("failed to add revocation entry");
+    }
 
     return janet_wrap_nil();
 }
@@ -195,6 +239,13 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "revoked");
         if (janet_checktype(v, JANET_ARRAY)) {
             additional_revoked = janet_unwrap_array(v);
+        } else if (janet_checktype(v, JANET_TUPLE)) {
+            const Janet *tuple = janet_unwrap_tuple(v);
+            int32_t len = janet_tuple_length(tuple);
+            additional_revoked = janet_array(len);
+            for (int32_t i = 0; i < len; i++) {
+                janet_array_push(additional_revoked, tuple[i]);
+            }
         }
     }
 
@@ -213,10 +264,36 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
     /* Set update times */
     ASN1_TIME *last_update = ASN1_TIME_new();
     ASN1_TIME *next_update = ASN1_TIME_new();
-    X509_gmtime_adj(last_update, 0);
-    X509_gmtime_adj(next_update, (long)days_valid * 24 * 60 * 60);
-    X509_CRL_set1_lastUpdate(crl, last_update);
-    X509_CRL_set1_nextUpdate(crl, next_update);
+    if (!last_update || !next_update) {
+        ASN1_TIME_free(last_update);
+        ASN1_TIME_free(next_update);
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to create CRL update time");
+    }
+    if (!X509_gmtime_adj(last_update, 0)) {
+        ASN1_TIME_free(last_update);
+        ASN1_TIME_free(next_update);
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to set CRL last update time");
+    }
+    if (!X509_gmtime_adj(next_update, (long)days_valid * 24 * 60 * 60)) {
+        ASN1_TIME_free(last_update);
+        ASN1_TIME_free(next_update);
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to set CRL next update time");
+    }
+    if (!X509_CRL_set1_lastUpdate(crl, last_update)) {
+        ASN1_TIME_free(last_update);
+        ASN1_TIME_free(next_update);
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to set CRL last update");
+    }
+    if (!X509_CRL_set1_nextUpdate(crl, next_update)) {
+        ASN1_TIME_free(last_update);
+        ASN1_TIME_free(next_update);
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to set CRL next update");
+    }
     ASN1_TIME_free(last_update);
     ASN1_TIME_free(next_update);
 
@@ -227,7 +304,15 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
             X509_REVOKED *rev = sk_X509_REVOKED_value(ca->revoked, i);
             /* Duplicate the entry since CRL takes ownership */
             X509_REVOKED *rev_copy = X509_REVOKED_dup(rev);
-            X509_CRL_add0_revoked(crl, rev_copy);
+            if (!rev_copy) {
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to duplicate revocation entry");
+            }
+            if (!X509_CRL_add0_revoked(crl, rev_copy)) {
+                X509_REVOKED_free(rev_copy);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to add revoked certificate to CRL");
+            }
         }
     }
 
@@ -270,25 +355,78 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
             }
 
             X509_REVOKED *revoked = X509_REVOKED_new();
+            if (!revoked) {
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to create revocation entry");
+            }
             ASN1_INTEGER *asn_serial = ASN1_INTEGER_new();
-            ASN1_INTEGER_set_int64(asn_serial, serial);
-            X509_REVOKED_set_serialNumber(revoked, asn_serial);
+            if (!asn_serial) {
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to create serial number");
+            }
+            if (!ASN1_INTEGER_set_int64(asn_serial, serial)) {
+                ASN1_INTEGER_free(asn_serial);
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to set serial number");
+            }
+            if (!X509_REVOKED_set_serialNumber(revoked, asn_serial)) {
+                ASN1_INTEGER_free(asn_serial);
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to set revocation serial number");
+            }
             ASN1_INTEGER_free(asn_serial);
 
             ASN1_TIME *revtime = ASN1_TIME_new();
-            X509_gmtime_adj(revtime, 0);
-            X509_REVOKED_set_revocationDate(revoked, revtime);
+            if (!revtime) {
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to create revocation time");
+            }
+            if (!X509_gmtime_adj(revtime, 0)) {
+                ASN1_TIME_free(revtime);
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to set revocation time");
+            }
+            if (!X509_REVOKED_set_revocationDate(revoked, revtime)) {
+                ASN1_TIME_free(revtime);
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to set revocation date");
+            }
             ASN1_TIME_free(revtime);
 
             if (reason != CA_REVOKE_UNSPECIFIED) {
                 ASN1_ENUMERATED *reason_enum = ASN1_ENUMERATED_new();
-                ASN1_ENUMERATED_set(reason_enum, reason);
-                X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason,
-                                          reason_enum, 0, 0);
+                if (!reason_enum) {
+                    X509_REVOKED_free(revoked);
+                    X509_CRL_free(crl);
+                    ca_panic_ssl("failed to create revocation reason");
+                }
+                if (!ASN1_ENUMERATED_set(reason_enum, reason)) {
+                    ASN1_ENUMERATED_free(reason_enum);
+                    X509_REVOKED_free(revoked);
+                    X509_CRL_free(crl);
+                    ca_panic_ssl("failed to set revocation reason");
+                }
+                if (!X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason,
+                                               reason_enum, 0, 0)) {
+                    ASN1_ENUMERATED_free(reason_enum);
+                    X509_REVOKED_free(revoked);
+                    X509_CRL_free(crl);
+                    ca_panic_ssl("failed to add revocation reason extension");
+                }
                 ASN1_ENUMERATED_free(reason_enum);
             }
 
-            X509_CRL_add0_revoked(crl, revoked);
+            if (!X509_CRL_add0_revoked(crl, revoked)) {
+                X509_REVOKED_free(revoked);
+                X509_CRL_free(crl);
+                ca_panic_ssl("failed to add revoked certificate to CRL");
+            }
         }
     }
 
@@ -329,7 +467,10 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
     }
 
     /* Sort the revoked list (required by X.509) */
-    X509_CRL_sort(crl);
+    if (!X509_CRL_sort(crl)) {
+        X509_CRL_free(crl);
+        ca_panic_ssl("failed to sort CRL");
+    }
 
     /* Sign the CRL */
     if (!X509_CRL_sign(crl, ca->key, EVP_sha256())) {
@@ -388,7 +529,9 @@ Janet cfun_ca_get_revoked(int32_t argc, Janet *argv) {
         /* Get serial */
         const ASN1_INTEGER *serial = X509_REVOKED_get0_serialNumber(rev);
         int64_t serial_val = 0;
-        ASN1_INTEGER_get_int64(&serial_val, serial);
+        if (!serial || ASN1_INTEGER_get_int64(&serial_val, serial) <= 0) {
+            ca_panic_ssl("failed to read revoked serial number");
+        }
 
         /* Get reason */
         CARevocationReason reason = CA_REVOKE_UNSPECIFIED;

@@ -108,7 +108,10 @@ Janet cfun_ca_parse_ocsp_request(int32_t argc, Janet *argv) {
     /* Serial number */
     if (serial) {
         int64_t serial_val = 0;
-        ASN1_INTEGER_get_int64(&serial_val, serial);
+        if (ASN1_INTEGER_get_int64(&serial_val, serial) <= 0) {
+            OCSP_REQUEST_free(req);
+            ca_panic_ssl("failed to read certificate id serial");
+        }
         janet_table_put(result, janet_ckeywordv("serial"),
                         janet_wrap_s64(serial_val));
     }
