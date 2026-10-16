@@ -444,6 +444,7 @@ Janet cfun_dtls_get_peer_cert(int32_t argc, Janet *argv);
 /* io.c */
 Janet cfun_dtls_read(int32_t argc, Janet *argv);
 Janet cfun_dtls_write(int32_t argc, Janet *argv);
+Janet cfun_dtls_flush(int32_t argc, Janet *argv);
 Janet cfun_dtls_chunk(int32_t argc, Janet *argv);
 
 /* upgrade.c */

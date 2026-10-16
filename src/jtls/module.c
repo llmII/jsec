@@ -135,6 +135,11 @@ void jtls_module_init(JanetTable *env) {
          "(write stream data &opt timeout)\n\n"
          "Write data to TLS stream. Takes optional timeout in seconds.\n"
          "Returns nil, or raises an error if write failed.\n"},
+        {"flush", cfun_flush,
+         "(flush stream)\n\n"
+         "Flush buffered output on the TLS stream, matching net/flush.\n"
+         "Returns the stream itself. Raises [TLS:IO] when the stream is "
+         "closed.\n"},
         {"close", cfun_close,
          "(close stream &opt force)\n\n"
          "Close TLS stream. Sends close_notify per RFC unless force is "

@@ -239,6 +239,8 @@ TLS streams implement Janet's standard stream interface. They work with:
 -   `ev/read` / `:read` - Read data from the stream
 -   `ev/write` / `:write` - Write data to the stream
 -   `ev/chunk` / `:chunk` - Read exactly n bytes or until EOF
+-   `net/flush` / `:flush` - Flush buffered transport output; returns the
+    stream itself, like Janet's `net/flush`
 -   `ev/close` / `:close` - Close with proper TLS shutdown
 
 
@@ -366,6 +368,14 @@ These methods are available on TLS stream objects. Access via method syntax
     Returns the peer address of a connected TLS stream as a `[host port]`
     tuple (or `[unix-path]` tuple for Unix domain sockets). Raises on a
     `tls/listen` listener or a closed stream.
+
+
+### Flush
+
+-   `(:flush stream)` or `(tls-stream/flush stream)`
+    Flush buffered transport output, matching Janet's `net/flush`.
+    Returns the stream itself. Raises `[TLS:IO]` when the stream is
+    closed.
 
 
 ### Session Management
@@ -607,6 +617,11 @@ syntax `(:method obj args...)` or import `jsec/dtls-stream` for function version
 
 -   `(:set-session client data)` or `(dtls-stream/set-session client data)`
     Sets session data (byte string or buffer)
+
+-   `(:flush client)` or `(dtls-stream/flush client)`
+    Flush buffered transport output, matching Janet's `net/flush`.
+    Returns the client itself. Raises `[DTLS:IO]` when the client is
+    closed.
 
 
 ### DTLS Operations

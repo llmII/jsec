@@ -67,6 +67,12 @@ static const JanetReg client_cfuns[] = {
      "table/struct with a :timeout key): an absolute deadline from the\n"
      "call, not one per wait. Expiry cancels the fiber with a \"timeout\"\n"
      "error. A negative timeout raises a parameter error."},
+    {"flush", cfun_dtls_flush,
+     "(dtls/flush client)\n\n"
+     "Flush buffered transport output on the DTLS client, matching "
+     "net/flush.\n"
+     "Returns the client itself. Raises [DTLS:IO] when the client is "
+     "closed."},
     {"close", cfun_dtls_close,
      "(dtls/close client &opt force)\n\n"
      "Close DTLS client connection.\n"

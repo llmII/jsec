@@ -138,6 +138,42 @@
                                    {:datagram true :verify true :trusted-cert (other-certs :cert)}))
           (:write client "test")))))
 
+  (def-test "flush returns the client itself and raises on closed client"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          server (tls/listen "127.0.0.1" 0
+                             {:datagram true :cert (certs :cert) :key (certs :key)})
+          [_ port] (:localname server)
+          done (ev/chan 1)]
+      (defer (:close server)
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def buf (buffer/new 1024))
+                (def addr (:recv-from server 1024 buf))
+                (when addr (:send-to server addr "Pong")))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def client (tls/connect "127.0.0.1" port {:datagram true :verify false}))
+        (:write client "Ping")
+        (assert (:read client 1024) "setup: client should receive the Pong reply")
+        (ev/take done)
+
+        # flush returns the client itself, matching net/flush
+        (assert (= client (:flush client))
+                ":flush must return the client itself like net/flush")
+        (assert (= client (dtls-stream/flush client))
+                "dtls-stream/flush must return the client itself")
+
+        # Negative shapes: a closed client raises [DTLS:IO]
+        (:close client true)
+        (assert-error (:flush client)
+                      "closed client :flush must raise [DTLS:IO]")
+        (assert-error (dtls-stream/flush client)
+                      "closed client dtls-stream/flush must raise [DTLS:IO]"))))
+
   (def-test "Server localname"
     (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
           server (tls/listen "127.0.0.1" 0

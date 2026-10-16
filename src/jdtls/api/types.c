@@ -42,6 +42,7 @@ const JanetMethod dtls_client_methods[] = {
     {"read", cfun_dtls_read},
     {"chunk", cfun_dtls_chunk},
     {"write", cfun_dtls_write},
+    {"flush", cfun_dtls_flush},
     {"close", cfun_dtls_close},
     {"shutdown", cfun_dtls_shutdown},
     {"version", cfun_dtls_get_version},

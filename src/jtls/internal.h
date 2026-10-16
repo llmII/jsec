@@ -454,6 +454,7 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv);
 Janet cfun_read(int32_t argc, Janet *argv);
 Janet cfun_chunk(int32_t argc, Janet *argv);
 Janet cfun_write(int32_t argc, Janet *argv);
+Janet cfun_flush(int32_t argc, Janet *argv);
 
 /* Lifecycle */
 Janet cfun_close(int32_t argc, Janet *argv);

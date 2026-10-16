@@ -134,6 +134,7 @@ const JanetMethod tls_stream_methods[] = {
     {"read", cfun_read},
     {"chunk", cfun_chunk}, /* Proper chunk (blocks until n bytes or EOF) */
     {"write", cfun_write},
+    {"flush", cfun_flush},
     {"localname", cfun_localname},
     {"peername", cfun_peername},
     {"session-reused?", cfun_session_reused},
