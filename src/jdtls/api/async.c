@@ -44,6 +44,34 @@ typedef struct {
  */
 #define dtls_client_flush_wbio(client) dtls_client_flush_wbio_to_peer(client)
 
+/*
+ * Format the pending socket error under the DTLS IO category. The reason
+ * is read with getsockopt SO_ERROR (the pattern in
+ * src/jtls/api/connect.c:549-563) and formatted with jsec_socket_strerror
+ * (src/compat.h:211, :271), the way janet_ev_lasterr carries the OS
+ * reason into a cancellation at core ev.c:2600.
+ */
+static void dtls_socket_error_msg(char *buf, size_t buflen,
+                                  JanetStream *stream) {
+    int res = 0;
+    int r = -1;
+    socklen_t size = sizeof(res);
+    if (stream) {
+#ifdef JANET_WINDOWS
+        r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
+                       (char *)&res, (int *)&size);
+#else
+        r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
+#endif
+    }
+    if (r == 0 && res != 0) {
+        snprintf(buf, buflen, "[DTLS:IO] socket error: %s",
+                 jsec_socket_strerror(res));
+    } else {
+        snprintf(buf, buflen, "[DTLS:IO] socket error");
+    }
+}
+
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     DTLSClientAsyncState *state = (DTLSClientAsyncState *)fiber->ev_state;
 
@@ -110,14 +138,32 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             break;
 
         case JANET_ASYNC_EVENT_CLOSE:
-        case JANET_ASYNC_EVENT_ERR:
         case JANET_ASYNC_EVENT_HUP:
+            /* A parked dtls/read is a reader: a local close schedules nil
+             * for it (core ev.c:2473-2476) instead of cancelling it.
+             * Write- and handshake-class operations are cancelled with
+             * the handle-specialized message. */
+            if (state && state->op == CLIENT_OP_READ) {
+                janet_schedule(fiber, janet_wrap_nil());
+            } else {
+                janet_cancel(
+                    fiber, janet_cstringv("[DTLS:IO] DTLS client is closed"));
+            }
+            janet_async_end(fiber);
+            return;
+
+        case JANET_ASYNC_EVENT_ERR: {
+            /* A genuine socket error raises under the DTLS category with
+             * the OS reason - never nil, never a hardcoded string. */
+            char msg[320];
             if (state && state->client) {
                 state->client->state = DTLS_STATE_ERROR;
             }
-            janet_cancel(fiber, janet_cstringv("stream error"));
+            dtls_socket_error_msg(msg, sizeof(msg), fiber->ev_stream);
+            janet_cancel(fiber, janet_cstringv(msg));
             janet_async_end(fiber);
             return;
+        }
 
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_COMPLETE:

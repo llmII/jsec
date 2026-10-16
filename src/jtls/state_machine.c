@@ -621,6 +621,23 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
 }
 
 /*============================================================================
+ * HELPER: Raise or cancel with state->error_msg under the TLS IO category
+ *============================================================================
+ * Every hard I/O failure reports "[TLS:IO] " plus the recorded reason, so
+ * no path surfaces a category-less message to the caller.
+ */
+static void jtls_raise_io_error(JanetFiber *fiber, TLSState *state,
+                                int is_async) {
+    char buf[sizeof(state->error_msg) + 16];
+    snprintf(buf, sizeof(buf), "[TLS:IO] %s", state->error_msg);
+    if (is_async) {
+        janet_cancel(fiber, janet_cstringv(buf));
+    } else {
+        janet_panic(buf);
+    }
+}
+
+/*============================================================================
  * ATTEMPT TLS I/O
  *============================================================================
  * The main entry point for TLS operations. Processes the operation and
@@ -793,13 +810,11 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
                 tls->pending_write = NULL;
             }
 
+            jtls_raise_io_error(fiber, state, is_async);
             if (is_async) {
-                janet_cancel(fiber, janet_cstringv(state->error_msg));
                 /* Leave ev_state set so janet_async_end frees the heap
                  * copy made at first suspension */
                 janet_async_end(fiber);
-            } else {
-                janet_panic(state->error_msg);
             }
             return -1;
 
@@ -807,13 +822,11 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
             /* Unknown state - should never happen */
             snprintf(state->error_msg, sizeof(state->error_msg),
                      "Unknown I/O state: %d", io_state);
+            jtls_raise_io_error(fiber, state, is_async);
             if (is_async) {
-                janet_cancel(fiber, janet_cstringv(state->error_msg));
                 /* Leave ev_state set so janet_async_end frees the heap
                  * copy made at first suspension */
                 janet_async_end(fiber);
-            } else {
-                janet_panic(state->error_msg);
             }
             return -1;
     }
@@ -858,6 +871,35 @@ void clear_pending_for(TLSState *state) {
     }
     if (state->op == TLS_OP_WRITE) {
         tls->pending_write = NULL;
+    }
+}
+
+/*============================================================================
+ * HELPER: Format the pending socket error under the TLS IO category
+ *============================================================================
+ * The reason is read with getsockopt SO_ERROR (the pattern in
+ * src/jtls/api/connect.c:549-563) and formatted with jsec_socket_strerror
+ * (src/compat.h:211, :271), the way janet_ev_lasterr carries the OS
+ * reason into a cancellation at core ev.c:2600.
+ */
+static void jtls_socket_error_msg(char *buf, size_t buflen,
+                                  JanetStream *stream) {
+    int res = 0;
+    int r = -1;
+    socklen_t size = sizeof(res);
+    if (stream) {
+#ifdef JANET_WINDOWS
+        r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
+                       (char *)&res, (int *)&size);
+#else
+        r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
+#endif
+    }
+    if (r == 0 && res != 0) {
+        snprintf(buf, buflen, "[TLS:IO] socket error: %s",
+                 jsec_socket_strerror(res));
+    } else {
+        snprintf(buf, buflen, "[TLS:IO] socket error");
     }
 }
 
@@ -1006,6 +1048,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                  * the ensured capacity and the SSL_read length */
                 ERR_clear_error();
                 int ret = 0;
+                int sock_err = 0;
                 while (read_size > 0) {
                     int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
                                                           : read_size;
@@ -1015,6 +1058,9 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         state->user_buf->data + state->user_buf->count,
                         want);
                     if (ret <= 0) {
+                        /* Capture the socket errno before SSL_get_error
+                         * runs (the jtls_process_operation discipline) */
+                        if (ret < 0) sock_err = jsec_socket_errno;
                         break;
                     }
                     state->user_buf->count += ret;
@@ -1037,11 +1083,26 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                      * rule. */
                     int ssl_err = SSL_get_error(tls->ssl, ret);
                     if (ssl_err == SSL_ERROR_ZERO_RETURN) {
+                        /* Clean shutdown - return what we have or nil */
                         Janet result =
                             (state->user_buf->count > state->buf_start)
                                 ? janet_wrap_buffer(state->user_buf)
                                 : janet_wrap_nil();
                         janet_schedule(fiber, result);
+                        clear_pending_for(state);
+                        janet_async_end(fiber);
+                        return;
+                    } else if (ssl_err == SSL_ERROR_SYSCALL &&
+                               sock_err != 0) {
+                        /* A hard reset raises with the OS reason under
+                         * the TLS IO category - never a clean nil */
+                        char msg[320];
+                        snprintf(msg, sizeof(msg),
+                                 "[TLS:IO] %s syscall error: %s",
+                                 state->op == TLS_OP_CHUNK ? "Chunk read"
+                                                           : "Read",
+                                 jsec_socket_strerror(sock_err));
+                        janet_cancel(fiber, janet_cstringv(msg));
                         clear_pending_for(state);
                         janet_async_end(fiber);
                         return;
@@ -1052,8 +1113,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                      * the one documented unexpected-EOF error. */
                     const char *err_msg;
                     if (jutils_is_unexpected_eof() ||
-                        (ssl_err == SSL_ERROR_SYSCALL &&
-                         (errno == 0 || errno == ECONNRESET))) {
+                        (ssl_err == SSL_ERROR_SYSCALL && sock_err == 0)) {
                         err_msg = JSEC_UNEXPECTED_EOF_ERROR;
                     } else if (ssl_err == SSL_ERROR_SSL) {
                         err_msg = get_ssl_error_string();
@@ -1066,19 +1126,43 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     return;
                 }
             }
-            /* Fall through for non-read operations or read failures */
+            /* Fall through for non-read operations and read drains that
+             * found no data and no clean end-of-file */
 #if defined(__GNUC__) || defined(__clang__)
             __attribute__((fallthrough));
 #endif
         case JANET_ASYNC_EVENT_CLOSE:
-        case JANET_ASYNC_EVENT_ERR:
-            /* Connection closed or error */
+            /* A local close schedules nil for parked readers (core
+             * ev.c:2473-2476) and cancels write- and handshake-class
+             * operations the way core ev.c:2723-2726 cancels parked
+             * writers with "stream closed". A hangup that fell through
+             * here could not establish a clean end-of-file, so it cancels
+             * rather than claims nil. */
             if (state) {
                 clear_pending_for(state);
-                janet_cancel(fiber, janet_cstringv("Connection closed"));
+                if (event == JANET_ASYNC_EVENT_CLOSE &&
+                    (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
+                    janet_schedule(fiber, janet_wrap_nil());
+                } else {
+                    janet_cancel(fiber,
+                                 janet_cstringv("[TLS:IO] stream closed"));
+                }
                 janet_async_end(fiber);
             }
             break;
+
+        case JANET_ASYNC_EVENT_ERR: {
+            /* A genuine socket error raises under the TLS category with
+             * the OS reason - never nil, never a hardcoded string. */
+            if (state) {
+                char msg[320];
+                clear_pending_for(state);
+                jtls_socket_error_msg(msg, sizeof(msg), fiber->ev_stream);
+                janet_cancel(fiber, janet_cstringv(msg));
+                janet_async_end(fiber);
+            }
+            break;
+        }
 
         case JANET_ASYNC_EVENT_READ:
         case JANET_ASYNC_EVENT_WRITE:
