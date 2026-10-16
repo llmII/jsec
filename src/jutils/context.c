@@ -94,7 +94,9 @@ Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv) {
     }
 
     if (!add_trusted_cert(ssl_ctx->ctx, argv[1])) {
-        utils_panic_ssl("failed to add trusted certificate");
+        jsec_panic(JSEC_MOD_UTILS, "SSL",
+                   "failed to add trusted certificate: %s",
+                   jutils_cert_load_error());
     }
 
     return janet_wrap_nil();
@@ -117,6 +119,10 @@ Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv) {
  * Otherwise creates a client-only context.
  */
 SSLContext *jutils_create_context(Janet opts, int is_dtls) {
+    /* Failures below record their cause and return status where they
+     * can; the raises here free the SSL_CTX first and carry the
+     * recorded detail, so no raise reports a stale or empty cause. */
+    jutils_cert_load_error_clear();
     int is_server = 0;
     int verify = -1; /* -1 means use default */
 
@@ -169,7 +175,9 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
     if (!apply_security_options(ssl_ctx->ctx, security, is_dtls, is_server)) {
         SSL_CTX_free(ssl_ctx->ctx);
         ssl_ctx->ctx = NULL;
-        utils_panic_ssl("failed to apply security options");
+        jsec_panic(JSEC_MOD_UTILS, "SSL",
+                   "failed to apply security options: %s",
+                   jutils_cert_load_error());
     }
 
     /* Load certificates if provided */
@@ -192,7 +200,9 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
             if (!jutils_load_cert(ssl_ctx->ctx, cert)) {
                 SSL_CTX_free(ssl_ctx->ctx);
                 ssl_ctx->ctx = NULL;
-                utils_panic_ssl("failed to load certificate");
+                jsec_panic(JSEC_MOD_UTILS, "SSL",
+                           "failed to load certificate: %s",
+                           jutils_cert_load_error());
             }
         }
 
@@ -200,7 +210,9 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
             if (!jutils_load_key(ssl_ctx->ctx, key)) {
                 SSL_CTX_free(ssl_ctx->ctx);
                 ssl_ctx->ctx = NULL;
-                utils_panic_ssl("failed to load private key");
+                jsec_panic(JSEC_MOD_UTILS, "SSL",
+                           "failed to load private key: %s",
+                           jutils_cert_load_error());
             }
         }
 
@@ -217,7 +229,9 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
             if (!jutils_load_ca(ssl_ctx->ctx, ca)) {
                 SSL_CTX_free(ssl_ctx->ctx);
                 ssl_ctx->ctx = NULL;
-                utils_panic_ssl("failed to load CA certificates");
+                jsec_panic(JSEC_MOD_UTILS, "SSL",
+                           "failed to load CA certificates: %s",
+                           jutils_cert_load_error());
             }
         }
 

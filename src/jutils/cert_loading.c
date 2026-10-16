@@ -45,35 +45,69 @@ int jutils_password_cb(char *buf, int size, int rwflag, void *u) {
 }
 
 /*
+ * The recorded-detail buffer and its accessors live in error.c
+ * (jutils_cert_load_errorf / jutils_cert_load_error). The cert-loading
+ * helpers never raise: they record a human-readable cause and return 0,
+ * so callers can free what they own and raise with the cause after
+ * releasing any held lock (never across a held ctx_cache_lock).
+ */
+
+/*
  * Load certificate chain from PEM data in memory.
  * Loads the first certificate as the end-entity cert, then any
  * additional certificates as the chain.
  *
- * Returns: 1 on success, 0 on failure
+ * Returns: 1 on success, 0 on failure. Never raises: the failure
+ * cause is recorded and readable via jutils_cert_load_error (silent
+ * truncation is not success).
  */
 int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
+    jutils_cert_load_error_clear();
     BIO *bio = BIO_new_mem_buf(data, len);
-    if (!bio) return 0;
+    if (!bio) {
+        jutils_cert_load_errorf("chain: failed to create certificate BIO: %s",
+                         get_ssl_error_string());
+        return 0;
+    }
 
+    int cert_num = 1;
     X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
     if (!cert) {
         BIO_free(bio);
+        jutils_cert_load_errorf("chain: certificate %d failed to parse: %s", cert_num,
+                         get_ssl_error_string());
         return 0;
     }
 
     if (SSL_CTX_use_certificate(ctx, cert) != 1) {
         X509_free(cert);
         BIO_free(bio);
+        jutils_cert_load_errorf("chain: certificate %d could not be used: %s",
+                         cert_num, get_ssl_error_string());
         return 0;
     }
     X509_free(cert);
 
     /* Load any additional certificates as chain certs */
     X509 *ca;
-    while ((ca = PEM_read_bio_X509(bio, NULL, NULL, NULL)) != NULL) {
+    for (;;) {
+        cert_num++;
+        ca = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        if (!ca) {
+            unsigned long err = ERR_peek_last_error();
+            if (err != 0 && ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+                BIO_free(bio);
+                jutils_cert_load_errorf("chain: certificate %d failed to parse: %s",
+                                 cert_num, get_ssl_error_string());
+                return 0;
+            }
+            break;
+        }
         if (SSL_CTX_add_extra_chain_cert(ctx, ca) != 1) {
             X509_free(ca);
             BIO_free(bio);
+            jutils_cert_load_errorf("chain: certificate %d could not be added: %s",
+                             cert_num, get_ssl_error_string());
             return 0;
         }
         /* Note: SSL_CTX_add_extra_chain_cert takes ownership, don't free ca
@@ -111,22 +145,56 @@ int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
  * Load CA certificates from PEM data in memory.
  * Can contain multiple certificates.
  *
- * Returns: 1 on success, 0 on failure
+ * Returns: 1 on success, 0 on failure. Never raises: the failure
+ * cause is recorded and readable via jutils_cert_load_error (silent
+ * truncation is not success). A duplicate trust-anchor add is
+ * idempotent success (X509_R_CERT_ALREADY_IN_HASH_TABLE drains).
  */
 int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
+    jutils_cert_load_error_clear();
     BIO *bio = BIO_new_mem_buf(data, len);
-    if (!bio) return 0;
+    if (!bio) {
+        jutils_cert_load_errorf("ca: failed to create certificate BIO: %s",
+                         get_ssl_error_string());
+        return 0;
+    }
 
     X509_STORE *store = SSL_CTX_get_cert_store(ctx);
     if (!store) {
         BIO_free(bio);
+        jutils_cert_load_errorf("ca: failed to get certificate store: %s",
+                         get_ssl_error_string());
         return 0;
     }
 
     X509 *cert;
-    while ((cert = PEM_read_bio_X509(bio, NULL, NULL, NULL)) != NULL) {
-        X509_STORE_add_cert(store, cert);
+    int cert_num = 0;
+    for (;;) {
+        cert_num++;
+        cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        if (!cert) {
+            unsigned long err = ERR_peek_last_error();
+            if (err != 0 && ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+                BIO_free(bio);
+                jutils_cert_load_errorf("ca: certificate %d failed to parse: %s",
+                                 cert_num, get_ssl_error_string());
+                return 0;
+            }
+            break;
+        }
+        int added = X509_STORE_add_cert(store, cert);
         X509_free(cert);
+        if (added != 1) {
+            unsigned long err = ERR_peek_last_error();
+            if (ERR_GET_REASON(err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+                BIO_free(bio);
+                jutils_cert_load_errorf(
+                    "ca: certificate %d failed to add to trust store: %s",
+                    cert_num, get_ssl_error_string());
+                return 0;
+            }
+            ERR_clear_error();
+        }
     }
 
     ERR_clear_error();
@@ -139,9 +207,13 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
  * Used for certificate pinning (trust specific cert without full CA chain).
  *
  * Accepts PEM-encoded certificate as Janet string or buffer.
- * Returns: 1 on success, 0 on failure
+ * Returns: 1 on success, 0 on failure. Never raises: each failure
+ * class records its own cause, readable via jutils_cert_load_error.
+ * A certificate already in the store is idempotent success
+ * (X509_R_CERT_ALREADY_IN_HASH_TABLE drains the queue).
  */
 int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
+    jutils_cert_load_error_clear();
     const unsigned char *cert_data = NULL;
     int cert_len = 0;
 
@@ -154,28 +226,51 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
         cert_data = b->data;
         cert_len = b->count;
     } else {
+        JanetString msg = janet_formatc(
+            "trusted certificate must be a string or buffer, got %v",
+            cert_pem);
+        jutils_cert_load_errorf("%s", (const char *)msg);
         return 0;
     }
 
     /* Parse PEM certificate */
     BIO *bio = BIO_new_mem_buf(cert_data, cert_len);
-    if (!bio) return 0;
+    if (!bio) {
+        jutils_cert_load_errorf("failed to create certificate BIO: %s",
+                         get_ssl_error_string());
+        return 0;
+    }
 
     X509 *x509 = PEM_read_bio_X509(bio, NULL, NULL, NULL);
     BIO_free(bio);
-    if (!x509) return 0;
+    if (!x509) {
+        jutils_cert_load_errorf("failed to parse PEM certificate: %s",
+                         get_ssl_error_string());
+        return 0;
+    }
 
     /* Get the certificate store and add the certificate */
     X509_STORE *store = SSL_CTX_get_cert_store(ctx);
     if (!store) {
         X509_free(x509);
+        jutils_cert_load_errorf("failed to get certificate store: %s",
+                         get_ssl_error_string());
         return 0;
     }
 
     int ret = X509_STORE_add_cert(store, x509);
     X509_free(x509);
+    if (ret != 1) {
+        unsigned long err = ERR_peek_last_error();
+        if (ERR_GET_REASON(err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+            jutils_cert_load_errorf("failed to add trusted certificate: %s",
+                             get_ssl_error_string());
+            return 0;
+        }
+        ERR_clear_error();
+    }
 
-    return ret == 1;
+    return 1;
 }
 
 /*
@@ -272,19 +367,25 @@ int jutils_load_ca(SSL_CTX *ctx, Janet ca) {
 void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca) {
     if (!janet_checktype(cert, JANET_NIL)) {
         if (!jutils_load_cert(ctx, cert)) {
-            utils_panic_ssl("failed to load certificate");
+            jsec_panic(JSEC_MOD_UTILS, "SSL",
+                       "failed to load certificate: %s",
+                       jutils_cert_load_error());
         }
     }
 
     if (!janet_checktype(key, JANET_NIL)) {
         if (!jutils_load_key(ctx, key)) {
-            utils_panic_ssl("failed to load private key");
+            jsec_panic(JSEC_MOD_UTILS, "SSL",
+                       "failed to load private key: %s",
+                       jutils_cert_load_error());
         }
     }
 
     if (!janet_checktype(ca, JANET_NIL)) {
         if (!jutils_load_ca(ctx, ca)) {
-            utils_panic_ssl("failed to load CA certificates");
+            jsec_panic(JSEC_MOD_UTILS, "SSL",
+                       "failed to load CA certificates: %s",
+                       jutils_cert_load_error());
         }
     }
 }

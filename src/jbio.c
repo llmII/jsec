@@ -73,6 +73,7 @@ static Janet cfun_bio_read(int32_t argc, Janet *argv) {
 
     int32_t len = janet_getinteger(argv, 1);
     if (len < 0) crypto_panic_param("length must be non-negative");
+    if (len == 0) return janet_wrap_buffer(janet_buffer(0));
 
     uint8_t chunk[JSEC_READ_CHUNK];
     int32_t remaining = len;
@@ -83,7 +84,10 @@ static Janet cfun_bio_read(int32_t argc, Janet *argv) {
                           ? (int)remaining
                           : (int)JSEC_READ_CHUNK;
         int n = BIO_read(bio, chunk, to_read);
-        if (n <= 0) break;
+        if (n <= 0) {
+            if (!BIO_should_retry(bio)) crypto_panic_ssl("BIO read failed");
+            break;
+        }
         if (!buf) {
             if (n == len || BIO_ctrl_pending(bio) == 0)
                 return janet_stringv(chunk, n);
@@ -152,7 +156,8 @@ static const JanetReg cfuns[] = {
      "(jsec/bio/read bio len)\n\n"
      "Read up to len bytes from BIO in bounded chunks. A large len never "
      "allocates a request-sized buffer.\n"
-     "Returns string or nil if no data."},
+     "Returns string, or nil if no data is available. A zero-length request "
+     "returns the empty buffer; a failed read raises with its OpenSSL cause."},
 
     {"close", cfun_bio_close,
      "(jsec/bio/close bio)\n\n"

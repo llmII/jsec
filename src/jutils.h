@@ -57,9 +57,27 @@
  *============================================================================
  */
 
-/* Get SSL error string - returns static buffer, not thread-safe
- * Use immediately or copy if needed across multiple calls. */
+/* Get SSL error string - returns static buffer (thread-local).
+ * Reports every queued error, separated. When no error is queued,
+ * reports the recorded failure detail (if any), or "No SSL error"
+ * when both are empty. Use immediately or copy if needed across
+ * multiple calls. */
 const char *get_ssl_error_string(void);
+
+/* Human-readable cause recorded by the cert-loading helpers and the
+ * security-option validation on failure. Returns the recorded detail;
+ * when nothing is recorded, reports the OpenSSL error queue (drained),
+ * or "No SSL error" when the queue is empty. */
+const char *jutils_cert_load_error(void);
+
+/* Forget the recorded detail. The cert-loading helpers and
+ * apply_security_options clear it on entry and context creation
+ * clears it before building, so a raise never reports a stale cause. */
+void jutils_cert_load_error_clear(void);
+
+/* Record a failure detail (printf-style) for jutils_cert_load_error.
+ * The record-and-return helpers use this instead of raising. */
+void jutils_cert_load_errorf(const char *fmt, ...);
 
 /*
  * The one documented error for a peer close without close_notify. A peer
@@ -143,7 +161,8 @@ void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca);
  */
 
 /* Load certificate chain from PEM data in memory
- * Returns 1 on success, 0 on failure */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises */
 int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /* Load private key from PEM data in memory
@@ -151,7 +170,9 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /* Load CA certificates from PEM data in memory
- * Returns 1 on success, 0 on failure */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises. A duplicate
+ * trust-anchor add is idempotent success */
 int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /*============================================================================
@@ -160,6 +181,8 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
  */
 
 /* Apply security options to SSL_CTX
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises.
  * Accepts nil, a Janet table, or a Janet struct with the following optional
  * keys:
  *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3,
@@ -192,7 +215,9 @@ void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
 /* Add a trusted certificate to SSL_CTX's certificate store
  * Used for certificate pinning (trust specific cert without full CA chain)
  * Accepts PEM-encoded certificate as string or buffer
- */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises. A certificate already
+ * in the store is idempotent success */
 int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem);
 
 /*============================================================================

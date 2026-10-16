@@ -24,6 +24,7 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
      * is taken (never longjmp past cleanup). */
     jutils_validate_security_options(security_opts);
 
+    jutils_cert_load_error_clear();
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) return NULL;
@@ -48,7 +49,9 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
     if (have_ca) {
         if (!jutils_load_ca(ctx, ca_opt)) {
             SSL_CTX_free(ctx);
-            return NULL;
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to load CA certificates: %s",
+                       jutils_cert_load_error());
         }
     }
 

@@ -131,6 +131,11 @@ void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
  */
 int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
                            int is_server) {
+    /* Validation failures below record the cause (see
+     * jutils_cert_load_error) and return 0: this function never raises,
+     * so no caller can raise while it still holds ctx_cache_lock. */
+    jutils_cert_load_error_clear();
+
     /* Always set secure minimum version default */
     SSL_CTX_set_min_proto_version(ctx,
                                   is_dtls ? DTLS1_2_VERSION : TLS1_2_VERSION);
@@ -157,22 +162,26 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
     if (!janet_checktype(min_ver, JANET_NIL)) {
         const char *ver_str = janet_to_string_or_keyword(min_ver);
         if (!ver_str) {
-            janet_panicf(
-                "[TLS:CFG] :min-version must be a string or keyword");
+            jutils_cert_load_errorf(
+                ":min-version must be a string or keyword, got %s",
+                janet_type_names[janet_type(min_ver)]);
+            return 0;
         }
 
         int version = is_dtls ? parse_dtls_version(ver_str)
                               : parse_tls_version(ver_str);
         if (version == 0) {
             if (is_dtls) {
-                janet_panicf("[TLS:CFG] invalid :min-version '%s', "
-                             "expected DTLS1.0 or DTLS1.2",
-                             ver_str);
+                jutils_cert_load_errorf("invalid :min-version '%s', "
+                                        "expected DTLS1.0 or DTLS1.2",
+                                        ver_str);
             } else {
-                janet_panicf("[TLS:CFG] invalid :min-version '%s', "
-                             "expected TLS1.0, TLS1.1, TLS1.2, or TLS1.3",
-                             ver_str);
+                jutils_cert_load_errorf("invalid :min-version '%s', "
+                                        "expected TLS1.0, TLS1.1, TLS1.2, "
+                                        "or TLS1.3",
+                                        ver_str);
             }
+            return 0;
         }
 
         if (!SSL_CTX_set_min_proto_version(ctx, version)) {
@@ -185,22 +194,26 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
     if (!janet_checktype(max_ver, JANET_NIL)) {
         const char *ver_str = janet_to_string_or_keyword(max_ver);
         if (!ver_str) {
-            janet_panicf(
-                "[TLS:CFG] :max-version must be a string or keyword");
+            jutils_cert_load_errorf(
+                ":max-version must be a string or keyword, got %s",
+                janet_type_names[janet_type(max_ver)]);
+            return 0;
         }
 
         int version = is_dtls ? parse_dtls_version(ver_str)
                               : parse_tls_version(ver_str);
         if (version == 0) {
             if (is_dtls) {
-                janet_panicf("[TLS:CFG] invalid :max-version '%s', "
-                             "expected DTLS1.0 or DTLS1.2",
-                             ver_str);
+                jutils_cert_load_errorf("invalid :max-version '%s', "
+                                        "expected DTLS1.0 or DTLS1.2",
+                                        ver_str);
             } else {
-                janet_panicf("[TLS:CFG] invalid :max-version '%s', "
-                             "expected TLS1.0, TLS1.1, TLS1.2, or TLS1.3",
-                             ver_str);
+                jutils_cert_load_errorf("invalid :max-version '%s', "
+                                        "expected TLS1.0, TLS1.1, TLS1.2, "
+                                        "or TLS1.3",
+                                        ver_str);
             }
+            return 0;
         }
 
         if (!SSL_CTX_set_max_proto_version(ctx, version)) {
@@ -212,7 +225,12 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
     Janet ciphers = janet_get(opts, janet_ckeywordv("ciphers"));
     if (!janet_checktype(ciphers, JANET_NIL)) {
         const char *cipher_str = janet_to_string_or_keyword(ciphers);
-        if (!cipher_str) return 0;
+        if (!cipher_str) {
+            jutils_cert_load_errorf(
+                ":ciphers must be a string or keyword, got %s",
+                janet_type_names[janet_type(ciphers)]);
+            return 0;
+        }
 
         if (!SSL_CTX_set_cipher_list(ctx, cipher_str)) {
             return 0;
@@ -223,7 +241,12 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
     Janet ciphersuites = janet_get(opts, janet_ckeywordv("ciphersuites"));
     if (!janet_checktype(ciphersuites, JANET_NIL)) {
         const char *suites_str = janet_to_string_or_keyword(ciphersuites);
-        if (!suites_str) return 0;
+        if (!suites_str) {
+            jutils_cert_load_errorf(
+                ":ciphersuites must be a string or keyword, got %s",
+                janet_type_names[janet_type(ciphersuites)]);
+            return 0;
+        }
 
         if (!SSL_CTX_set_ciphersuites(ctx, suites_str)) {
             return 0;
@@ -234,7 +257,12 @@ int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
     Janet curves = janet_get(opts, janet_ckeywordv("curves"));
     if (!janet_checktype(curves, JANET_NIL)) {
         const char *curves_str = janet_to_string_or_keyword(curves);
-        if (!curves_str) return 0;
+        if (!curves_str) {
+            jutils_cert_load_errorf(
+                ":curves must be a string or keyword, got %s",
+                janet_type_names[janet_type(curves)]);
+            return 0;
+        }
 
         if (!SSL_CTX_set1_curves_list(ctx, curves_str)) {
             return 0;
