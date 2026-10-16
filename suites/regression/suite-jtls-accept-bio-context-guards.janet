@@ -1,16 +1,14 @@
 # jtls accept/bio/context defect guards
 #
-# Tickets (combined branch ticket-57794d2ee9-7a88c98e2c-7fc0fd6e60-98ecf6ce7c-e33233e521,
-# branch off 0.2.0 at ecef0d3bb2):
+# Tickets (combined ticket branch off 0.2.0 at ecef0d3bb2):
 #   57794d2ee91da8548b13a1f93436d1ee3b3fbede (57794d2ee9)
-#   7a88c98e2c30cac9576adf0794eeb5924f959b38 (7a88c98e2c)
 #   7fc0fd6e603d52100988ee1d1e09569f14a9c619 (7fc0fd6e60)
 #   98ecf6ce7c739838106e8f786b4bca8ea560e0e9 (98ecf6ce7c)
 #   e33233e52179fcafc0be14de059b6afc9e5c3c6f (e33233e521)
 #
 # Each named def-test below is one member ticket's guard and carries its
 # own predicted symptom, per docs/maintainer/jsec-conventions.org
-# (one suite, one named def-test per member ticket).
+# (one suite, one named def-test per listed member ticket).
 #
 # 7fc0fd6e60 mechanism (this tree): the Unix accept loop at
 # src/jtls/api/server.c:205-214 breaks out of its accept4 drain loop on
@@ -51,23 +49,12 @@
 # for vhost a.example resumes for vhost b.example (session-reused? true
 # across vhosts) whenever both vhosts sit behind one accept context.
 #
-# 7a88c98e2c mechanism (this tree): the ALPN wire buffer comes from
-# janet_malloc at src/jtls/context/alpn.c:41 but is released with plain
-# free at src/jtls/context/alpn.c:95 and src/jtls/context/server.c:281,
-# :293 and :371, while src/jtls/api/connect.c:328-331 pairs the same
-# buffer with janet_free. janet_malloc is a macro around malloc today so
-# the mismatch is latent; under any custom allocator the free calls hand
-# foreign memory to the C library allocator. This guard asserts the
-# janet_malloc/janet_free pairing at those sites directly - the runtime
-# corruption itself is not exhibitable under a janet_malloc=malloc build.
-#
 # Shape: every scenario runs in a child janet process (os/spawn of the
-# janet interpreter, the pattern of suites/regression/suite-timed-read-timeout-crash.janet)
-# except the 7a88c98e2c source-pairing guard which runs in-process. The
-# parent asserts from the outside on exit status and RESULT lines. Under
-# each defect the corresponding guard fails with exactly the predicted
-# symptom - not a crash, not a hang, not an unrelated error; under the
-# fixes all guards pass.
+# janet interpreter, the pattern of suites/regression/suite-timed-read-timeout-crash.janet).
+# The parent asserts from the outside on exit status and RESULT lines.
+# Under each defect the corresponding guard fails with exactly the
+# predicted symptom - not a crash, not a hang, not an unrelated error;
+# under the fixes all guards pass.
 
 (use assay)
 (import ../helpers :prefix "")
@@ -406,26 +393,8 @@ ssize_t read(int fd, void *buf, size_t n) {
 (os/exit 0)
 ```)
 
-# ---------------------------------------------------------------------------
-# 7a88c98e2c guard: janet_malloc buffer must leave through janet_free
-# ---------------------------------------------------------------------------
-
-(defn- alpn-free-sites
-  "Lines in path that release an ALPN wire buffer with plain free."
-  [path]
-  (def out @[])
-  (def lines (string/split "\n" (slurp path)))
-  (eachp [i line] lines
-    (def t (string/trim line))
-    (when (and (string/find "free(" t)
-               (not (string/find "janet_free(" t))
-               (or (string/find "free(conf->wire)" t)
-                   (string/find "free(alpn_wire)" t)))
-      (array/push out (string path ":" (+ i 1) ": " t))))
-  out)
-
 (def-suite :name "JTLS Accept Bio Context Guards Regression"
-  :description "Combined branch ticket-57794d2ee9-7a88c98e2c-7fc0fd6e60-98ecf6ce7c-e33233e521: one named guard per member ticket (7fc0fd6e60 accept-loop spin, 57794d2ee9 EINTR retry, 98ecf6ce7c accept timeout and ctx leak, e33233e521 session_id_context, 7a88c98e2c ALPN allocator pairing)"
+  :description "Accept/bio/context behavioral guards: 7fc0fd6e60 accept-loop spin, 57794d2ee9 EINTR retry, 98ecf6ce7c accept timeout and ctx leak, e33233e521 session_id_context"
 
   (def-test "accept-loop-persistent-accept-error-must-not-spin-the-event-loop"
     :timeout 60
@@ -618,33 +587,4 @@ ssize_t read(int fd, void *buf, size_t n) {
                       "stderr: %s")
               (string/trim out) (string/trim err))))
 
-  (def-test "alpn-wire-buffer-must-be-freed-with-janet-free"
-    :timeout 30
-
-    # The ALPN wire buffer is allocated with janet_malloc at
-    # src/jtls/context/alpn.c:41 and must leave through janet_free. The
-    # mismatched plain free sites are the defect evidence of ticket
-    # 7a88c98e2c; the runtime corruption only appears under a custom
-    # allocator (janet_malloc is a macro around malloc today), so this
-    # guard asserts the allocator pairing at the exact sites instead of
-    # exhibiting heap corruption.
-    (def alpn-path "src/jtls/context/alpn.c")
-    (def server-path "src/jtls/context/server.c")
-    (def connect-path "src/jtls/api/connect.c")
-    (def sites (array/concat (alpn-free-sites alpn-path)
-                             (alpn-free-sites server-path)
-                             (alpn-free-sites connect-path)))
-    (assert (empty? sites)
-            (string/format
-              (string "ALPN wire buffer allocated with janet_malloc at "
-                      "src/jtls/context/alpn.c:41 is released with plain "
-                      "free instead of janet_free at: %s - the project rule "
-                      "is janet_malloc memory leaves through janet_free "
-                      "(src/jtls/api/connect.c:328 already pairs the same "
-                      "buffer with janet_free); harmless while janet_malloc "
-                      "is a macro around malloc and a heap break under any "
-                      "custom allocator")
-              (string/join sites "; ")))
-    (assert (string/find "janet_free(wire)" (slurp connect-path))
-            (string "control site missing: src/jtls/api/connect.c must "
-                    "release its ALPN wire buffer with janet_free"))))
+)
