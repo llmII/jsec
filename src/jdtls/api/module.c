@@ -24,7 +24,7 @@ static const JanetReg client_cfuns[] = {
      "  :verify - Verify server certificate (default true)\n"
      "  :ca - CA certificate path\n"
      "  :sni - Server name for SNI (defaults to host)\n"
-     "  :session - Session data for resumption\n"
+     "  :session - Session data for resumption (byte string or buffer)\n"
      "  :trusted-cert - Trust specific certificate (for self-signed)"},
     {"upgrade", cfun_dtls_upgrade,
      "(dtls/upgrade transport &opt opts)\n\n"
@@ -37,7 +37,7 @@ static const JanetReg client_cfuns[] = {
      "  :verify - Verify peer certificate (default true)\n"
      "  :ca - CA certificate path\n"
      "  :sni - Server name for SNI\n"
-     "  :session - Session data for resumption\n"
+     "  :session - Session data for resumption (byte string or buffer)\n"
      "  :server - Act as server (default: client)\n"
      "  :trusted-cert - Trust specific certificate"},
     {"read", cfun_dtls_read,
@@ -93,19 +93,28 @@ static const JanetReg client_cfuns[] = {
      "  :cipher - Cipher suite name\n"
      "  :cipher-bits - Cipher strength in bits\n"
      "  :alpn - Negotiated ALPN protocol or nil"},
+    {"get-peer-cert", cfun_dtls_get_peer_cert,
+     "(get-peer-cert client)\n\n"
+     "Export the peer certificate as an immutable X.509 DER byte "
+     "string.\n"
+     "Returns nil when there is no peer certificate: before the "
+     "handshake\n"
+     "completes or when the peer presented none. Raises on a closed "
+     "stream.\n"
+     "Call after handshake completes.\n"},
     {"session-reused?", cfun_dtls_session_reused,
      "(:session-reused? client)\n\n"
      "Check if the session was reused from a previous connection."},
     {"session", cfun_dtls_get_session,
      "(:session client)\n\n"
      "Get the session data for resumption.\n"
-     "Returns a buffer containing the serialized session, or nil if not "
-     "available."},
+     "Returns an immutable byte string containing the serialized session, "
+     "or nil if not available."},
     {"set-session", cfun_dtls_set_session,
      "(dtls/set-session client session-data)\n\n"
      "Set session data for resumption.\n"
-     "The session-data should be a buffer from a previous dtls/get-session "
-     "call.\n"
+     "The session-data should be a byte string or buffer from a previous "
+     "dtls/get-session call.\n"
      "Returns true if session was set successfully, false otherwise."},
     {"trust-cert", cfun_dtls_trust_cert,
      "(dtls/trust-cert client cert-pem)\n\n"
@@ -113,9 +122,6 @@ static const JanetReg client_cfuns[] = {
      "Useful for self-signed certificates or certificate pinning.\n"
      "The cert-pem should be a string/buffer containing PEM-encoded "
      "certificate."},
-    {"localname", cfun_dtls_localname,
-     "(dtls/localname client)\n\n"
-     "Get the local address as a DTLSAddress."},
     {"peername", cfun_dtls_peername,
      "(dtls/peername client)\n\n"
      "Get the peer's address as a DTLSAddress."},

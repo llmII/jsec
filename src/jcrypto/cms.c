@@ -73,38 +73,146 @@ Janet cfun_cms_sign(int32_t argc, Janet *argv) {
     return result;
 }
 
+/* Load one PEM blob of certificates into store; returns how many loaded.
+ * Returns -1 on a parse failure with the OpenSSL error queue left in
+ * place so the raise can report the reason. */
+static int cms_store_load_pem(X509_STORE *store, const uint8_t *bytes,
+                              int32_t len) {
+    int count = 0;
+    int hard_fail = 0;
+    BIO *bio = BIO_new_mem_buf(bytes, len);
+    if (!bio) return -1;
+    X509 *cert;
+    while ((cert = PEM_read_bio_X509(bio, NULL, NULL, NULL)) != NULL) {
+        X509_STORE_add_cert(store, cert);
+        X509_free(cert);
+        count++;
+    }
+    unsigned long err = ERR_peek_last_error();
+    if (err != 0 && ERR_GET_REASON(err) != PEM_R_NO_START_LINE) hard_fail = 1;
+    if (count == 0 && len > 0) hard_fail = 1;
+    BIO_free(bio);
+    if (!hard_fail) ERR_clear_error();
+    return hard_fail ? -1 : count;
+}
+
 /* CMS/PKCS#7 Verify - Verify signed data */
 Janet cfun_cms_verify(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 3);
     JanetByteView cms_der = janet_getbytes(argv, 0);
 
-    /* Optional: trusted certificates for verification */
-    STACK_OF(X509) *certs = NULL;
-    X509_STORE *store = NULL;
-    unsigned int flags = CMS_BINARY | (unsigned int)CMS_NO_SIGNER_CERT_VERIFY;
+    X509_STORE *store = X509_STORE_new();
+    if (!store) crypto_panic_resource("failed to create certificate store");
+    int trust_loaded = 0;
+    int verify_certs = 1;
+    int has_detached = 0;
+    JanetByteView detached = {NULL, 0};
 
     if (argc > 1 && !janet_checktype(argv[1], JANET_NIL)) {
-        /* Load trusted certs */
-        JanetByteView trust_pem = janet_getbytes(argv, 1);
-        BIO *trust_bio = BIO_new_mem_buf(trust_pem.bytes, trust_pem.len);
-        store = X509_STORE_new();
-        X509 *trust_cert;
-        while ((trust_cert =
-                    PEM_read_bio_X509(trust_bio, NULL, NULL, NULL)) != NULL) {
-            X509_STORE_add_cert(store, trust_cert);
-            X509_free(trust_cert);
+        Janet trust_arg = argv[1];
+        if (janet_checktype(trust_arg, JANET_TABLE) ||
+            janet_checktype(trust_arg, JANET_STRUCT)) {
+            /* Options dictionary */
+            if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
+                X509_STORE_free(store);
+                crypto_panic_param("cannot pass both options dictionary "
+                                   "and positional detached-data");
+            }
+            Janet dval = janet_get(trust_arg, janet_ckeywordv("detached"));
+            if (janet_checktype(dval, JANET_NIL))
+                dval = janet_get(trust_arg,
+                                 janet_ckeywordv("detached-content"));
+            if (!janet_checktype(dval, JANET_NIL)) {
+                X509_STORE_free(store);
+                crypto_panic_param("detached content is not accepted in "
+                                   "the options dictionary; pass detached "
+                                   "data as the third positional argument");
+            }
+            Janet vval = janet_get(trust_arg,
+                                   janet_ckeywordv("verify-certs"));
+            if (!janet_checktype(vval, JANET_NIL)) {
+                if (!janet_checktype(vval, JANET_BOOLEAN)) {
+                    X509_STORE_free(store);
+                    crypto_panic_param("expected boolean for :verify-certs");
+                }
+                verify_certs = janet_unwrap_boolean(vval);
+            }
+            const char *trust_keys[2] = {"ca", "trusted-cert"};
+            for (int k = 0; k < 2; k++) {
+                Janet tval =
+                    janet_get(trust_arg, janet_ckeywordv(trust_keys[k]));
+                if (janet_checktype(tval, JANET_NIL)) continue;
+                if (janet_checktypes(tval, JANET_TFLAG_BYTES)) {
+                    JanetByteView pem = janet_getbytes(&tval, 0);
+                    int n = cms_store_load_pem(store, pem.bytes, pem.len);
+                    if (n < 0) {
+                        X509_STORE_free(store);
+                        crypto_panic_ssl("failed to load trusted "
+                                         "certificate");
+                    }
+                    trust_loaded += n;
+                } else if (janet_checktypes(tval, JANET_TFLAG_INDEXED)) {
+                    const Janet *items;
+                    int32_t items_len;
+                    janet_indexed_view(tval, &items, &items_len);
+                    for (int32_t i = 0; i < items_len; i++) {
+                        JanetByteView pem = janet_getbytes(items, i);
+                        int n =
+                            cms_store_load_pem(store, pem.bytes, pem.len);
+                        if (n < 0) {
+                            X509_STORE_free(store);
+                            crypto_panic_ssl("failed to load trusted "
+                                             "certificate");
+                        }
+                        trust_loaded += n;
+                    }
+                } else {
+                    X509_STORE_free(store);
+                    crypto_panic_param("expected string, buffer, array, or "
+                                       "tuple for :ca / :trusted-cert");
+                }
+            }
+        } else if (janet_checktypes(trust_arg, JANET_TFLAG_BYTES) ||
+                   janet_checktypes(trust_arg, JANET_TFLAG_INDEXED)) {
+            /* Positional trusted-certificates input */
+            if (janet_checktypes(trust_arg, JANET_TFLAG_BYTES)) {
+                JanetByteView pem = janet_getbytes(argv, 1);
+                int n = cms_store_load_pem(store, pem.bytes, pem.len);
+                if (n < 0) {
+                    X509_STORE_free(store);
+                    crypto_panic_ssl("failed to load trusted certificate");
+                }
+                trust_loaded += n;
+            } else {
+                const Janet *items;
+                int32_t items_len;
+                janet_indexed_view(trust_arg, &items, &items_len);
+                for (int32_t i = 0; i < items_len; i++) {
+                    JanetByteView pem = janet_getbytes(items, i);
+                    int n = cms_store_load_pem(store, pem.bytes, pem.len);
+                    if (n < 0) {
+                        X509_STORE_free(store);
+                        crypto_panic_ssl("failed to load trusted "
+                                         "certificate");
+                    }
+                    trust_loaded += n;
+                }
+            }
+        } else {
+            X509_STORE_free(store);
+            crypto_panic_param("expected string, buffer, array, tuple, "
+                               "table, or struct for second argument");
         }
-        ERR_clear_error();
-        BIO_free(trust_bio);
-        flags = CMS_BINARY; /* Enable full verification */
     }
 
     if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
-        JanetByteView detached_data = janet_getbytes(argv, 2);
-        flags |= (unsigned int)CMS_DETACHED;
-        /* Note: detached data handling would need additional implementation
-         */
-        (void)detached_data;
+        if (!janet_checktypes(argv[2], JANET_TFLAG_BYTES)) {
+            X509_STORE_free(store);
+            crypto_panic_param("expected string or buffer for detached "
+                               "data");
+        }
+        detached = janet_getbytes(argv, 2);
+        has_detached = 1;
     }
 
     /* Parse CMS */
@@ -113,34 +221,106 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
     BIO_free(cms_bio);
 
     if (!cms) {
-        if (store) X509_STORE_free(store);
+        X509_STORE_free(store);
         crypto_panic_ssl("failed to parse CMS data");
     }
 
-    /* Verify and extract content */
-    BIO *content = BIO_new(BIO_s_mem());
-    int verify_result = CMS_verify(cms, certs, store, NULL, content, flags);
-
-    JanetTable *result = janet_table(3);
-    janet_table_put(result, janet_ckeywordv("valid"),
-                    janet_wrap_boolean(verify_result == 1));
-
-    /* Extract content if verification succeeded */
-    if (verify_result == 1) {
-        char *content_data;
-        long content_len = BIO_get_mem_data(content, &content_data);
-        janet_table_put(
-            result, janet_ckeywordv("content"),
-            janet_stringv((const uint8_t *)content_data, content_len));
+    BIO *dcont = NULL;
+    if (has_detached) {
+        dcont = BIO_new_mem_buf(detached.bytes, detached.len);
+        if (!dcont) {
+            CMS_ContentInfo_free(cms);
+            X509_STORE_free(store);
+            crypto_panic_resource("failed to allocate detached content");
+        }
     }
 
-    /* Extract signer certificates */
+    /* Signature and digest check; signer certificate verification is
+     * suppressed here and run separately below. */
+    BIO *content = BIO_new(BIO_s_mem());
+    if (!content) {
+        if (dcont) BIO_free(dcont);
+        CMS_ContentInfo_free(cms);
+        X509_STORE_free(store);
+        crypto_panic_resource("failed to allocate content buffer");
+    }
+    unsigned int sig_flags =
+        CMS_BINARY | (unsigned int)CMS_NO_SIGNER_CERT_VERIFY;
+    if (dcont) sig_flags |= (unsigned int)CMS_DETACHED;
+    int sig_ok = (CMS_verify(cms, NULL, NULL, dcont, content, sig_flags) == 1);
+    unsigned long sig_err = 0;
+    const char *sig_reason = NULL;
+    if (!sig_ok) {
+        sig_err = ERR_peek_last_error();
+        if (sig_err) sig_reason = ERR_reason_error_string(sig_err);
+        ERR_clear_error();
+    }
+
+    /* Signer certificate chain check against the supplied trust. */
+    int has_trusted = (trust_loaded > 0);
+    int chain_ok = 0;
+    unsigned long chain_err = 0;
+    const char *chain_reason = NULL;
+    if (verify_certs && has_trusted && sig_ok) {
+        unsigned int chain_flags = CMS_BINARY;
+        BIO *dcont_chain = NULL;
+        if (dcont) {
+            chain_flags |= (unsigned int)CMS_DETACHED;
+            dcont_chain = BIO_new_mem_buf(detached.bytes, detached.len);
+            if (!dcont_chain) {
+                BIO_free(content);
+                if (dcont) BIO_free(dcont);
+                CMS_ContentInfo_free(cms);
+                X509_STORE_free(store);
+                crypto_panic_resource("failed to allocate detached "
+                                      "content");
+            }
+        }
+        chain_ok = (CMS_verify(cms, NULL, store, dcont_chain, NULL,
+                               chain_flags) == 1);
+        if (dcont_chain) BIO_free(dcont_chain);
+        if (!chain_ok) {
+            chain_err = ERR_peek_last_error();
+            if (chain_err) chain_reason = ERR_reason_error_string(chain_err);
+            ERR_clear_error();
+        }
+    }
+
+    int valid = verify_certs ? (sig_ok && has_trusted && chain_ok) : sig_ok;
+
+    JanetTable *result = janet_table(6);
+    janet_table_put(result, janet_ckeywordv("valid"),
+                    janet_wrap_boolean(valid));
+
+    /* Verified content */
+    Janet content_val = janet_wrap_nil();
+    if (valid) {
+        char *content_data = NULL;
+        long content_len = BIO_get_mem_data(content, &content_data);
+        if (content_len == 0 && has_detached) {
+            content_val = janet_stringv(detached.bytes, detached.len);
+        } else {
+            content_val =
+                janet_stringv((const uint8_t *)content_data, content_len);
+        }
+    }
+    janet_table_put(result, janet_ckeywordv("content"), content_val);
+
+    /* Signer certificates */
+    JanetArray *signer_arr = janet_array(0);
     STACK_OF(X509) *signers = CMS_get0_signers(cms);
     if (signers && sk_X509_num(signers) > 0) {
-        JanetArray *signer_arr = janet_array(sk_X509_num(signers));
         for (int i = 0; i < sk_X509_num(signers); i++) {
             X509 *signer = sk_X509_value(signers, i);
             BIO *signer_bio = BIO_new(BIO_s_mem());
+            if (!signer_bio) {
+                sk_X509_free(signers);
+                BIO_free(content);
+                if (dcont) BIO_free(dcont);
+                CMS_ContentInfo_free(cms);
+                X509_STORE_free(store);
+                crypto_panic_resource("failed to allocate signer buffer");
+            }
             PEM_write_bio_X509(signer_bio, signer);
             char *signer_data;
             long signer_len = BIO_get_mem_data(signer_bio, &signer_data);
@@ -149,14 +329,69 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
                 janet_stringv((const uint8_t *)signer_data, signer_len));
             BIO_free(signer_bio);
         }
-        janet_table_put(result, janet_ckeywordv("signers"),
-                        janet_wrap_array(signer_arr));
         sk_X509_free(signers);
     }
+    janet_table_put(result, janet_ckeywordv("signers"),
+                    janet_wrap_array(signer_arr));
+
+    /* Certificates carried in the message */
+    JanetArray *cert_arr = janet_array(0);
+    STACK_OF(X509) *msg_certs = CMS_get1_certs(cms);
+    if (msg_certs && sk_X509_num(msg_certs) > 0) {
+        for (int i = 0; i < sk_X509_num(msg_certs); i++) {
+            X509 *mcert = sk_X509_value(msg_certs, i);
+            BIO *cert_bio = BIO_new(BIO_s_mem());
+            if (!cert_bio) {
+                sk_X509_pop_free(msg_certs, X509_free);
+                BIO_free(content);
+                if (dcont) BIO_free(dcont);
+                CMS_ContentInfo_free(cms);
+                X509_STORE_free(store);
+                crypto_panic_resource("failed to allocate cert buffer");
+            }
+            PEM_write_bio_X509(cert_bio, mcert);
+            char *cert_data;
+            long cert_len = BIO_get_mem_data(cert_bio, &cert_data);
+            janet_array_push(
+                cert_arr,
+                janet_stringv((const uint8_t *)cert_data, cert_len));
+            BIO_free(cert_bio);
+        }
+        sk_X509_pop_free(msg_certs, X509_free);
+    }
+    janet_table_put(result, janet_ckeywordv("certs"),
+                    janet_wrap_array(cert_arr));
+
+    /* Diagnostics for a failed verdict */
+    Janet error_val = janet_wrap_nil();
+    Janet error_code_val = janet_wrap_nil();
+    if (!valid) {
+        if (!sig_ok) {
+            error_val = janet_cstringv(sig_reason ? sig_reason
+                                                  : "signature "
+                                                    "verification failed");
+            if (sig_err)
+                error_code_val =
+                    janet_wrap_integer((int32_t)ERR_GET_REASON(sig_err));
+        } else if (!has_trusted) {
+            error_val = janet_cstringv("no trusted certificates provided");
+        } else {
+            error_val = janet_cstringv(chain_reason ? chain_reason
+                                                    : "certificate "
+                                                      "verification "
+                                                      "failed");
+            if (chain_err)
+                error_code_val =
+                    janet_wrap_integer((int32_t)ERR_GET_REASON(chain_err));
+        }
+    }
+    janet_table_put(result, janet_ckeywordv("error"), error_val);
+    janet_table_put(result, janet_ckeywordv("error-code"), error_code_val);
 
     BIO_free(content);
+    if (dcont) BIO_free(dcont);
     CMS_ContentInfo_free(cms);
-    if (store) X509_STORE_free(store);
+    X509_STORE_free(store);
 
     return janet_wrap_table(result);
 }

@@ -82,7 +82,7 @@ void jtls_module_init(JanetTable *env) {
          "Options:\n"
          "  :cert, :key - Server certificate/key paths\n"
          "  :verify - Client verification (default true)\n"
-         "  :security - Security options table\n"
+         "  :security - Security options table or struct\n"
          "  :alpn - ALPN protocols array\n"
          "  :sni - SNI hostname->options table (server only)\n"},
         {"wrap", cfun_wrap,
@@ -187,6 +187,15 @@ void jtls_module_init(JanetTable *env) {
          "(get-handshake-time stream)\n\n"
          "Get handshake duration in seconds as a floating-point number.\n"
          "Returns nil if handshake hasn't completed yet.\n"},
+        {"get-peer-cert", cfun_get_peer_cert,
+         "(get-peer-cert stream)\n\n"
+         "Export the peer certificate as an immutable X.509 DER byte "
+         "string.\n"
+         "Returns nil when there is no peer certificate: before the "
+         "handshake\n"
+         "completes or when the peer presented none. Raises on a closed "
+         "stream.\n"
+         "Call after handshake completes.\n"},
         {NULL, NULL, NULL}};
 
     janet_cfuns(env, "jsec/tls", cfuns);

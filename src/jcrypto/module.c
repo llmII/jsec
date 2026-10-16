@@ -6,6 +6,26 @@
  */
 
 #include "internal.h"
+#include <openssl/crypto.h>
+
+/* Constant-time compare (crypto/equal?): equal-length byte sequences
+ * compare with CRYPTO_memcmp, so comparison time depends only on the
+ * sequence length and not on the contents; unequal lengths return false
+ * immediately without reading content. */
+static Janet cfun_equal(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 2);
+
+    const uint8_t *a_bytes;
+    const uint8_t *b_bytes;
+    int32_t a_len;
+    int32_t b_len;
+    if (!janet_bytes_view(argv[0], &a_bytes, &a_len) ||
+        !janet_bytes_view(argv[1], &b_bytes, &b_len))
+        crypto_panic_param("arguments must be byte strings or buffers");
+
+    if (a_len != b_len) return janet_wrap_boolean(0);
+    return janet_wrap_boolean(CRYPTO_memcmp(a_bytes, b_bytes, a_len) == 0);
+}
 
 static const JanetReg cfuns[] = {
     {"digest", cfun_digest,
@@ -47,6 +67,14 @@ static const JanetReg cfuns[] = {
     {"hmac", cfun_hmac,
      "(jsec/crypto/hmac alg key data)\n\n"
      "Compute HMAC. Algorithm examples: :sha256, :sha384, :sha512."},
+    {"equal?", cfun_equal,
+     "(jsec/crypto/equal? a b)\n\n"
+     "Compare two byte sequences (string or buffer) in constant time.\n"
+     "Equal-length sequences compare with CRYPTO_memcmp; comparison time "
+     "depends only on the sequence length, not on the contents.\n"
+     "Unequal lengths return false immediately without comparing "
+     "contents.\n"
+     "Returns boolean."},
     {"random-bytes", cfun_random_bytes,
      "(jsec/crypto/random-bytes n)\n\n"
      "Generate n cryptographically secure random bytes (1-65536)."},
@@ -117,13 +145,28 @@ static const JanetReg cfuns[] = {
      "included)\n"
      "Returns DER-encoded CMS structure."},
     {"cms-verify", cfun_cms_verify,
-     "(jsec/crypto/cms-verify cms-der &opt trusted-certs-pem "
-     "detached-data)\n\n"
-     "Verify CMS signed data.\n"
+     "(jsec/crypto/cms-verify cms-der &opt trusted-certs detached-data)\n"
+     "(jsec/crypto/cms-verify cms-der opts)\n\n"
+     "Verify CMS signed data. A cryptographic or X.509 verification "
+     "failure reports :valid false with :error and :error-code and "
+     "never raises; malformed inputs raise.\n"
+     "trusted-certs may be a PEM string or buffer, or an array or "
+     "tuple of PEM strings or buffers.\n"
+     "opts is a table or struct with:\n"
+     "  :ca / :trusted-cert - trusted certificates (PEM string, "
+     "buffer, array, or tuple)\n"
+     "  :verify-certs - boolean, default true: verify the signer "
+     "certificate chain against the trusted certs; false checks the "
+     "signature only (self-signed inspection)\n"
+     "detached-data, when supplied, is the content covered by a "
+     "detached signature.\n"
      "Returns table with:\n"
-     "  :valid - boolean indicating signature validity\n"
-     "  :content - decrypted content (if not detached)\n"
-     "  :signers - array of signer certificates in PEM format"},
+     "  :valid - boolean verdict\n"
+     "  :content - verified content (string or nil)\n"
+     "  :signers - array of signer certificates in PEM format\n"
+     "  :certs - array of certificates carried in the message\n"
+     "  :error - failure reason (string or nil)\n"
+     "  :error-code - OpenSSL reason code (number or nil)"},
     {"cms-encrypt", cfun_cms_encrypt,
      "(jsec/crypto/cms-encrypt data recipient-certs &opt opts)\n\n"
      "Create CMS enveloped (encrypted) data.\n"

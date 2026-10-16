@@ -4,6 +4,27 @@
 
 * News
 
+** 2026-10-15 - cms-verify Structured Verdict Table and verify-certs Option
+
+- PUBLIC API CHANGE (release notes): ~crypto/cms-verify~ now returns a
+  structured result table ~{:valid :content :signers :certs :error
+  :error-code}~, replacing the earlier documented content-or-nil
+  contract and the interim bare validity table. Verification failures
+  (untrusted signer, missing trust anchor, bad signature) now report
+  ~:valid false~ with ~:error~ and ~:error-code~ diagnostics instead of
+  raising or returning an unexplained verdict; malformed inputs and
+  wrong argument types still raise.
+- ~crypto/cms-verify~ accepts an options dictionary as its second
+  argument: ~:ca~ / ~:trusted-cert~ (PEM string, buffer, array, or
+  tuple) and ~:verify-certs~ (boolean, default true). ~:verify-certs
+  false~ checks the cryptographic signature only - the self-signed
+  inspection posture (SCEP initial enrollment) where the caller
+  verifies the signer certificate out-of-band.
+- The positional form keeps working: ~(crypto/cms-verify cms-der
+  &opt trusted-certs detached-data)~; a detached signature is verified
+  against the supplied detached content and reported in the same
+  verdict table.
+
 ** 2026-10-08 - Baseline Janet Raised to 1.41.1
 
 - NOTE: the minimum supported Janet baseline is now *1.41.1* (was 1.40.1),

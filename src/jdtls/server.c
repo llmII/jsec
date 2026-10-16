@@ -157,6 +157,7 @@ static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
         struct sockaddr_in s4;
         struct sockaddr_in6 s6;
     } peer;
+    memset(&peer, 0, sizeof(peer));
     socklen_t peerlen = sizeof(peer);
 
     /* For memory BIO, peer address should be stored in ex_data */
@@ -336,6 +337,15 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         }
     }
 
+    /* Validate :security before any SSL_CTX exists or ctx_cache_lock
+     * is taken (never longjmp past cleanup) */
+    Janet security = janet_wrap_nil();
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        security = janet_get(opts, janet_ckeywordv("security"));
+    }
+    jutils_validate_security_options(security);
+
     /* Create SSL context */
     server->ctx = SSL_CTX_new(DTLS_server_method());
     if (!server->ctx) {
@@ -351,12 +361,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     SSL_CTX_set_cookie_verify_cb(server->ctx, server_verify_cookie);
 
     /* Apply security options */
-    Janet security = janet_wrap_nil();
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        security = janet_get(opts, janet_ckeywordv("security"));
-    }
-    if (!apply_security_options(server->ctx, security, 1)) {
+    if (!apply_security_options(server->ctx, security, 1,
+                                1)) { /* is_dtls, is_server */
         SSL_CTX_free(server->ctx);
         server->ctx = NULL;
         dtls_panic_ssl("failed to apply security options");
@@ -572,6 +578,7 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
     /* Reset overlapped struct */
     memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
     state->wsa_flags = 0;
+    memset(&state->peer_addr, 0, sizeof(state->peer_addr));
     state->peer_addrlen = sizeof(state->peer_addr);
     state->bytes_received = 0;
 
@@ -701,6 +708,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             while (1) {
                 uint8_t recv_buf[65536];
                 DTLSAddress peer_addr;
+                memset(&peer_addr, 0, sizeof(peer_addr));
                 peer_addr.addrlen = sizeof(peer_addr.addr);
 
                 ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
@@ -904,6 +912,7 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     DTLSServer *server = janet_getabstract(argv, 0, &dtls_server_type);
 
     struct sockaddr_storage addr;
+    memset(&addr, 0, sizeof(addr));
     socklen_t addrlen = sizeof(addr);
 
     if (getsockname((jsec_socket_t)server->transport->handle,
@@ -932,6 +941,28 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     tuple[0] = janet_cstringv(host);
     tuple[1] = janet_wrap_integer(port);
     return janet_wrap_tuple(janet_tuple_end(tuple));
+}
+
+/*
+ * (dtls/localname client-or-server)
+ *
+ * One module entry for the dtls/localname name, dispatching on the
+ * abstract type of its argument: a DTLSClient returns its local
+ * address as a DTLSAddress, a DTLSServer returns the address it is
+ * bound to as a [host port] tuple. Any other argument raises a type
+ * error naming both accepted types.
+ */
+static Janet cfun_dtls_localname_dispatch(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    if (janet_checkabstract(argv[0], &dtls_client_type)) {
+        return cfun_dtls_localname(argc, argv);
+    }
+    if (janet_checkabstract(argv[0], &dtls_server_type)) {
+        return cfun_dtls_server_localname(argc, argv);
+    }
+    janet_panicf("bad slot #%d, expected %s or %s, got %v", 0,
+                 dtls_client_type.name, dtls_server_type.name, argv[0]);
 }
 
 /*
@@ -972,10 +1003,10 @@ static const JanetReg server_cfuns[] = {
      "Close the DTLS server and all sessions.\n"
      "Sends close_notify to all established sessions unless force is true.\n"
      "Close notifications are non-blocking (best effort)."},
-    {"localname", cfun_dtls_server_localname,
-     "(dtls/localname server)\n\n"
-     "Get the local address the server is bound to.\n"
-     "Returns [host port] tuple."},
+    {"localname", cfun_dtls_localname_dispatch,
+     "(dtls/localname client-or-server)\n\n"
+     "Get the local address as a DTLSAddress (client), or the local\n"
+     "address the server is bound to as a [host port] tuple (server)."},
     {NULL, NULL, NULL}};
 
 void jdtls_register_server(JanetTable *env) {

@@ -13,7 +13,8 @@
  *   dtls/recv-from   - Receive from any peer [data addr]
  *   dtls/send-to     - Send to specific peer
  *   dtls/close-server - Close server
- *   dtls/localname   - Get server's bound address
+ *   dtls/localname   - Get local address (DTLSAddress for client,
+ *                       [host port] tuple for server)
  *
  * Client-side (1:1 connection):
  *   dtls/connect     - Create DTLS client

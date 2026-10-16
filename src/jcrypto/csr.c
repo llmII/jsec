@@ -126,6 +126,11 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
         const EVP_MD *custom_md = EVP_get_digestbyname(digest_name);
         if (custom_md) md = custom_md;
     }
+    /* Ed25519 is a pure signature scheme and takes no digest (NULL, like the
+     * working pattern in jcert.c) */
+    if (EVP_PKEY_base_id(pkey) == EVP_PKEY_ED25519) {
+        md = NULL;
+    }
 
     if (!X509_REQ_sign(req, pkey, md)) {
         X509_REQ_free(req);

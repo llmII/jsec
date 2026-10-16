@@ -34,32 +34,106 @@ static int dtls_address_gc(void *p, size_t s) {
  * =============================================================================
  * Compare two addresses for equality and ordering.
  * Used by Janet tables for key lookup.
+ *
+ * Only the canonical endpoint identity decides the result: family, port
+ * and host address, plus the scope id for IPv6 so link-local interfaces
+ * stay distinct. Padding and non-identity fields (sin_zero, sin6_flowinfo,
+ * any struct padding) are not part of address identity and never
+ * participate.
  */
 
-static int dtls_address_compare(void *a, void *b) {
-    DTLSAddress *addr_a = (DTLSAddress *)a;
-    DTLSAddress *addr_b = (DTLSAddress *)b;
-
-    /* First compare address lengths */
-    if (addr_a->addrlen != addr_b->addrlen) {
-        return addr_a->addrlen < addr_b->addrlen ? -1 : 1;
+static int dtls_address_identity_cmp(const DTLSAddress *a,
+                                     const DTLSAddress *b) {
+    uint32_t family_a = (uint32_t)a->addr.ss_family;
+    uint32_t family_b = (uint32_t)b->addr.ss_family;
+    if (family_a != family_b) {
+        return family_a < family_b ? -1 : 1;
     }
 
-    /* Then compare raw bytes */
-    return memcmp(&addr_a->addr, &addr_b->addr, addr_a->addrlen);
+    if (a->addr.ss_family == AF_INET) {
+        const struct sockaddr_in *sin_a =
+            (const struct sockaddr_in *)&a->addr;
+        const struct sockaddr_in *sin_b =
+            (const struct sockaddr_in *)&b->addr;
+        if (sin_a->sin_port != sin_b->sin_port) {
+            return sin_a->sin_port < sin_b->sin_port ? -1 : 1;
+        }
+        if (sin_a->sin_addr.s_addr != sin_b->sin_addr.s_addr) {
+            return sin_a->sin_addr.s_addr < sin_b->sin_addr.s_addr ? -1 : 1;
+        }
+        return 0;
+    }
+
+    if (a->addr.ss_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6_a =
+            (const struct sockaddr_in6 *)&a->addr;
+        const struct sockaddr_in6 *sin6_b =
+            (const struct sockaddr_in6 *)&b->addr;
+        if (sin6_a->sin6_port != sin6_b->sin6_port) {
+            return sin6_a->sin6_port < sin6_b->sin6_port ? -1 : 1;
+        }
+        int addr_order =
+            memcmp(&sin6_a->sin6_addr, &sin6_b->sin6_addr,
+                   sizeof(sin6_a->sin6_addr));
+        if (addr_order != 0) {
+            return addr_order < 0 ? -1 : 1;
+        }
+        if (sin6_a->sin6_scope_id != sin6_b->sin6_scope_id) {
+            return sin6_a->sin6_scope_id < sin6_b->sin6_scope_id ? -1 : 1;
+        }
+        return 0;
+    }
+
+    /* Unknown family: no canonical identity fields, order by raw bytes. */
+    if (a->addrlen != b->addrlen) {
+        return a->addrlen < b->addrlen ? -1 : 1;
+    }
+    int raw_order = memcmp(&a->addr, &b->addr, a->addrlen);
+    return raw_order < 0 ? -1 : (raw_order > 0 ? 1 : 0);
+}
+
+static int dtls_address_compare(void *a, void *b) {
+    return dtls_address_identity_cmp((const DTLSAddress *)a,
+                                     (const DTLSAddress *)b);
 }
 
 int dtls_address_equal(const DTLSAddress *a, const DTLSAddress *b) {
-    if (a->addrlen != b->addrlen) return 0;
-    return memcmp(&a->addr, &b->addr, a->addrlen) == 0;
+    return dtls_address_identity_cmp(a, b) == 0;
 }
 
 /*
  * =============================================================================
  * Hashing
  * =============================================================================
- * FNV-1a hash of address bytes for hash table lookup.
+ * FNV-1a hash of the canonical endpoint identity fields for hash table
+ * lookup. Hashing sees exactly the fields comparison sees, so equal
+ * addresses always hash identically.
  */
+
+static void dtls_address_hash_bytes(uint32_t *hash, const void *data,
+                                    size_t len) {
+    const uint8_t *bytes = (const uint8_t *)data;
+    for (size_t i = 0; i < len; i++) {
+        *hash ^= bytes[i];
+        *hash *= 16777619U;
+    }
+}
+
+static void dtls_address_hash_u16(uint32_t *hash, uint16_t value) {
+    uint8_t bytes[2];
+    bytes[0] = (uint8_t)(value & 0xffU);
+    bytes[1] = (uint8_t)((value >> 8) & 0xffU);
+    dtls_address_hash_bytes(hash, bytes, sizeof(bytes));
+}
+
+static void dtls_address_hash_u32(uint32_t *hash, uint32_t value) {
+    uint8_t bytes[4];
+    bytes[0] = (uint8_t)(value & 0xffU);
+    bytes[1] = (uint8_t)((value >> 8) & 0xffU);
+    bytes[2] = (uint8_t)((value >> 16) & 0xffU);
+    bytes[3] = (uint8_t)((value >> 24) & 0xffU);
+    dtls_address_hash_bytes(hash, bytes, sizeof(bytes));
+}
 
 static int32_t dtls_address_hash(void *p, size_t s) {
     (void)s;
@@ -68,12 +142,24 @@ static int32_t dtls_address_hash(void *p, size_t s) {
 }
 
 int32_t dtls_address_hash_fn(const DTLSAddress *addr) {
-    /* FNV-1a hash */
+    /* FNV-1a hash over the identity fields only */
     uint32_t hash = 2166136261U;
-    const uint8_t *bytes = (const uint8_t *)&addr->addr;
-    for (socklen_t i = 0; i < addr->addrlen; i++) {
-        hash ^= bytes[i];
-        hash *= 16777619U;
+    dtls_address_hash_u32(&hash, (uint32_t)addr->addr.ss_family);
+    if (addr->addr.ss_family == AF_INET) {
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
+        dtls_address_hash_u16(&hash, (uint16_t)sin->sin_port);
+        dtls_address_hash_u32(&hash, (uint32_t)sin->sin_addr.s_addr);
+    } else if (addr->addr.ss_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
+        dtls_address_hash_u16(&hash, (uint16_t)sin6->sin6_port);
+        dtls_address_hash_bytes(&hash, &sin6->sin6_addr,
+                                sizeof(sin6->sin6_addr));
+        dtls_address_hash_u32(&hash, (uint32_t)sin6->sin6_scope_id);
+    } else {
+        dtls_address_hash_u32(&hash, (uint32_t)addr->addrlen);
+        dtls_address_hash_bytes(&hash, &addr->addr, addr->addrlen);
     }
     return (int32_t)hash;
 }

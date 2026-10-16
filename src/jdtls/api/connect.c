@@ -20,6 +20,20 @@ extern void dtls_client_async_callback(JanetFiber *fiber,
                                        JanetAsyncEvent event);
 extern int dtls_client_start_handshake(DTLSClient *client);
 
+/*============================================================================
+ * HELPER: IP-literal host detection
+ *============================================================================*/
+/* An IP literal is not a DNS name: verification matches it through
+ * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
+ * the server_name extension. */
+static int host_is_ip_literal(const char *host) {
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!host) return 0;
+    return inet_pton(AF_INET, host, &a4) == 1 ||
+           inet_pton(AF_INET6, host, &a6) == 1;
+}
+
 /*
  * (dtls/connect host port &opt opts)
  *
@@ -31,6 +45,7 @@ extern int dtls_client_start_handshake(DTLSClient *client);
  *   :ca - CA certificate or path
  *   :alpn - ALPN protocols
  *   :sni - Server name for SNI (defaults to host)
+ *   :session - Session data for resumption (byte string or buffer)
  */
 Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
@@ -61,6 +76,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
                */
     int track_handshake_time = 0;
     DTLSContext *shared_ctx = NULL; /* Shared context from :context option */
+    Janet session_opt = janet_wrap_nil();
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
@@ -87,10 +103,25 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             track_handshake_time = janet_truthy(ht);
         }
 
+        /* :session accepts nil (absent/no-op) or a byte string or buffer;
+         * anything else raises before any socket, SSL_CTX, or SSL is
+         * allocated (PNB-08 cleanup safety). */
+        Janet session = janet_get(opts, janet_ckeywordv("session"));
+        if (!janet_checktype(session, JANET_NIL) &&
+            !janet_checktype(session, JANET_STRING) &&
+            !janet_checktype(session, JANET_BUFFER)) {
+            dtls_panic_param("session must be a byte string or buffer");
+        }
+        session_opt = session;
+
         /* :context option allows reusing a DTLSContext (SSLContext) */
         Janet ctx_opt = janet_get(opts, janet_ckeywordv("context"));
-        if (janet_checktype(ctx_opt, JANET_ABSTRACT)) {
-            shared_ctx = janet_getabstract(&ctx_opt, 0, &dtls_context_type);
+        if (!janet_checktype(ctx_opt, JANET_NIL)) {
+            if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
+                dtls_panic_config(":context must be a jsec/ssl-context");
+            }
+            shared_ctx =
+                (DTLSContext *)janet_unwrap_abstract(ctx_opt);
             /* Verify it's a DTLS context, not TLS */
             if (!shared_ctx->is_dtls) {
                 dtls_panic_config(
@@ -192,6 +223,15 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         client->ctx = shared_ctx->ctx;
         client->owns_ctx = 0;
     } else {
+        /* Extract and validate :security before any SSL_CTX exists
+         * or ctx_cache_lock is taken (never longjmp past cleanup) */
+        Janet security = janet_wrap_nil();
+        if (janet_checktype(opts, JANET_TABLE) ||
+            janet_checktype(opts, JANET_STRUCT)) {
+            security = janet_get(opts, janet_ckeywordv("security"));
+        }
+        jutils_validate_security_options(security);
+
         /* Create new context - free on GC */
         client->ctx = SSL_CTX_new(DTLS_client_method());
         if (!client->ctx) {
@@ -200,12 +240,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         client->owns_ctx = 1;
 
         /* Apply security options from jshared */
-        Janet security = janet_wrap_nil();
-        if (janet_checktype(opts, JANET_TABLE) ||
-            janet_checktype(opts, JANET_STRUCT)) {
-            security = janet_get(opts, janet_ckeywordv("security"));
-        }
-        if (!apply_security_options(client->ctx, security, 1)) {
+        if (!apply_security_options(client->ctx, security, 1,
+                                    0)) { /* is_dtls = 1, is_server = 0 */
             SSL_CTX_free(client->ctx);
             client->ctx = NULL;
             client->owns_ctx = 0;
@@ -264,24 +300,30 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     }
 
     /* Set SNI hostname */
-    SSL_set_tlsext_host_name(client->ssl, sni);
+    if (!host_is_ip_literal(sni)) {
+        SSL_set_tlsext_host_name(client->ssl, sni);
+    }
 
     /* Set hostname for certificate verification
      * Use verify_hostname if provided, otherwise use sni */
     if (verify) {
         const char *host_to_verify = verify_hostname ? verify_hostname : sni;
         SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        SSL_set1_host(client->ssl, host_to_verify);
+        if (host_is_ip_literal(host_to_verify)) {
+            X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
+                                          host_to_verify);
+        } else {
+            SSL_set1_host(client->ssl, host_to_verify);
+        }
     }
 
-    /* Session resumption */
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        Janet session_data = janet_get(opts, janet_ckeywordv("session"));
-        if (janet_checktype(session_data, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_data);
-            const unsigned char *p = buf->data;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, buf->count);
+    /* Session resumption (validated at option parse; bytes here) */
+    if (!janet_checktype(session_opt, JANET_NIL)) {
+        const uint8_t *bytes;
+        int32_t len;
+        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+            const unsigned char *p = bytes;
+            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
             if (session) {
                 SSL_set_session(client->ssl, session);
                 SSL_SESSION_free(session);
