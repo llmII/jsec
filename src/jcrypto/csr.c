@@ -4,6 +4,247 @@
 
 #include "internal.h"
 
+/* ASCII case-insensitive match of the first plen bytes of entry against the
+ * NUL-terminated keyword kw, mirroring OpenSSL's general-name type table. */
+static int csr_prefix_is(const char *entry, int32_t plen, const char *kw) {
+    for (int32_t i = 0; i < plen; i++) {
+        if (kw[i] == 0) return 0;
+        char a = entry[i];
+        char b = kw[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a + ('a' - 'A'));
+        if (b >= 'A' && b <= 'Z') b = (char)(b + ('a' - 'A'));
+        if (a != b) return 0;
+    }
+    return kw[plen] == 0;
+}
+
+/* Push one string-valued general name (GEN_DNS, GEN_EMAIL, GEN_URI) onto
+ * gens. The bytes are taken with an explicit length, so an entry keeps its
+ * commas and embedded NULs exactly as given. Returns 0 on allocation
+ * failure (no raise: the caller frees and raises). */
+static int csr_san_push_ia5(GENERAL_NAMES *gens, int type, const char *value,
+                            int32_t len) {
+    ASN1_IA5STRING *str = ASN1_IA5STRING_new();
+    GENERAL_NAME *gen = NULL;
+    if (!str) return 0;
+    if (!ASN1_STRING_set(str, value, len)) {
+        ASN1_IA5STRING_free(str);
+        return 0;
+    }
+    gen = GENERAL_NAME_new();
+    if (!gen) {
+        ASN1_IA5STRING_free(str);
+        return 0;
+    }
+    GENERAL_NAME_set0_value(gen, type, str);
+    if (!sk_GENERAL_NAME_push(gens, gen)) {
+        GENERAL_NAME_free(gen);
+        return 0;
+    }
+    return 1;
+}
+
+/* Push one GEN_IPADD name onto gens. Takes ownership of ip. Returns 0 on
+ * allocation failure (no raise: the caller frees and raises). */
+static int csr_san_push_ip(GENERAL_NAMES *gens, ASN1_OCTET_STRING *ip) {
+    GENERAL_NAME *gen = GENERAL_NAME_new();
+    if (!gen) {
+        ASN1_OCTET_STRING_free(ip);
+        return 0;
+    }
+    GENERAL_NAME_set0_value(gen, GEN_IPADD, ip);
+    if (!sk_GENERAL_NAME_push(gens, gen)) {
+        GENERAL_NAME_free(gen);
+        return 0;
+    }
+    return 1;
+}
+
+/* Push one entry parsed with OpenSSL's subjectAltName value syntax, one
+ * entry per call. This keeps the general names without a simple literal
+ * spelling (otherName:, dirName:) working exactly as the old comma-joined
+ * config call parsed them. Returns 0 when OpenSSL rejects the entry (no
+ * raise: the caller frees and raises). */
+static int csr_san_push_via_conf(GENERAL_NAMES *gens, const char *entry) {
+    X509_EXTENSION *ext =
+        X509V3_EXT_conf_nid(NULL, NULL, NID_subject_alt_name, entry);
+    if (!ext) {
+        ERR_clear_error();
+        return 0;
+    }
+    GENERAL_NAMES *parsed = X509V3_EXT_d2i(ext);
+    X509_EXTENSION_free(ext);
+    if (!parsed) {
+        ERR_clear_error();
+        return 0;
+    }
+    int ok = 1;
+    while (sk_GENERAL_NAME_num(parsed) > 0) {
+        GENERAL_NAME *gen = sk_GENERAL_NAME_shift(parsed);
+        if (!sk_GENERAL_NAME_push(gens, gen)) {
+            GENERAL_NAME_free(gen);
+            ok = 0;
+            break;
+        }
+    }
+    GENERAL_NAMES_free(parsed);
+    return ok;
+}
+
+/* Build the SubjectAltName extension from a :san container and attach it to
+ * req. Every entry becomes its own general name, so bare DNS/IP literals
+ * are canonicalised like the jca builders (a2i_IPADDRESS classifies, else
+ * DNS) and a comma inside an entry never splits it. A non-string entry, an
+ * invalid container, or an entry OpenSSL cannot parse raises
+ * [CRYPTO:PARAM]; failed extension pushes raise. Every raise frees gens,
+ * req, and pkey first - no raise unwinds past live OpenSSL objects. */
+static void csr_add_san(X509_REQ *req, EVP_PKEY *pkey, Janet san) {
+    if (!janet_checktype(san, JANET_TUPLE) &&
+        !janet_checktype(san, JANET_ARRAY)) {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_param(":san must be a tuple or array of strings");
+    }
+
+    const Janet *entries;
+    int32_t count;
+    janet_indexed_view(san, &entries, &count);
+
+    if (count == 0) {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_param(":san must not be empty");
+    }
+
+    GENERAL_NAMES *gens = sk_GENERAL_NAME_new_null();
+    if (!gens) {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_resource("failed to allocate subjectAltName entries");
+    }
+
+    for (int32_t i = 0; i < count; i++) {
+        if (!janet_checktype(entries[i], JANET_STRING)) {
+            GENERAL_NAMES_free(gens);
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param(":san entry %d must be a string, got %q", i,
+                               entries[i]);
+        }
+
+        const uint8_t *bytes = janet_unwrap_string(entries[i]);
+        const char *entry = (const char *)bytes;
+        int32_t elen = janet_string_length(bytes);
+        const char *colon = (const char *)memchr(entry, ':', (size_t)elen);
+        int ok = 0;
+
+        if (!colon) {
+            ASN1_OCTET_STRING *ip = a2i_IPADDRESS(entry);
+            ok = ip ? csr_san_push_ip(gens, ip)
+                    : csr_san_push_ia5(gens, GEN_DNS, entry, elen);
+        } else {
+            int32_t plen = (int32_t)(colon - entry);
+            const char *rest = colon + 1;
+            int32_t rlen = elen - plen - 1;
+
+            if (csr_prefix_is(entry, plen, "ip")) {
+                ASN1_OCTET_STRING *ip = a2i_IPADDRESS(rest);
+                if (!ip) ERR_clear_error();
+                ok = ip && csr_san_push_ip(gens, ip);
+            } else if (csr_prefix_is(entry, plen, "dns")) {
+                ok = csr_san_push_ia5(gens, GEN_DNS, rest, rlen);
+            } else if (csr_prefix_is(entry, plen, "email")) {
+                ok = csr_san_push_ia5(gens, GEN_EMAIL, rest, rlen);
+            } else if (csr_prefix_is(entry, plen, "uri")) {
+                ok = csr_san_push_ia5(gens, GEN_URI, rest, rlen);
+            } else if (csr_prefix_is(entry, plen, "rid")) {
+                ASN1_OBJECT *obj = OBJ_txt2obj(rest, 0);
+                if (!obj) {
+                    ERR_clear_error();
+                } else {
+                    GENERAL_NAME *gen = GENERAL_NAME_new();
+                    if (!gen) {
+                        ASN1_OBJECT_free(obj);
+                    } else {
+                        GENERAL_NAME_set0_value(gen, GEN_RID, obj);
+                        if (sk_GENERAL_NAME_push(gens, gen))
+                            ok = 1;
+                        else
+                            GENERAL_NAME_free(gen);
+                    }
+                }
+            } else {
+                ok = csr_san_push_via_conf(gens, entry);
+            }
+        }
+
+        if (!ok) {
+            GENERAL_NAMES_free(gens);
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param(":san entry %q is not a valid subjectAltName",
+                               entries[i]);
+        }
+    }
+
+    X509_EXTENSION *ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
+    GENERAL_NAMES_free(gens);
+    if (!ext) {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_ssl("failed to encode the SubjectAltName extension");
+    }
+
+    STACK_OF(X509_EXTENSION) *exts = sk_X509_EXTENSION_new_null();
+    if (!exts) {
+        X509_EXTENSION_free(ext);
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_resource("failed to allocate the extension stack");
+    }
+    if (!sk_X509_EXTENSION_push(exts, ext)) {
+        X509_EXTENSION_free(ext);
+        sk_X509_EXTENSION_free(exts);
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_resource("failed to collect the SubjectAltName extension");
+    }
+    if (!X509_REQ_add_extensions(req, exts)) {
+        sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_ssl("failed to add the SubjectAltName extension");
+    }
+    sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+}
+
+/* Resolve the :digest option to a message digest. A string or keyword names
+ * the digest exactly like EVP_get_digestbyname spells it; anything else, and
+ * any name it does not know, raises [CRYPTO:PARAM] instead of silently
+ * signing with SHA-256. */
+static const EVP_MD *csr_resolve_digest(X509_REQ *req, EVP_PKEY *pkey,
+                                        Janet digest) {
+    if (janet_checktype(digest, JANET_NIL)) return EVP_sha256();
+    const char *name = NULL;
+    if (janet_checktype(digest, JANET_KEYWORD)) {
+        name = (const char *)janet_unwrap_keyword(digest);
+    } else if (janet_checktype(digest, JANET_STRING)) {
+        name = (const char *)janet_unwrap_string(digest);
+    } else {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_param(":digest must be a string or keyword, got %q",
+                           digest);
+    }
+    const EVP_MD *md = EVP_get_digestbyname(name);
+    if (!md) {
+        X509_REQ_free(req);
+        EVP_PKEY_free(pkey);
+        crypto_panic_param("unknown :digest %q", digest);
+    }
+    return md;
+}
+
 /* Generate CSR (Certificate Signing Request) */
 Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
@@ -37,95 +278,90 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     Janet val;
     val = janet_get(opts, janet_ckeywordv("common-name"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add common-name entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("country"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add country entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("state"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "ST", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "ST", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add state entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("locality"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "L", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "L", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add locality entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("organization"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add organization entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("organizational-unit"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add organizational-unit entry");
+        }
     }
 
     val = janet_get(opts, janet_ckeywordv("email"));
     if (janet_checktype(val, JANET_STRING)) {
-        X509_NAME_add_entry_by_txt(name, "emailAddress", MBSTRING_ASC,
-                                   OSSL_STR(janet_unwrap_string(val)), -1, -1,
-                                   0);
+        if (!X509_NAME_add_entry_by_txt(name, "emailAddress", MBSTRING_ASC,
+                                        OSSL_STR(janet_unwrap_string(val)), -1,
+                                        -1, 0)) {
+            X509_REQ_free(req);
+            EVP_PKEY_free(pkey);
+            crypto_panic_param("failed to add email entry");
+        }
     }
 
     /* Add Subject Alternative Names if provided */
     val = janet_get(opts, janet_ckeywordv("san"));
-    if (janet_checktype(val, JANET_TUPLE) ||
-        janet_checktype(val, JANET_ARRAY)) {
-        const Janet *san_arr;
-        int32_t san_len;
-        janet_indexed_view(val, &san_arr, &san_len);
-
-        if (san_len > 0) {
-            STACK_OF(X509_EXTENSION) *exts = sk_X509_EXTENSION_new_null();
-            JanetBuffer *san_buf = janet_buffer(256);
-
-            for (int32_t i = 0; i < san_len; i++) {
-                if (!janet_checktype(san_arr[i], JANET_STRING)) continue;
-                const uint8_t *san = janet_unwrap_string(san_arr[i]);
-                if (i > 0) janet_buffer_push_u8(san_buf, ',');
-                janet_buffer_push_cstring(san_buf, (const char *)san);
-            }
-
-            /* Null-terminate */
-            janet_buffer_push_u8(san_buf, 0);
-
-            X509_EXTENSION *ext = X509V3_EXT_conf_nid(
-                NULL, NULL, NID_subject_alt_name, (char *)san_buf->data);
-            if (ext) {
-                sk_X509_EXTENSION_push(exts, ext);
-                X509_REQ_add_extensions(req, exts);
-            } else {
-                ERR_clear_error();
-            }
-            sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
-        }
+    if (!janet_checktype(val, JANET_NIL)) {
+        csr_add_san(req, pkey, val);
     }
 
     /* Sign the CSR */
-    const EVP_MD *md = EVP_sha256();
     val = janet_get(opts, janet_ckeywordv("digest"));
-    if (janet_checktype(val, JANET_KEYWORD)) {
-        const char *digest_name = (const char *)janet_unwrap_keyword(val);
-        const EVP_MD *custom_md = EVP_get_digestbyname(digest_name);
-        if (custom_md) md = custom_md;
-    }
+    const EVP_MD *md = csr_resolve_digest(req, pkey, val);
     /* Ed25519 is a pure signature scheme and takes no digest (NULL, like the
      * working pattern in jcert.c) */
     if (EVP_PKEY_base_id(pkey) == EVP_PKEY_ED25519) {
