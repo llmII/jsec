@@ -15,70 +15,9 @@
 #include "../internal.h"
 #include <math.h>
 
-/*============================================================================
- * CACHED KEYWORDS
- *============================================================================
- * Keywords used in hot paths are cached to avoid repeated interning lookups.
- * Janet keywords are interned (globally unique), so caching the Janet value
- * avoids the hash lookup on every call.
- *
- * Thread safety: Janet guarantees each thread has its own VM state, and
- * keywords are interned per-VM. The init function is called once per module
- * load (which happens once per VM), so this is safe.
- */
-static Janet kw_timeout = {0};
-static int kw_initialized = 0;
-
-static void ensure_keywords_initialized(void) {
-    if (!kw_initialized) {
-        kw_timeout = janet_ckeywordv("timeout");
-        janet_gcroot(kw_timeout);
-        kw_initialized = 1;
-    }
-}
-
 /* Helper to check if timeout is infinite (avoids float comparison warning) */
 static inline int is_infinite_timeout(double timeout) {
     return isinf(timeout) != 0;
-}
-
-/*============================================================================
- * HELPER: Parse timeout from argument
- *============================================================================
- * Per the requirement, the last optional parameter can be either:
- * - A number (timeout in seconds)
- * - A table/struct with :timeout key (and potentially other TLS options)
- */
-static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
-    if (argc <= idx) {
-        return INFINITY;
-    }
-
-    Janet arg = argv[idx];
-
-    if (janet_checktype(arg, JANET_NIL)) {
-        return INFINITY;
-    }
-
-    double timeout = INFINITY;
-
-    if (janet_checktype(arg, JANET_NUMBER)) {
-        timeout = janet_unwrap_number(arg);
-    } else if (janet_checktype(arg, JANET_TABLE) ||
-               janet_checktype(arg, JANET_STRUCT)) {
-        ensure_keywords_initialized();
-        Janet timeout_val = janet_get(arg, kw_timeout);
-        if (janet_checktype(timeout_val, JANET_NUMBER)) {
-            timeout = janet_unwrap_number(timeout_val);
-        }
-    }
-
-    /* Validate: negative timeouts are invalid */
-    if (timeout < 0) {
-        tls_panic_param("timeout must be non-negative, got %f", timeout);
-    }
-
-    return timeout;
 }
 
 /*============================================================================
@@ -106,7 +45,7 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     }
 
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
-    double timeout = parse_timeout_opt(argc, argv, 3);
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
 
     /* Use embedded read_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance.
@@ -152,7 +91,7 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
 
     int32_t bytes_to_read = janet_getnat(argv, 1);
     JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
-    double timeout = parse_timeout_opt(argc, argv, 3);
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
 
     /* Use embedded read_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance. */
@@ -201,7 +140,7 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     }
 
     JanetByteView bytes = janet_getbytes(argv, 1);
-    double timeout = parse_timeout_opt(argc, argv, 2);
+    double timeout = parse_timeout_opt(argc, argv, 2, JSEC_MOD_TLS, INFINITY);
 
     /* Use embedded write_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance. */

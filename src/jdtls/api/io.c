@@ -15,52 +15,6 @@ extern void dtls_client_start_async_write(DTLSClient *client,
                                           JanetByteView data, int mode,
                                           double timeout);
 
-/*============================================================================
- * HELPER: Parse timeout from argument
- *============================================================================
- * jtls parse_timeout_opt twin (src/jtls/api/io.c): the optional timeout
- * is a number of seconds, or a table/struct with a :timeout key; nil and
- * absence mean no deadline. A negative timeout is invalid and raises a
- * parameter error - same contract and wording as jtls. Returns the
- * deadline in seconds, or -1 when none was given: the sentinel the
- * "if (timeout >= 0)" janet_addtimeout arms key off, so an unbounded wait
- * never arms a timer.
- */
-static inline int is_infinite_timeout(double timeout) {
-    return isinf(timeout) != 0;
-}
-
-static double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx) {
-    if (argc <= idx) {
-        return -1.0;
-    }
-
-    Janet arg = argv[idx];
-
-    if (janet_checktype(arg, JANET_NIL)) {
-        return -1.0;
-    }
-
-    double timeout = INFINITY;
-
-    if (janet_checktype(arg, JANET_NUMBER)) {
-        timeout = janet_unwrap_number(arg);
-    } else if (janet_checktype(arg, JANET_TABLE) ||
-               janet_checktype(arg, JANET_STRUCT)) {
-        Janet timeout_val = janet_get(arg, janet_ckeywordv("timeout"));
-        if (janet_checktype(timeout_val, JANET_NUMBER)) {
-            timeout = janet_unwrap_number(timeout_val);
-        }
-    }
-
-    /* Validate: negative timeouts are invalid */
-    if (timeout < 0) {
-        dtls_panic_param("timeout must be non-negative, got %f", timeout);
-    }
-
-    return is_infinite_timeout(timeout) ? -1.0 : timeout;
-}
-
 /*
  * dtls_do_read - read one datagram into buf, sized from the datagram.
  *
@@ -124,7 +78,7 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
      * matching ev/read append semantics (never treat n as buffer total) */
     int32_t buf_start = buf->count;
 
-    double timeout = parse_timeout_opt(argc, argv, 3);
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
 
     /* Try initial read */
     int32_t before = buf->count;
@@ -180,7 +134,7 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
         dtls_panic_io("DTLS client not connected");
     }
 
-    double timeout = parse_timeout_opt(argc, argv, 2);
+    double timeout = parse_timeout_opt(argc, argv, 2, JSEC_MOD_DTLS, -1.0);
 
     /* Try initial write */
     int32_t nwritten = 0;

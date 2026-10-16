@@ -107,6 +107,19 @@ int jutils_is_unexpected_eof(void);
  * Returns NULL if the value is neither a string nor keyword. */
 const char *janet_to_string_or_keyword(Janet value);
 
+/*
+ * Parse the optional timeout/opts argument at argv[idx].
+ *
+ * Accepts absent or nil (no deadline), a non-negative non-NaN number of
+ * seconds, or a table/struct whose :timeout key (if non-nil) is such a
+ * number; anything else raises "[mod:PARAM] timeout must be a
+ * non-negative number". Returns the deadline in seconds, or no_deadline
+ * when the argument carries none (INFINITY for jtls, -1 for the dtls
+ * janet_addtimeout sentinel); an infinite value counts as no deadline.
+ */
+double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx,
+                         const char *mod, double no_deadline);
+
 /*============================================================================
  * PUBLIC API - Certificate Loading
  *============================================================================

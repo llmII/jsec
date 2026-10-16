@@ -819,19 +819,7 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
     /* No pre-allocation: process_datagram grows buf by the datagram's
      * own decrypted size, so nothing is reserved before data arrives */
 
-    /* Get timeout - can be number or table/struct with :timeout */
-    double timeout = -1;
-    if (argc > 3 && !janet_checktype(argv[3], JANET_NIL)) {
-        if (janet_checktype(argv[3], JANET_NUMBER)) {
-            timeout = janet_unwrap_number(argv[3]);
-        } else if (janet_checktype(argv[3], JANET_TABLE) ||
-                   janet_checktype(argv[3], JANET_STRUCT)) {
-            Janet t = janet_get(argv[3], janet_ckeywordv("timeout"));
-            if (!janet_checktype(t, JANET_NIL)) {
-                timeout = janet_unwrap_number(t);
-            }
-        }
-    }
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
 
     /* Add timeout if specified */
     if (timeout >= 0) {
