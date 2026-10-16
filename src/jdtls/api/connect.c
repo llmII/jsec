@@ -45,13 +45,16 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         const char *port_str = (const char *)janet_unwrap_string(argv[1]);
         char *endptr;
         long port_val = strtol(port_str, &endptr, 10);
-        if (endptr == port_str || *endptr != '\0' || port_val < 0 ||
+        if (endptr == port_str || *endptr != '\0' || port_val < 1 ||
             port_val > 65535) {
             dtls_panic_param("invalid port: %s", port_str);
         }
         port = (int)port_val;
     } else {
         port = janet_getinteger(argv, 1);
+        if (port < 1 || port > 65535) {
+            dtls_panic_param("invalid port: %d", port);
+        }
     }
 
     /* Parse options */
