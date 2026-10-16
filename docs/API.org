@@ -799,7 +799,7 @@ A ~<time>~ is a number (unix timestamp) or string (ISO 8601 or
 ~YYYYMMDDHHMMSSZ~). The response CertID uses the digest the request
 named (~:digest~, SHA-1 when absent) and the request's ~:serial~.
 
-*Returns*: DER-encoded OCSP response bytes.
+*Returns*: DER-encoded OCSP response string.
 
 ** (:is-tracking ca) / (ca/is-tracking ca)
 

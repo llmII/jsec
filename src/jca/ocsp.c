@@ -193,7 +193,7 @@ static const char *cfun_ca_create_ocsp_response_docstring =
     "wraps it in an OCTET STRING: echo and generate differ by design. The "
     "response CertID uses the digest the request named (request-info's "
     ":digest, SHA-1 when absent) and the request's :serial.\n\n"
-    "Returns DER-encoded OCSP response bytes.\n\n"
+    "Returns a DER-encoded OCSP response string.\n\n"
     "Note: You implement the HTTP server; this just creates the crypto "
     "response.";
 
@@ -695,8 +695,8 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
         ca_panic_ssl("failed to encode OCSP response");
     }
 
-    JanetBuffer *result = janet_buffer(len);
-    unsigned char *p = result->data;
+    uint8_t *str = janet_string_begin(len);
+    unsigned char *p = str;
     int encoded = i2d_OCSP_RESPONSE(resp, &p);
     if (encoded != len) {
         if (revtime) ASN1_TIME_free(revtime);
@@ -710,7 +710,7 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
         OCSP_RESPONSE_free(resp);
         ca_panic_ssl("failed to encode OCSP response");
     }
-    result->count = len;
+    Janet result = janet_wrap_string(janet_string_end(str));
 
     /* Cleanup */
     if (revtime) ASN1_TIME_free(revtime);
@@ -723,7 +723,7 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     OCSP_BASICRESP_free(basic);
     OCSP_RESPONSE_free(resp);
 
-    return janet_wrap_buffer(result);
+    return result;
 }
 
 /*
