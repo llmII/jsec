@@ -280,7 +280,43 @@ Read exactly `n` bytes, or until EOF.
 -   **buf**: Optional buffer to read into
 -   **timeout**: Optional timeout in seconds
 
-**Returns**: Buffer with data.
+**Returns**: Buffer with data, or `nil` when a clean EOF arrives with 0
+bytes read during the call (see the EOF policy below).
+
+
+### EOF and close\_notify Policy
+
+This policy governs every read surface - `ev/read` / `:read`,
+`ev/chunk` / `:chunk`, `dtls/read`, `dtls/chunk` - in both the TLS and
+DTLS stacks, on every supported TLS library (OpenSSL and LibreSSL).
+
+**Clean close**: when the peer ends the stream properly, by sending the
+TLS `close_notify` alert before closing the transport, a read completes
+with the buffer holding the bytes appended during that call when at
+least one byte was read before the alert, and with `nil` when zero bytes
+were read during the call. This matches Janet's `ev/read`, `ev/chunk`,
+`net/read` and `net/chunk`, so return-value-driven read loops terminate
+on EOF. A returned buffer is truthy in Janet, so `nil` - not an empty
+buffer - is what ends a read loop.
+
+**Unexpected EOF is an error**: a peer that closes the connection without
+`close_notify` has truncated the stream. Every read surface raises
+
+    unexpected EOF without close_notify: the peer closed the connection without completing the TLS shutdown
+
+instead of reporting a clean end of data. Why: without `close_notify` a
+truncated stream is indistinguishable from a complete one, and any peer
+can cut the transport at any point - treating that as clean EOF would
+let an on-path attacker silently shorten a message. TLS defines a
+stream as cleanly ended only by `close_notify`, so jsec never sets
+`SSL_OP_IGNORE_UNEXPECTED_EOF` and never downgrades a truncation to a
+clean read. The two library surfaces of the same condition are
+normalised into the one error above: OpenSSL 1.1.1 and LibreSSL report
+the transport EOF as `SSL_ERROR_SYSCALL` with ret 0, while OpenSSL 3.x
+reports it as `SSL_ERROR_SSL`; both raise the documented error.
+
+Writes and closes are unaffected: closing or shutting down a connection
+whose peer already went away completes normally.
 
 
 ### (ev/close stream)
@@ -485,7 +521,9 @@ Read a datagram from the connection.
 -   **buf**: Optional buffer to read into
 -   **timeout**: Optional timeout in seconds
 
-**Returns**: Buffer with data, or `nil` on EOF.
+**Returns**: Buffer with data, or `nil` on a clean EOF (the peer sent
+`close_notify`). A peer close without `close_notify` raises - see the
+EOF and close\_notify Policy above.
 
 
 ### (dtls/write client data &opt timeout)

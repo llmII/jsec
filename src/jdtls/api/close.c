@@ -72,8 +72,10 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
     /* Try initial shutdown */
     DTLSResult result = dtls_do_shutdown(client->ssl);
 
-    if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF) {
-        /* Shutdown complete */
+    if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF ||
+        result == DTLS_RESULT_UNEXPECTED_EOF) {
+        /* Shutdown complete - a peer close without close_notify still
+         * completes the close; read surfaces own the truncation raise */
         client->closed = 1;
         client->state = DTLS_STATE_CLOSED;
         if (client->transport) {

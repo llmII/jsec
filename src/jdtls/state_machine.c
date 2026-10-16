@@ -62,13 +62,14 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
             return DTLS_RESULT_WANT_WRITE;
 
         case SSL_ERROR_ZERO_RETURN:
-            /* Peer sent close_notify */
+            /* Peer sent close_notify: the one clean close */
             return DTLS_RESULT_EOF;
 
         case SSL_ERROR_SYSCALL:
-            if (ret == 0) {
-                /* EOF without close_notify */
-                return DTLS_RESULT_EOF;
+            if (ret == 0 || errno == 0) {
+                /* EOF without close_notify: the 1.1.1/LibreSSL surface
+                 * of a truncation. Not a clean end of data. */
+                return DTLS_RESULT_UNEXPECTED_EOF;
             }
             /* Fall through to error */
 #if defined(__GNUC__) || defined(__clang__)
@@ -77,6 +78,11 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
 
         case SSL_ERROR_SSL:
         default:
+            if (jutils_is_unexpected_eof()) {
+                /* OpenSSL 3.x surface of the same truncation:
+                 * SSL_ERROR_SSL with SSL_R_UNEXPECTED_EOF_WHILE_READING */
+                return DTLS_RESULT_UNEXPECTED_EOF;
+            }
             return DTLS_RESULT_ERROR;
     }
 }
@@ -409,8 +415,12 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         data->state.nbytes -
                             (data->state.buffer->count -
                              data->state.buf_start));
-                    if (result == DTLS_RESULT_OK ||
-                        data->state.buffer->count > data->state.buf_start) {
+                    if (result == DTLS_RESULT_UNEXPECTED_EOF) {
+                        /* A truncation raises below - it must never
+                         * look like a clean end of data */
+                    } else if (result == DTLS_RESULT_OK ||
+                               data->state.buffer->count >
+                                   data->state.buf_start) {
                         /* Return what we have */
                         retval = janet_wrap_buffer(data->state.buffer);
                         result = DTLS_RESULT_OK;
@@ -418,7 +428,7 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         if (data->state.buffer->count > data->state.buf_start) {
                             retval = janet_wrap_buffer(data->state.buffer);
                         }
-                        /* EOF with no data this call = nil */
+                        /* Clean EOF with no data this call = nil */
                     }
                     break;
                 }
@@ -437,7 +447,8 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 case DTLS_OP_SHUTDOWN:
                     result = dtls_do_shutdown(data->ssl);
                     if (result == DTLS_RESULT_OK ||
-                        result == DTLS_RESULT_EOF) {
+                        result == DTLS_RESULT_EOF ||
+                        result == DTLS_RESULT_UNEXPECTED_EOF) {
                         if (data->dtls_state) {
                             *data->dtls_state = DTLS_STATE_CLOSED;
                         }
@@ -481,6 +492,15 @@ static void dtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         *data->dtls_state = DTLS_STATE_CLOSED;
                     }
                     janet_schedule(fiber, janet_wrap_nil());
+                    janet_async_end(fiber);
+                    break;
+
+                case DTLS_RESULT_UNEXPECTED_EOF:
+                    if (data->dtls_state) {
+                        *data->dtls_state = DTLS_STATE_ERROR;
+                    }
+                    janet_cancel(fiber,
+                                 janet_cstringv(JSEC_UNEXPECTED_EOF_ERROR));
                     janet_async_end(fiber);
                     break;
 
@@ -617,7 +637,8 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
     /* Try shutdown */
     DTLSResult result = dtls_do_shutdown(ssl);
 
-    if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF) {
+    if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF ||
+        result == DTLS_RESULT_UNEXPECTED_EOF) {
         if (state_ptr) *state_ptr = DTLS_STATE_CLOSED;
         janet_free(data);
         return;

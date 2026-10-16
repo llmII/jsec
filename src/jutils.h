@@ -61,6 +61,30 @@
  * Use immediately or copy if needed across multiple calls. */
 const char *get_ssl_error_string(void);
 
+/*
+ * The one documented error for a peer close without close_notify. A peer
+ * that ends the connection without the TLS shutdown alert has truncated
+ * the stream: jsec raises this error on every read surface instead of
+ * reporting a clean end of data, on every supported TLS library, so a
+ * truncated stream can never look like a complete one. It is raised
+ * identically for both library shapes of the same condition: the
+ * SSL_ERROR_SYSCALL ret-0 surface of OpenSSL 1.1.1 and LibreSSL, and the
+ * SSL_ERROR_SSL surface of OpenSSL 3.x.
+ */
+#define JSEC_UNEXPECTED_EOF_ERROR                                              \
+    "unexpected EOF without close_notify: the peer closed the connection "     \
+    "without completing the TLS shutdown"
+
+/*
+ * True when the OpenSSL error queue holds the OpenSSL 3.x shape of an
+ * unexpected EOF: SSL_ERROR_SSL with reason
+ * SSL_R_UNEXPECTED_EOF_WHILE_READING. The 1.1.1/LibreSSL shape (SSL_ERROR_
+ * SYSCALL with ret 0) carries no queue entry and is classified by the
+ * callers from the ret/errno pair instead. Peek only - the queue is left
+ * for the caller to consume or clear.
+ */
+int jutils_is_unexpected_eof(void);
+
 /* Helper to convert Janet string or keyword to C string
  * Returns NULL if the value is neither a string nor keyword. */
 const char *janet_to_string_or_keyword(Janet value);

@@ -130,11 +130,19 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     int32_t before = buf->count;
     DTLSResult result = dtls_do_read(client->ssl, buf, n);
 
+    if (result == DTLS_RESULT_UNEXPECTED_EOF) {
+        /* A peer close without close_notify truncates the stream and
+         * raises the one documented error - it must never look like a
+         * clean end of data */
+        janet_panic(JSEC_UNEXPECTED_EOF_ERROR);
+    }
+
     if (buf->count > before) {
         return janet_wrap_buffer(buf);
     }
 
     if (result == DTLS_RESULT_EOF) {
+        /* Clean EOF: what this call appended or nil */
         return buf->count > buf_start ? janet_wrap_buffer(buf)
                                       : janet_wrap_nil();
     }
