@@ -16,6 +16,28 @@
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 #include <openssl/x509v3.h>
+#include <sys/stat.h>
+#ifdef JANET_WINDOWS
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
+/* True when the trust-directory path names a readable directory. The
+ * OpenSSL trust-directory load registers a lazy lookup and reports
+ * success for a wrong or unreadable path, so the failure has to be
+ * detected here to be raised at all. */
+static int trust_dir_usable(const char *path) {
+#ifdef JANET_WINDOWS
+    struct _stat st;
+    if (_stat(path, &st) != 0 || (st.st_mode & _S_IFDIR) == 0) return 0;
+    return _access(path, 4) == 0;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) return 0;
+    return access(path, R_OK) == 0;
+#endif
+}
 
 /*
  * Load a certificate from PEM data
@@ -276,46 +298,88 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         cert_panic_resource("failed to create certificate store");
     }
 
-    /* Add trusted certificates */
+    /* Add trusted certificates - an entry that does not parse raises
+     * naming it instead of being silently omitted */
     if (trusted_arr) {
         for (int32_t i = 0; i < trusted_arr->count; i++) {
             JanetByteView pem = janet_getbytes(&trusted_arr->data[i], 0);
             X509 *trusted = load_cert_from_pem(pem.bytes, pem.len);
-            if (trusted) {
-                X509_STORE_add_cert(store, trusted);
-                X509_free(trusted);
+            if (!trusted) {
+                X509_STORE_free(store);
+                X509_free(cert);
+                janet_panicf("[CERT:PARSE] failed to parse :trusted entry "
+                             "%d: %s",
+                             (int)i, get_ssl_error_string());
             }
+            if (!X509_STORE_add_cert(store, trusted)) {
+                X509_free(trusted);
+                X509_STORE_free(store);
+                X509_free(cert);
+                janet_panicf("[CERT:SSL] failed to add :trusted entry %d to "
+                             "the trust store: %s",
+                             (int)i, get_ssl_error_string());
+            }
+            X509_free(trusted);
         }
         ERR_clear_error();
     }
 
-    /* Load trusted directory if specified */
+    /* Load trusted directory if specified - a wrong or unreadable
+     * directory raises naming it instead of silently loading zero
+     * anchors */
     if (trusted_dir) {
         JanetBuffer *dir_buf = janet_buffer(trusted_dir_len + 1);
         janet_buffer_push_bytes(dir_buf, (const uint8_t *)trusted_dir,
                                 trusted_dir_len);
         janet_buffer_push_u8(dir_buf, 0);
+        const char *dir_path = (const char *)dir_buf->data;
+        if (!trust_dir_usable(dir_path)) {
+            X509_STORE_free(store);
+            X509_free(cert);
+            janet_panicf("[CERT:SSL] failed to load :trusted-dir %s: not a "
+                         "readable directory",
+                         dir_path);
+        }
 #if JSEC_HAS_X509_STORE_LOAD_PATH
-        X509_STORE_load_path(store, (const char *)dir_buf->data);
+        int dir_ok = X509_STORE_load_path(store, dir_path);
 #else
         /* LibreSSL fallback: use X509_STORE_load_locations */
-        X509_STORE_load_locations(store, NULL, (const char *)dir_buf->data);
+        int dir_ok = X509_STORE_load_locations(store, NULL, dir_path);
 #endif
+        if (dir_ok != 1) {
+            X509_STORE_free(store);
+            X509_free(cert);
+            janet_panicf("[CERT:SSL] failed to load :trusted-dir %s: %s",
+                         dir_path, get_ssl_error_string());
+        }
     }
 
-    /* Add CRL if specified */
+    /* Add CRL if specified - an unparseable :crl raises instead of being
+     * silently dropped so verification cannot blame a missing input */
     if (crl_pem.bytes && crl_pem.len > 0) {
         BIO *crl_bio = BIO_new_mem_buf(crl_pem.bytes, (int)crl_pem.len);
-        if (crl_bio) {
-            X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
-            BIO_free(crl_bio);
-            if (crl) {
-                X509_STORE_add_crl(store, crl);
-                X509_CRL_free(crl);
-            } else {
-                ERR_clear_error();
-            }
+        if (!crl_bio) {
+            X509_STORE_free(store);
+            X509_free(cert);
+            cert_panic_resource("failed to create CRL BIO");
         }
+        X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
+        BIO_free(crl_bio);
+        if (!crl) {
+            X509_STORE_free(store);
+            X509_free(cert);
+            janet_panicf("[CERT:PARSE] failed to parse :crl: %s",
+                         get_ssl_error_string());
+        }
+        if (!X509_STORE_add_crl(store, crl)) {
+            X509_CRL_free(crl);
+            X509_STORE_free(store);
+            X509_free(cert);
+            janet_panicf("[CERT:SSL] failed to add :crl to the trust store: "
+                         "%s",
+                         get_ssl_error_string());
+        }
+        X509_CRL_free(crl);
     }
 
     /* Set CRL check flags */
@@ -332,14 +396,29 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
         cert_panic_resource("failed to create verification context");
     }
 
-    /* Load intermediate chain certificates */
+    /* Load intermediate chain certificates - an entry that does not
+     * parse raises naming it instead of being silently omitted */
     STACK_OF(X509) *chain = sk_X509_new_null();
     if (chain_arr) {
         for (int32_t i = 0; i < chain_arr->count; i++) {
             JanetByteView pem = janet_getbytes(&chain_arr->data[i], 0);
             X509 *intermediate = load_cert_from_pem(pem.bytes, pem.len);
-            if (intermediate) {
-                sk_X509_push(chain, intermediate);
+            if (!intermediate) {
+                sk_X509_pop_free(chain, X509_free);
+                X509_STORE_CTX_free(ctx);
+                X509_STORE_free(store);
+                X509_free(cert);
+                janet_panicf("[CERT:PARSE] failed to parse :chain entry %d: "
+                             "%s",
+                             (int)i, get_ssl_error_string());
+            }
+            if (!sk_X509_push(chain, intermediate)) {
+                X509_free(intermediate);
+                sk_X509_pop_free(chain, X509_free);
+                X509_STORE_CTX_free(ctx);
+                X509_STORE_free(store);
+                X509_free(cert);
+                cert_panic_resource("failed to add :chain entry");
             }
         }
         ERR_clear_error();
@@ -372,7 +451,13 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                 "code-signing, email-protection, timestamp, any)",
                 purpose_str);
         }
-        X509_STORE_CTX_set_purpose(ctx, purpose);
+        if (!X509_STORE_CTX_set_purpose(ctx, purpose)) {
+            sk_X509_pop_free(chain, X509_free);
+            X509_STORE_CTX_free(ctx);
+            X509_STORE_free(store);
+            X509_free(cert);
+            cert_panic_ssl("failed to set verification purpose");
+        }
     }
 
     /* Perform verification */
@@ -442,8 +527,11 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
  * (cert/build-chain cert-pem intermediates trusted)
  * intermediates can be array or single PEM string with multiple certs
  * trusted can be array or single PEM string
- * Returns array of PEM strings from cert to root, or nil if chain can't be
- * built
+ * Returns array of PEM strings from cert to the trusted root. Raises when
+ * the walk cannot end at a trusted root - an unreachable issuer, a cycle,
+ * or a self-signed certificate outside the trust set - naming the target
+ * subject and the depth the walk stopped at; a rootless chain is never
+ * returned as success.
  */
 Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 3);
@@ -500,17 +588,31 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
         trusted = load_cert_chain_from_pem(pem.bytes, pem.len);
     }
 
-    /* Build chain by finding issuers */
+    /* Build chain by finding issuers. The walk only succeeds when it
+     * ends at a certificate the trust set vouches for; every other stop
+     * raises naming the subject and the depth. */
     JanetArray *chain = janet_array(8);
     janet_array_push(chain, cert_to_pem(cert));
 
     X509 *current = cert;
     int max_depth = 20; /* Prevent infinite loops */
+    int depth = 0;
+    int anchored = 0;
 
-    while (max_depth-- > 0) {
-        /* Check if current cert is self-signed (root) */
+    for (int i = 0; i < sk_X509_num(trusted); i++) {
+        if (X509_cmp(sk_X509_value(trusted, i), cert) == 0) {
+            anchored = 1;
+            break;
+        }
+    }
+
+    while (!anchored) {
         if (X509_check_issued(current, current) == X509_V_OK) {
-            /* Found root, we're done */
+            /* Self-signed outside the trust set: not a trusted root */
+            break;
+        }
+        if (depth >= max_depth) {
+            /* Depth bound exhausted without reaching a trusted root */
             break;
         }
 
@@ -521,6 +623,7 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
             if (X509_check_issued(candidate, current) == X509_V_OK) {
                 janet_array_push(chain, cert_to_pem(candidate));
                 current = candidate;
+                anchored = 1;
                 found = 1;
                 break;
             }
@@ -540,12 +643,29 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
         }
 
         if (!found) {
-            /* Can't find issuer, chain is incomplete */
-            sk_X509_pop_free(intermediates, X509_free);
-            sk_X509_pop_free(trusted, X509_free);
-            X509_free(cert);
-            return janet_wrap_nil();
+            break;
         }
+        depth++;
+    }
+
+    if (!anchored) {
+        char subject[256];
+        X509_NAME_oneline(X509_get_subject_name(cert), subject,
+                          sizeof(subject));
+        const char *reason =
+            (depth >= max_depth)
+                ? "depth bound exhausted before a trusted root"
+                : (X509_check_issued(current, current) == X509_V_OK
+                       ? "chain ends at a self-signed certificate outside "
+                         "the trust set"
+                       : "no issuer found for the last certificate");
+        sk_X509_pop_free(intermediates, X509_free);
+        sk_X509_pop_free(trusted, X509_free);
+        X509_free(cert);
+        cert_panic_verify(
+            "cannot build a chain to a trusted root for %s: %s (walk "
+            "stopped after %d certificates)",
+            subject, reason, depth + 1);
     }
 
     /* Cleanup */
