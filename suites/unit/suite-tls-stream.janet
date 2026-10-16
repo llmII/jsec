@@ -1083,6 +1083,87 @@
       (ev/take done)
       (:close server)))
 
+  (def-test "listener localname via method and function"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (defer (:close listener)
+        (let [[host port] (net/localname listener)
+              via-method (:localname listener)
+              via-fn (tls-stream/localname listener)]
+          (assert (= (length via-method) 2)
+                  "(:localname listener) returns a 2-tuple")
+          (assert (= (via-method 0) host)
+                  "(:localname listener) host matches net/localname")
+          (assert (= (via-method 1) port)
+                  "(:localname listener) port matches net/localname")
+          (assert (= (length via-fn) 2)
+                  "(tls-stream/localname listener) returns a 2-tuple")
+          (assert (= (via-fn 0) host)
+                  "(tls-stream/localname listener) host matches net/localname")
+          (assert (= (via-fn 1) port)
+                  "(tls-stream/localname listener) port matches net/localname")))))
+
+  (def-test "localname and peername method and function parity"
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server _] (make-server :tcp)
+          [host port] (net/localname server)
+          done (ev/chan 1)]
+
+      (ev/go (fn []
+               (try
+                 (with [conn (:accept server)]
+                   (with [tls-conn (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                     (let [sln (:localname tls-conn)
+                           spn (:peername tls-conn)]
+                       (assert (= (tls-stream/localname tls-conn) sln)
+                               "server localname function/method parity")
+                       (assert (= (tls-stream/peername tls-conn) spn)
+                               "server peername function/method parity"))
+                     (ev/sleep 0.1)))
+                 ([err] nil))
+               (ev/give done true)))
+
+      (ev/sleep 0.1)
+
+      (with [tls-conn (tls/connect host (string port) {:verify false})]
+        (let [cln (:localname tls-conn)
+              cpn (:peername tls-conn)]
+          (assert (= (tls-stream/localname tls-conn) cln)
+                  "client localname function/method parity")
+          (assert (= (tls-stream/peername tls-conn) cpn)
+                  "client peername function/method parity"))
+        (:read tls-conn 100))
+
+      (ev/take done)
+      (:close server)))
+
+  (def-test "peername raises on listen listener"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (defer (:close listener)
+        (assert-error (tls-stream/peername listener)
+                      "peername function raises on listener")
+        (assert-error (:peername listener)
+                      "peername method raises on listener"))))
+
+  (def-test "localname raises TLS:IO after listener close"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (:close listener)
+
+      (var method-err nil)
+      (try
+        (:localname listener)
+        ([err] (set method-err err)))
+      (assert method-err "(:localname listener) raises after close")
+      (assert (string/find "[TLS:IO]" (string method-err))
+              "method localname raises a [TLS:IO] error")
+
+      (var fn-err nil)
+      (try
+        (tls-stream/localname listener)
+        ([err] (set fn-err err)))
+      (assert fn-err "(tls-stream/localname listener) raises after close")
+      (assert (string/find "[TLS:IO]" (string fn-err))
+              "function localname raises a [TLS:IO] error")))
+
   (def-test "trust-cert with explicit context"
     (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
           [server _] (make-server :tcp)

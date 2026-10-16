@@ -317,21 +317,50 @@ static Janet sockaddr_to_tuple(const struct sockaddr_storage *ss) {
  *
  * Get the local address and port as a tuple (host port).
  * For Unix sockets, returns (path).
+ * Accepts a jsec/tls-stream TLSStream or a core/stream JanetStream that
+ * is a socket, so the raw listener returned by tls/listen also works.
  */
 Janet cfun_localname(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-    if (!tls->transport || (tls->transport->flags & JANET_STREAM_CLOSED)) {
-        tls_panic_io("stream closed");
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
+
+    if (janet_checkabstract(argv[0], &tls_stream_type)) {
+        TLSStream *tls = (TLSStream *)janet_unwrap_abstract(argv[0]);
+
+        if (!tls->transport ||
+            (tls->transport->flags & JANET_STREAM_CLOSED)) {
+            tls_panic_io("stream closed");
+        }
+
+        if (!(tls->transport->flags & JANET_STREAM_SOCKET)) {
+            tls_panic_socket("underlying transport is not a socket");
+        }
+
+        fd = (jsec_socket_t)tls->transport->handle;
+    } else if (janet_checkabstract(argv[0], &janet_stream_type)) {
+        JanetStream *js = (JanetStream *)janet_unwrap_abstract(argv[0]);
+
+        if (js->flags & JANET_STREAM_CLOSED) {
+            tls_panic_io("stream closed");
+        }
+
+        if (!(js->flags & JANET_STREAM_SOCKET)) {
+            tls_panic_socket("stream is not a socket");
+        }
+
+        fd = (jsec_socket_t)js->handle;
+    } else {
+        tls_panic_param(
+            "bad slot #0, expected jsec/tls-stream or core/stream, got %v",
+            argv[0]);
     }
 
     struct sockaddr_storage ss;
     socklen_t slen = sizeof(ss);
     memset(&ss, 0, slen);
 
-    if (getsockname((jsec_socket_t)tls->transport->handle,
-                    (struct sockaddr *)&ss, &slen)) {
+    if (getsockname(fd, (struct sockaddr *)&ss, &slen) < 0) {
         tls_panic_socket("failed to get localname");
     }
 

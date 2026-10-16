@@ -342,6 +342,16 @@ These methods are available on TLS stream objects. Access via method syntax
 - ~(:cipher-bits stream)~ or ~(tls-stream/cipher-bits stream)~
   Returns cipher bit strength as integer
 
+- ~(:localname stream)~ or ~(tls-stream/localname stream)~
+  Returns the local address as a ~[host port]~ tuple (or ~[unix-path]~
+  tuple for Unix domain sockets). Accepts connected TLS streams and the
+  server listener returned by ~tls/listen~.
+
+- ~(:peername stream)~ or ~(tls-stream/peername stream)~
+  Returns the peer address of a connected TLS stream as a ~[host port]~
+  tuple (or ~[unix-path]~ tuple for Unix domain sockets). Raises on a
+  ~tls/listen~ listener or a closed stream.
+
 *** Session Management
 
 - ~(:session-reused? stream)~ or ~(tls-stream/session-reused? stream)~

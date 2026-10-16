@@ -395,6 +395,20 @@ Janet cfun_server(int32_t argc, Janet *argv) {
     return cfun_listen(argc, argv);
 }
 
+/* Method table for the raw listener JanetStream returned by cfun_listen.
+ * The default Janet stream method table lacks :localname and :accept, so
+ * the listener gets its own table: :localname works via cfun_localname's
+ * core/stream dispatch, and :accept / :accept-loop wrap with TLS. */
+static const JanetMethod tls_listener_methods[] = {
+    {"close", janet_cfun_stream_close},
+    {"localname", cfun_localname},
+    {"read", janet_cfun_stream_read},
+    {"chunk", janet_cfun_stream_chunk},
+    {"write", janet_cfun_stream_write},
+    {"accept", cfun_accept},
+    {"accept-loop", cfun_accept_loop},
+    {NULL, NULL}};
+
 /*============================================================================
  * LISTEN - Create a TCP/Unix listener for TLS server
  *============================================================================
@@ -556,9 +570,9 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
 #endif
 
     /* Return a Janet stream */
-    return janet_wrap_abstract(
-        janet_stream((JanetHandle)fd,
-                     JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE, NULL));
+    return janet_wrap_abstract(janet_stream(
+        (JanetHandle)fd, JANET_STREAM_SOCKET | JANET_STREAM_ACCEPTABLE,
+        tls_listener_methods));
 }
 
 /*============================================================================
