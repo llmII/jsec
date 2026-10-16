@@ -58,6 +58,30 @@ static int ca_try_keyword_to_reason(Janet kw, CARevocationReason *out) {
     return 1;
 }
 
+/* Non-raising mirror of the integer conversion the :serial parse uses
+ * (janet_getinteger64 -> janet_unwrap_s64): a number in int64 range, a
+ * string scannable as an integer, or an s64/u64 abstract. Lets the caller
+ * free the CRL before the raising form of this conversion runs. */
+static int ca_try_serial_to_int64(Janet x, int64_t *out) {
+    if (janet_checkint64(x)) {
+        *out = (int64_t)janet_unwrap_number(x);
+        return 1;
+    }
+    if (janet_checktype(x, JANET_STRING)) {
+        const uint8_t *str = janet_unwrap_string(x);
+        return janet_scan_int64(str, janet_string_length(str), out);
+    }
+    if (janet_checktype(x, JANET_ABSTRACT)) {
+        void *abst = janet_unwrap_abstract(x);
+        if (janet_abstract_type(abst) == &janet_s64_type ||
+            janet_abstract_type(abst) == &janet_u64_type) {
+            *out = *(int64_t *)abst;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 CARevocationReason ca_keyword_to_reason(Janet kw) {
     CARevocationReason reason;
     if (!ca_try_keyword_to_reason(kw, &reason)) {
@@ -346,7 +370,22 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
                 ca_panic_param("revoked entry missing :serial");
             }
 
-            int64_t serial = janet_getinteger64(&serial_v, 0);
+            /* Both converters below raise on a bad value, so validate the
+             * values first and free the CRL before any raise that would
+             * otherwise unwind past it - the free-then-raise discipline of
+             * the sibling failures above. */
+            int64_t serial;
+            if (!ca_try_serial_to_int64(serial_v, &serial)) {
+                X509_CRL_free(crl);
+                janet_panicf("can not convert %t %q to 64 bit signed integer",
+                             serial_v, serial_v);
+            }
+            if (!janet_checktype(reason_v, JANET_NIL) &&
+                !janet_checktype(reason_v, JANET_STRING) &&
+                !janet_checktype(reason_v, JANET_KEYWORD)) {
+                X509_CRL_free(crl);
+                ca_panic_param("revocation reason must be a string or keyword");
+            }
             CARevocationReason reason;
             if (!ca_try_keyword_to_reason(reason_v, &reason)) {
                 X509_CRL_free(crl);
