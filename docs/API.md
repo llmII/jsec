@@ -465,6 +465,10 @@ Create a DTLS server bound to an address.
     -   `:verify`: Boolean (default `false`). Request client certificates (mTLS).
     -   `:ca`: CA certificates for client verification.
     -   `:session-timeout`: Session timeout in seconds (default 300).
+    -   `:max-sessions`: Maximum peer sessions kept in the server session
+        table (default 1024). When the table is full, expired sessions are
+        cleaned up first, then the oldest unestablished session is evicted;
+        a new peer is rejected when every session is established.
 
 **Returns**: A DTLS server object.
 
