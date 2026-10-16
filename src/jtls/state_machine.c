@@ -230,6 +230,27 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
 }
 
 /*============================================================================
+ * HELPER: Check for buffered TLS record data
+ *============================================================================
+ * True while record bytes are still held ahead of the socket: the BIO's
+ * read-ahead buffer first, then the SSL library's own buffer. The read
+ * loops stop at this boundary - one more SSL_read past the last buffered
+ * record forces a kernel read of an empty socket that can only come back
+ * with EAGAIN. LibreSSL has no SSL_has_pending; its SSL_pending reports
+ * the same buffered-record state.
+ */
+static inline int jtls_has_buffered_data(TLSStream *tls) {
+    if (tls->bio_ahead.p < tls->bio_ahead.pe) {
+        return 1;
+    }
+#if JSEC_LIBRESSL
+    return SSL_pending(tls->ssl) > 0;
+#else
+    return SSL_has_pending(tls->ssl);
+#endif
+}
+
+/*============================================================================
  * PROCESS TLS OPERATION
  *============================================================================
  * Perform a single step of the TLS operation and determine what to do next.
@@ -298,9 +319,10 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * We read as much as available up to the requested amount.
          * If bytes_requested < 0, we read whatever is available.
          *
-         * Key: We keep calling SSL_read until we get WANT_READ, not just
-         * until SSL_pending returns 0. SSL_pending only shows buffered data,
-         * but the socket may have more TLS records ready to read.
+         * Key: each SSL_read decrypts one buffered TLS record. The loop
+         * ends at the caller's request size or at the drain of the
+         * buffered records - one more SSL_read past the drain would force
+         * a kernel read of an empty socket.
          */
         case TLS_OP_READ: {
             while (1) {
@@ -329,13 +351,15 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     check_record_handshake_time(tls);
                     state->user_buf->count += ret;
 
-                    /* Check if we've read enough */
-                    if (state->bytes_requested > 0 &&
-                        (state->user_buf->count - state->buf_start) >=
-                            state->bytes_requested) {
+                    /* Complete at the request size or at the drain of
+                     * the buffered records - one more SSL_read would force
+                     * a kernel read of an empty socket */
+                    if ((state->user_buf->count - state->buf_start) >=
+                            state->bytes_requested ||
+                        !jtls_has_buffered_data(tls)) {
                         return TLS_IO_COMPLETE;
                     }
-                    /* Keep reading until WANT_READ */
+                    /* Buffered records remain - coalesce them here */
                 } else {
                     int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
@@ -387,10 +411,11 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
 
-                    /* WANT_READ/WANT_BOTH: retry immediately if we just read
-                     */
+                    /* WANT_READ/WANT_BOTH: retry immediately only while
+                     * buffered records remain - with none left the retry
+                     * is just the redundant EAGAIN read before parking */
                     if (ssl_err == SSL_ERROR_WANT_READ) {
-                        if (just_read_data) {
+                        if (just_read_data && jtls_has_buffered_data(tls)) {
                             just_read_data = 0;
                             continue;
                         }
@@ -399,7 +424,8 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     if (ssl_err == SSL_ERROR_SYSCALL) {
                         if (sock_err == JSEC_EAGAIN ||
                             sock_err == JSEC_EWOULDBLOCK) {
-                            if (just_read_data) {
+                            if (just_read_data &&
+                                jtls_has_buffered_data(tls)) {
                                 just_read_data = 0;
                                 continue;
                             }
@@ -669,12 +695,22 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
      * We must not yield to the event loop if we can satisfy the read locally.
      */
     TLSIOState io_state;
+    int retried = 0;
     do {
         /* Process the operation - calls SSL functions, updates state */
         io_state = jtls_process_operation(state);
 
+        /* Local buffered data can satisfy the read without waiting on
+         * the socket, so retry instead of yielding. The ahead buffer
+         * makes progress on every retry and drains before we park.
+         * OpenSSL-side buffered data earns one retry only: SSL_has_pending
+         * also reports a partially received record that still needs
+         * network bytes, and retrying that state spins without progress.
+         */
         if (io_state == TLS_IO_WANT_READ &&
-            tls->bio_ahead.p < tls->bio_ahead.pe) {
+            jtls_has_buffered_data(tls) &&
+            (tls->bio_ahead.p < tls->bio_ahead.pe || !retried)) {
+            retried = 1;
             continue;
         }
         break;
