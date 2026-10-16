@@ -12,6 +12,12 @@ static int dtls_client_gc(void *p, size_t s) {
     (void)s;
     DTLSClient *client = (DTLSClient *)p;
 
+    /* The flight timer must not touch the client after this point.
+     * GC finalizers cannot schedule and may run after the teardown
+     * sweep has freed the helper fiber, so the disarm only marks the
+     * arm canceled and the wake step retires it. */
+    dtls_flight_timer_disarm(&client->flight_timer, 1);
+
     if (client->ssl) {
         SSL_free(client->ssl);
         client->ssl = NULL;

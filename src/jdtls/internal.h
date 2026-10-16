@@ -139,6 +139,39 @@ void dtls_address_set_port(DTLSAddress *addr, uint16_t port);
 
 /*
  * =============================================================================
+ * DTLS Flight Timer (handshake retransmission)
+ * =============================================================================
+ * While a DTLS handshake is pending, the flight timer drives
+ * DTLSv1_handle_timeout() when the peer goes silent before the flight is
+ * acknowledged, and flushes the retransmitted flight to the UDP socket.
+ * A timer arm is owned by exactly one DTLSClient or DTLSSession slot and
+ * is disarmed before that owner's memory is freed.
+ */
+
+typedef struct DTLSFlightTimer DTLSFlightTimer;
+
+/* Flush the retransmitted flight for owner to transport */
+typedef void (*DTLSFlightFlushFn)(void *owner, JanetStream *transport);
+
+/* Compile the helper-fiber boot body once at module load and root it in
+ * module-level state. Must run before the first dtls_flight_timer_arm. */
+void jdtls_flight_timer_init(JanetTable *env);
+
+/* Query DTLSv1_get_timeout and schedule the flight timer for a pending
+ * handshake. Re-arms (or retires) any timer already in *slot. No-op with
+ * the slot retired when OpenSSL has no retransmission scheduled. */
+void dtls_flight_timer_arm(DTLSFlightTimer **slot, SSL *ssl, void *owner,
+                           JanetStream *transport, DTLSFlightFlushFn flush);
+
+/* Retire the timer in *slot, if any, without waiting out its interval.
+ * in_gc must be set when called from a GC finalizer, where the arm is
+ * only marked canceled and cleared so the wake step retires it (the
+ * helper fiber is never dereferenced there); otherwise the helper
+ * fiber is woken to retire the arm at once. */
+void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc);
+
+/*
+ * =============================================================================
  * DTLSSession - Per-peer session (used by DTLSServer)
  * =============================================================================
  * Represents a single DTLS session with a specific peer.
@@ -156,6 +189,7 @@ typedef struct DTLSSession {
     uint64_t rec_seq_off;     /* Record sequence alignment: constant
                                * offset added to outbound epoch-0 record
                                * headers (RFC 6347 section 4.2.1) */
+    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
     struct DTLSSession *next; /* For linked list in hash bucket */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
@@ -184,6 +218,7 @@ typedef struct {
     BIO *wbio;             /* Memory BIO: SSL writes, we sendto() */
     DTLSState state;       /* Connection state */
     DTLSAddress peer_addr; /* Server address (for reference) */
+    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
     int closed;            /* Client has been closed */
     int owns_ctx;          /* Whether we own ctx (should free on GC) */
     int is_server;         /* Whether acting as server (for upgrade) */
@@ -260,7 +295,7 @@ typedef struct {
 
 /* Session lifecycle */
 DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer);
-void dtls_session_free(DTLSSession *session);
+void dtls_session_free(DTLSSession *session, int in_gc);
 
 /* Server operations */
 DTLSSession *dtls_server_get_session(DTLSServer *server,

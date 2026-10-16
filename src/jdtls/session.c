@@ -81,8 +81,11 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
  * Free a DTLS session.
  * SSL_free also frees the BIOs since they're attached.
  */
-void dtls_session_free(DTLSSession *session) {
+void dtls_session_free(DTLSSession *session, int in_gc) {
     if (!session) return;
+
+    /* The flight timer must not touch the session after this point. */
+    dtls_flight_timer_disarm(&session->flight_timer, in_gc);
 
     if (session->ssl) {
         /* SSL_free frees the attached BIOs too */
@@ -154,7 +157,7 @@ void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr) {
         DTLSSession *session = *pp;
         if (dtls_address_equal(&session->peer_addr, addr)) {
             *pp = session->next;
-            dtls_session_free(session);
+            dtls_session_free(session, 0);
             server->session_count--;
             return;
         }
@@ -177,7 +180,7 @@ void dtls_server_cleanup_expired(DTLSServer *server, double now) {
             if (age > server->session_timeout) {
                 /* Remove expired session */
                 *pp = session->next;
-                dtls_session_free(session);
+                dtls_session_free(session, 0);
                 server->session_count--;
             } else {
                 pp = &session->next;
