@@ -57,7 +57,10 @@ Janet cfun_dtls_get_cipher_bits(int32_t argc, Janet *argv) {
         return janet_wrap_nil();
     }
 
-    int bits = SSL_get_cipher_bits(client->ssl, NULL);
+    const SSL_CIPHER *cipher = SSL_get_current_cipher(client->ssl);
+    if (!cipher) return janet_wrap_nil();
+
+    int bits = SSL_CIPHER_get_bits(cipher, NULL);
     return janet_wrap_integer(bits);
 }
 
@@ -73,6 +76,8 @@ Janet cfun_dtls_get_connection_info(int32_t argc, Janet *argv) {
     if (!client->ssl || client->state != DTLS_STATE_ESTABLISHED) {
         return janet_wrap_nil();
     }
+
+    if (!SSL_get_current_cipher(client->ssl)) return janet_wrap_nil();
 
     JanetKV *kv = janet_struct_begin(4);
 

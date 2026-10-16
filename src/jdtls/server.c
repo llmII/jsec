@@ -926,6 +926,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         }
         session = dtls_server_create_session(server, peer_addr);
         if (!session) {
+            ERR_clear_error();
             return janet_wrap_nil(); /* Out of memory or other error */
         }
         session->cookie_verified = 1;
@@ -942,6 +943,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
     /* Feed incoming data to SSL via memory BIO (the verified resend is
      * already consumed by dtls_server_admit_resend) */
     if (!fresh && BIO_write(session->rbio, data, datalen) <= 0) {
+        ERR_clear_error();
         return janet_wrap_nil();
     }
 
@@ -961,6 +963,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
                 ERR_clear_error();
                 /* Handshake failed - clean up */
                 dtls_server_remove_session(server, peer_addr);
+                ERR_clear_error();
                 return janet_wrap_nil();
             }
         }

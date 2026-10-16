@@ -91,14 +91,16 @@ static const JanetReg client_cfuns[] = {
      "Get the cipher suite name."},
     {"cipher-bits", cfun_dtls_get_cipher_bits,
      "(:cipher-bits client)\n\n"
-     "Get the cipher strength in bits."},
+     "Get the cipher strength in bits.\n"
+     "Returns nil when no cipher is active."},
     {"connection-info", cfun_dtls_get_connection_info,
      "(:connection-info client)\n\n"
      "Get all connection info as a struct with keys:\n"
      "  :version - Protocol version string\n"
      "  :cipher - Cipher suite name\n"
      "  :cipher-bits - Cipher strength in bits\n"
-     "  :alpn - Negotiated ALPN protocol or nil"},
+     "  :alpn - Negotiated ALPN protocol or nil\n"
+     "Returns nil when no cipher is active."},
     {"get-peer-cert", cfun_dtls_get_peer_cert,
      "(get-peer-cert client)\n\n"
      "Export the peer certificate as an immutable X.509 DER byte "
