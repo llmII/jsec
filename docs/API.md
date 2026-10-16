@@ -1451,7 +1451,7 @@ Export a private key, optionally encrypting it.
 -   **key-pem**: Key in PEM format
 -   **opts**: Optional table
     -   `:password` - Password for encryption
-    -   `:cipher` - Encryption cipher (`:aes-256-cbc`, `:aes-128-cbc`, `:des-ede3-cbc`)
+    -   `:cipher` - Encryption cipher (`:aes-256-cbc`, `:aes-128-cbc`)
 
 **Returns**: Key in PEM format.
 

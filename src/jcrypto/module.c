@@ -244,8 +244,7 @@ static const JanetReg cfuns[] = {
      "Options:\n"
      "  :password - password for encryption (if not provided, key is "
      "unencrypted)\n"
-     "  :cipher - encryption cipher (:aes-256-cbc, :aes-128-cbc, "
-     ":des-ede3-cbc)\n"
+     "  :cipher - encryption cipher (:aes-256-cbc, :aes-128-cbc)\n"
      "            Default is :aes-256-cbc\n"
      "Returns PEM format key."},
     {"key-info", cfun_key_info,
