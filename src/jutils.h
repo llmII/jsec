@@ -218,6 +218,7 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
  *   :session-cache - Boolean, cache sessions (default true)
  *   :session-tickets - Boolean, stateless session tickets (default true)
  *   :session-cache-size - Number, maximum cached sessions (default 1000)
+ *   :ocsp-stapling - Arm OCSP response stapling on server contexts
  * A non-dictionary opts value is rejected: jutils_validate_security_options
  * raises a parameter error before any SSL_CTX exists.
  */

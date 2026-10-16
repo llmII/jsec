@@ -120,6 +120,7 @@ void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
  *   :session-cache - Boolean, cache sessions (default true)
  *   :session-tickets - Boolean, stateless session tickets (default true)
  *   :session-cache-size - Number, maximum cached sessions (default 1000)
+ *   :ocsp-stapling - Arm OCSP response stapling on server contexts
  *
  * The container contract is one for both parser sites (this function and
  * apply_session_options in src/jtls/context/server.c): nil, table, or

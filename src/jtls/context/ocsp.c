@@ -25,11 +25,15 @@ int jtls_ocsp_status_cb(SSL *ssl, void *arg) {
     }
 
     if (ocsp && ocsp->data) {
-        /* OpenSSL takes ownership, so we must copy */
+        /* OpenSSL takes ownership only when the response attaches, so
+         * the copy is still ours to free on failure */
         unsigned char *p = OPENSSL_malloc((size_t)ocsp->len);
         if (p) {
             memcpy(p, ocsp->data, (size_t)ocsp->len);
-            SSL_set_tlsext_status_ocsp_resp(ssl, p, ocsp->len);
+            if (SSL_set_tlsext_status_ocsp_resp(ssl, p, ocsp->len) <= 0) {
+                OPENSSL_free(p);
+                return SSL_TLSEXT_ERR_NOACK;
+            }
             return SSL_TLSEXT_ERR_OK;
         }
     }
