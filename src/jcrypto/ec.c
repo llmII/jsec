@@ -75,6 +75,43 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
                            (const char *)curve_kw);
     }
 
+    /* Extract the optional point's coordinates BEFORE any OpenSSL
+       allocation, so a bad coordinate raises with nothing held */
+    JanetByteView x_bv = {0};
+    JanetByteView y_bv = {0};
+    int have_point = 0;
+
+    if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
+        JanetTable *point_table = NULL;
+        JanetStruct point_struct = NULL;
+
+        if (janet_checktype(argv[2], JANET_TABLE)) {
+            point_table = janet_unwrap_table(argv[2]);
+        } else if (janet_checktype(argv[2], JANET_STRUCT)) {
+            point_struct = janet_unwrap_struct(argv[2]);
+        } else {
+            crypto_panic_param("point must be a table with :x and :y keys");
+        }
+
+        Janet x_val =
+            point_table
+                ? janet_table_get(point_table, janet_ckeywordv("x"))
+                : janet_struct_get(point_struct, janet_ckeywordv("x"));
+        Janet y_val =
+            point_table
+                ? janet_table_get(point_table, janet_ckeywordv("y"))
+                : janet_struct_get(point_struct, janet_ckeywordv("y"));
+
+        if (janet_checktype(x_val, JANET_NIL) ||
+            janet_checktype(y_val, JANET_NIL)) {
+            crypto_panic_param("point requires both :x and :y coordinates");
+        }
+
+        x_bv = janet_getbytes(&x_val, 0);
+        y_bv = janet_getbytes(&y_val, 0);
+        have_point = 1;
+    }
+
     /* Create EC group */
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
     if (!group) {
@@ -99,42 +136,8 @@ Janet cfun_ec_point_mul(int32_t argc, Janet *argv) {
     EC_POINT *base_point = NULL;
     int free_base = 0;
 
-    if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
-        /* Parse provided point */
-        JanetTable *point_table = NULL;
-        JanetStruct point_struct = NULL;
-
-        if (janet_checktype(argv[2], JANET_TABLE)) {
-            point_table = janet_unwrap_table(argv[2]);
-        } else if (janet_checktype(argv[2], JANET_STRUCT)) {
-            point_struct = janet_unwrap_struct(argv[2]);
-        } else {
-            BN_free(scalar);
-            BN_CTX_free(ctx);
-            EC_GROUP_free(group);
-            crypto_panic_param("point must be a table with :x and :y keys");
-        }
-
-        Janet x_val =
-            point_table
-                ? janet_table_get(point_table, janet_ckeywordv("x"))
-                : janet_struct_get(point_struct, janet_ckeywordv("x"));
-        Janet y_val =
-            point_table
-                ? janet_table_get(point_table, janet_ckeywordv("y"))
-                : janet_struct_get(point_struct, janet_ckeywordv("y"));
-
-        if (janet_checktype(x_val, JANET_NIL) ||
-            janet_checktype(y_val, JANET_NIL)) {
-            BN_free(scalar);
-            BN_CTX_free(ctx);
-            EC_GROUP_free(group);
-            crypto_panic_param("point requires both :x and :y coordinates");
-        }
-
-        JanetByteView x_bv = janet_getbytes(&x_val, 0);
-        JanetByteView y_bv = janet_getbytes(&y_val, 0);
-
+    if (have_point) {
+        /* Build the provided point from the extracted coordinates */
         BIGNUM *x = BN_bin2bn(x_bv.bytes, (int)x_bv.len, NULL);
         BIGNUM *y = BN_bin2bn(y_bv.bytes, (int)y_bv.len, NULL);
 
@@ -266,6 +269,34 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported curve: %s", (const char *)curve_kw);
     }
 
+    /* Extract both points' coordinates BEFORE any OpenSSL allocation,
+       so a bad coordinate raises with nothing held */
+    JanetByteView x_bv[2];
+    JanetByteView y_bv[2];
+
+    for (int i = 0; i < 2; i++) {
+        Janet point_val = argv[i + 1];
+
+        JanetTable *pt = NULL;
+        JanetStruct ps = NULL;
+        if (janet_checktype(point_val, JANET_TABLE)) {
+            pt = janet_unwrap_table(point_val);
+        } else if (janet_checktype(point_val, JANET_STRUCT)) {
+            ps = janet_unwrap_struct(point_val);
+        } else {
+            crypto_panic_param("point %d must be a table with :x and :y",
+                               i + 1);
+        }
+
+        Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
+                         : janet_struct_get(ps, janet_ckeywordv("x"));
+        Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
+                         : janet_struct_get(ps, janet_ckeywordv("y"));
+
+        x_bv[i] = janet_getbytes(&x_val, 0);
+        y_bv[i] = janet_getbytes(&y_val, 0);
+    }
+
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
     if (!group) crypto_panic_ssl("failed to create EC group");
 
@@ -275,7 +306,7 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
         crypto_panic_resource("failed to create BN context");
     }
 
-    /* Parse both points */
+    /* Allocate both points */
     EC_POINT *p1 = EC_POINT_new(group);
     EC_POINT *p2 = EC_POINT_new(group);
     EC_POINT *result = EC_POINT_new(group);
@@ -289,37 +320,12 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
         crypto_panic_resource("failed to allocate points");
     }
 
-    /* Helper to parse point from Janet */
+    /* Set coordinates on both points from the extracted byte views */
     for (int i = 0; i < 2; i++) {
         EC_POINT *target = (i == 0) ? p1 : p2;
-        Janet point_val = argv[i + 1];
 
-        JanetTable *pt = NULL;
-        JanetStruct ps = NULL;
-        if (janet_checktype(point_val, JANET_TABLE)) {
-            pt = janet_unwrap_table(point_val);
-        } else if (janet_checktype(point_val, JANET_STRUCT)) {
-            ps = janet_unwrap_struct(point_val);
-        } else {
-            EC_POINT_free(p1);
-            EC_POINT_free(p2);
-            EC_POINT_free(result);
-            BN_CTX_free(ctx);
-            EC_GROUP_free(group);
-            crypto_panic_param("point %d must be a table with :x and :y",
-                               i + 1);
-        }
-
-        Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
-                         : janet_struct_get(ps, janet_ckeywordv("x"));
-        Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
-                         : janet_struct_get(ps, janet_ckeywordv("y"));
-
-        JanetByteView x_bv = janet_getbytes(&x_val, 0);
-        JanetByteView y_bv = janet_getbytes(&y_val, 0);
-
-        BIGNUM *x = BN_bin2bn(x_bv.bytes, (int)x_bv.len, NULL);
-        BIGNUM *y = BN_bin2bn(y_bv.bytes, (int)y_bv.len, NULL);
+        BIGNUM *x = BN_bin2bn(x_bv[i].bytes, (int)x_bv[i].len, NULL);
+        BIGNUM *y = BN_bin2bn(y_bv[i].bytes, (int)y_bv[i].len, NULL);
 
         int ok = EC_POINT_set_affine_coordinates(group, target, x, y, ctx);
         BN_free(x);
@@ -412,6 +418,26 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
     if (nid == 0)
         crypto_panic_param("unsupported curve: %s", (const char *)curve_kw);
 
+    /* Parse the point BEFORE any OpenSSL allocation, so a bad
+       coordinate raises with nothing held */
+    JanetTable *pt = NULL;
+    JanetStruct ps = NULL;
+    if (janet_checktype(argv[1], JANET_TABLE)) {
+        pt = janet_unwrap_table(argv[1]);
+    } else if (janet_checktype(argv[1], JANET_STRUCT)) {
+        ps = janet_unwrap_struct(argv[1]);
+    } else {
+        crypto_panic_param("point must be a table with :x and :y");
+    }
+
+    Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
+                     : janet_struct_get(ps, janet_ckeywordv("x"));
+    Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
+                     : janet_struct_get(ps, janet_ckeywordv("y"));
+
+    JanetByteView x_bv = janet_getbytes(&x_val, 0);
+    JanetByteView y_bv = janet_getbytes(&y_val, 0);
+
     EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
     if (!group) crypto_panic_ssl("failed to create EC group");
 
@@ -424,28 +450,6 @@ Janet cfun_ec_point_to_bytes(int32_t argc, Janet *argv) {
         EC_GROUP_free(group);
         crypto_panic_resource("out of memory");
     }
-
-    /* Parse point */
-    JanetTable *pt = NULL;
-    JanetStruct ps = NULL;
-    if (janet_checktype(argv[1], JANET_TABLE)) {
-        pt = janet_unwrap_table(argv[1]);
-    } else if (janet_checktype(argv[1], JANET_STRUCT)) {
-        ps = janet_unwrap_struct(argv[1]);
-    } else {
-        EC_POINT_free(point);
-        BN_CTX_free(ctx);
-        EC_GROUP_free(group);
-        crypto_panic_param("point must be a table with :x and :y");
-    }
-
-    Janet x_val = pt ? janet_table_get(pt, janet_ckeywordv("x"))
-                     : janet_struct_get(ps, janet_ckeywordv("x"));
-    Janet y_val = pt ? janet_table_get(pt, janet_ckeywordv("y"))
-                     : janet_struct_get(ps, janet_ckeywordv("y"));
-
-    JanetByteView x_bv = janet_getbytes(&x_val, 0);
-    JanetByteView y_bv = janet_getbytes(&y_val, 0);
 
     BIGNUM *x = BN_bin2bn(x_bv.bytes, (int)x_bv.len, NULL);
     BIGNUM *y = BN_bin2bn(y_bv.bytes, (int)y_bv.len, NULL);
