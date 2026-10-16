@@ -70,22 +70,55 @@ const char *jutils_client_setup(SSL *ssl, Janet opts,
         }
     }
 
-    /* :session resumption bytes - attach only when the caller validated
-     * the option shape; deserialize/attach failure semantics stay with the
-     * :session audit, not here */
+    /* :session resumption bytes - attach with the :session audit
+     * contract: an explicit non-nil :session that is not a byte string,
+     * fails to deserialize, or fails to attach is reported through the
+     * returned string (never silently ignored), and the caller raises it
+     * under its own module family with the OpenSSL queue drained. */
     if (!janet_checktype(opts, JANET_NIL)) {
         Janet session_opt = janet_get(opts, janet_ckeywordv("session"));
-        const uint8_t *bytes;
-        int32_t len;
-        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
+        if (!janet_checktype(session_opt, JANET_NIL)) {
+            const uint8_t *bytes;
+            int32_t len;
+            if (!janet_bytes_view(session_opt, &bytes, &len)) {
+                return "session must be a byte string or buffer";
+            }
             const unsigned char *p = bytes;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
-            if (session) {
-                SSL_set_session(ssl, session);
-                SSL_SESSION_free(session);
+            SSL_SESSION *session =
+                (len > 0) ? d2i_SSL_SESSION(NULL, &p, len) : NULL;
+            if (!session) {
+                return "failed to parse session data";
+            }
+            int ret = SSL_set_session(ssl, session);
+            SSL_SESSION_free(session);
+            if (ret != 1) {
+                return "failed to set session";
             }
         }
     }
 
     return NULL;
+}
+
+/*
+ * Raise a jutils_client_setup failure under the caller's module family.
+ * The three :session audit strings raise with their ruled categories and
+ * messages ([mod:PARAM] / [mod:SSL] with the OpenSSL queue drained through
+ * get_ssl_error_string); every other failure names an OpenSSL call and
+ * raises the caller's verify message, as before.
+ */
+void jutils_raise_client_setup(const char *fail, const char *mod) {
+    if (!strcmp(fail, "session must be a byte string or buffer")) {
+        janet_panicf("[%s:PARAM] session must be a byte string or buffer",
+                     mod);
+    }
+    if (!strcmp(fail, "failed to parse session data")) {
+        janet_panicf("[%s:SSL] failed to parse session data: %s", mod,
+                     get_ssl_error_string());
+    }
+    if (!strcmp(fail, "failed to set session")) {
+        janet_panicf("[%s:SSL] failed to set session: %s", mod,
+                     get_ssl_error_string());
+    }
+    janet_panicf("[%s:VERIFY] client SSL setup failed in %s", mod, fail);
 }

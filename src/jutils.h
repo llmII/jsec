@@ -171,11 +171,20 @@ void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca);
  * IP literal - RFC 6066 section 3), bind certificate name verification
  * (:verify-hostname wins over the client name) when verify is set, and
  * attach :session resumption bytes. Every OpenSSL return is checked
- * (E-20, E-21, E-22). Returns NULL on success, else a static string naming
- * the failed OpenSSL call; the caller raises with its own module's panic
- * family. */
+ * (E-20, E-21, E-22). Returns NULL on success, else a static string
+ * naming the failure: either the failed OpenSSL call, or one of the
+ * :session audit strings "session must be a byte string or buffer",
+ * "failed to parse session data", "failed to set session". The caller
+ * raises with its own module's panic family - jutils_raise_client_setup
+ * maps every string to the ruled raise. */
 const char *jutils_client_setup(SSL *ssl, Janet opts,
                                 const char *positional_host, int verify);
+
+/* Raise a jutils_client_setup failure string under the caller's module
+ * family: the :session audit strings raise their ruled [mod:PARAM] /
+ * [mod:SSL] messages (queue drained), anything else raises the
+ * [mod:VERIFY] client SSL setup message. Never returns. */
+void jutils_raise_client_setup(const char *fail, const char *mod);
 
 /*============================================================================
  * PUBLIC API - Low-level Memory Loading

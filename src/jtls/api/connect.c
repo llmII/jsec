@@ -391,7 +391,7 @@ common_setup:
         const char *fail =
             jutils_client_setup(tls->ssl, opts, hostname, verify);
         if (fail) {
-            tls_panic_verify("client SSL setup failed in %s", fail);
+            jutils_raise_client_setup(fail, JSEC_MOD_TLS);
         }
     }
 
@@ -670,6 +670,53 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             TLSStream *tls =
                 jtls_setup_stream(stream, ctx, 0, owns_ctx, buffer_size,
                                   tcp_nodelay, track_handshake_time);
+
+            /* Attach an explicit non-nil :session before any handshake
+             * flight, with the shared wrap site's contract: corrupt or
+             * unattachable session data cancels with [TLS:SSL] failed to
+             * parse/set session data instead of being silently ignored. */
+            if (!janet_checktype(opts, JANET_NIL)) {
+                Janet session_opt =
+                    janet_get(opts, janet_ckeywordv("session"));
+                if (!janet_checktype(session_opt, JANET_NIL)) {
+                    const uint8_t *bytes;
+                    int32_t len;
+                    char sess_err[600];
+                    sess_err[0] = '\0';
+                    if (!janet_bytes_view(session_opt, &bytes, &len)) {
+                        snprintf(sess_err, sizeof(sess_err),
+                                 "[TLS:PARAM] session must be a byte string "
+                                 "or buffer");
+                    } else {
+                        const unsigned char *der_ptr = bytes;
+                        SSL_SESSION *session =
+                            (len > 0) ? d2i_SSL_SESSION(NULL, &der_ptr, len)
+                                      : NULL;
+                        if (!session) {
+                            snprintf(sess_err, sizeof(sess_err),
+                                     "[TLS:SSL] failed to parse session "
+                                     "data: %s",
+                                     get_ssl_error_string());
+                        } else {
+                            int sess_ret = SSL_set_session(tls->ssl, session);
+                            SSL_SESSION_free(session);
+                            if (sess_ret != 1) {
+                                snprintf(sess_err, sizeof(sess_err),
+                                         "[TLS:SSL] failed to set session: "
+                                         "%s",
+                                         get_ssl_error_string());
+                            }
+                        }
+                    }
+                    if (sess_err[0] != '\0') {
+                        janet_free(hostname);
+                        stream->flags |= JANET_STREAM_TOCLOSE;
+                        janet_cancel(fiber, janet_cstringv(sess_err));
+                        janet_async_end(fiber);
+                        return;
+                    }
+                }
+            }
 
             /* Per-connection :ocsp-stapling arms the status request on
              * the connection itself, which is the only lever when the

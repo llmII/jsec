@@ -294,7 +294,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         const char *fail =
             jutils_client_setup(client->ssl, opts, host, verify);
         if (fail) {
-            dtls_panic_verify("client SSL setup failed in %s", fail);
+            jutils_raise_client_setup(fail, JSEC_MOD_DTLS);
         }
     }
 
