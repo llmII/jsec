@@ -758,7 +758,9 @@ Generate a new certificate (key + cert in one step).
 -   **opts**: Optional table.
     -   `:common-name` - Certificate common name. **Required**.
     -   `:san` - Subject Alternative Names array (e.g., `["DNS:example.com" "IP:1.2.3.4"]`).
-    -   `:days-valid` - Validity period (default 365).
+    -   `:days-valid` - Validity period (default 365; the window end used when no `:not-after` is given).
+    -   `:not-before` - Validity start (Unix timestamp seconds; defaults to the signing time).
+    -   `:not-after` - Validity end (Unix timestamp seconds; must be later than the start).
     -   `:key-type` - Key type (default `:ec-p256`).
     -   `:extended-key-usage` - e.g., "serverAuth", "clientAuth".
     -   `:key-usage` - Override key usage extension.
@@ -775,10 +777,14 @@ Sign a Certificate Signing Request.
 -   **ca**: CA object.
 -   **csr-pem**: CSR in PEM format.
 -   **opts**: Optional table.
-    -   `:days-valid` - Validity period (default 365).
+    -   `:days-valid` - Validity period (default 365; the window end used when no `:not-after` is given).
+    -   `:not-before` - Validity start (Unix timestamp seconds; defaults to the signing time).
+    -   `:not-after` - Validity end (Unix timestamp seconds; must be later than the start).
     -   `:serial` - Override serial number.
     -   `:copy-extensions` - Copy extensions from CSR (default `false`).
+    -   `:key-usage` - Key usage extension (e.g., `"keyCertSign,cRLSign"`).
     -   `:extended-key-usage` - Extended key usage.
+    -   `:basic-constraints` - Basic constraints (e.g., `"CA:FALSE"`, the default).
     -   `:san` - Subject Alternative Names.
 
 **Returns**: Certificate in PEM format.
@@ -1171,16 +1177,40 @@ Sign data using CMS (Cryptographic Message Syntax).
 **Returns**: CMS signed data (DER or PEM based on input).
 
 
-### (crypto/cms-verify cms-data &opt opts)
+### (crypto/cms-verify cms-data &opt trusted-certs detached-data)
 
-Verify a CMS signature.
 
--   **cms-data**: CMS signed data
--   **opts**: Optional table
-    -   `:ca`: CA certificate for verification
-    -   `:detached`: Original data if signature is detached
+### (crypto/cms-verify cms-data opts)
 
-**Returns**: Table `{:valid true/false :content data :certs [...]}`
+Verify a CMS signature and report a structured verdict. A
+cryptographic or X.509 verification failure never raises - it returns
+`:valid false` with `:error` and `:error-code` filled in. Malformed
+inputs (invalid CMS DER, unparseable trusted certificates, wrong
+argument types) raise.
+
+-   **cms-data**: CMS signed data (DER)
+-   **trusted-certs**: Trusted certificates for the signer chain: a PEM
+    string or buffer, or an array or tuple of PEM strings or buffers
+-   **detached-data**: Content covered by a detached signature
+-   **opts**: Optional table or struct
+    -   `:ca`: Trusted certificates (PEM string or buffer, array, or tuple)
+    -   `:trusted-cert`: Alias for `:ca`; when both are given both load
+    -   `:verify-certs`: Boolean, default `true`. When true the signer
+        certificate chain must verify against the trusted certificates for
+        `:valid true`; with no trusted certificates supplied the verdict is
+        `:valid false` with `:error "no trusted certificates provided"`.
+        When false only the cryptographic signature is checked, the
+        self-signed inspection posture where the caller verifies the signer
+        certificate out-of-band (e.g. SCEP initial enrollment)
+
+**Returns**: Table with:
+
+-   `:valid`: Boolean verdict under the requested posture
+-   `:content`: Verified content string, or nil when not valid
+-   `:signers`: Array of signer certificates in PEM format
+-   `:certs`: Array of certificates carried in the message, in PEM format
+-   `:error`: Failure reason string, or nil when valid
+-   `:error-code`: OpenSSL reason code number, or nil when valid
 
 
 ### (crypto/cms-encrypt data certs &opt opts)

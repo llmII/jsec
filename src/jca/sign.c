@@ -72,6 +72,84 @@ static void strip_extension(X509 *cert, int nid) {
     }
 }
 
+/* True when the Unix timestamp in seconds can be carried by an ASN1_TIME. */
+static int unix_time_fits_asn1(time_t ts) {
+    ASN1_TIME *t = ASN1_TIME_set(NULL, ts);
+    if (!t) {
+        return 0;
+    }
+    ASN1_TIME_free(t);
+    return 1;
+}
+
+/* Resolve the requested validity window from :not-before / :not-after (Unix
+ * timestamps in seconds) and :days-valid. Returns 1 with begin/end set when
+ * either option was given, 0 when the caller should stamp the default
+ * signing-time window. A timestamp pair that does not fit an ASN1_TIME and a
+ * window whose end is not later than its start raise [CA:PARAM] before
+ * anything is issued. */
+static int ca_resolve_validity_window(Janet opts, int days_valid,
+                                      time_t *begin, time_t *end) {
+    int has_begin = 0;
+    int has_end = 0;
+    time_t b = 0;
+    time_t e = 0;
+
+    if (ca_opts_valid(opts)) {
+        Janet v = ca_opts_get(opts, "not-before");
+        if (!janet_checktype(v, JANET_NIL)) {
+            if (!janet_checkint64(v)) {
+                ca_panic_param(
+                    ":not-before must be an integer Unix timestamp");
+            }
+            b = (time_t)janet_unwrap_s64(v);
+            has_begin = 1;
+        }
+        v = ca_opts_get(opts, "not-after");
+        if (!janet_checktype(v, JANET_NIL)) {
+            if (!janet_checkint64(v)) {
+                ca_panic_param(
+                    ":not-after must be an integer Unix timestamp");
+            }
+            e = (time_t)janet_unwrap_s64(v);
+            has_end = 1;
+        }
+    }
+
+    if (!has_begin && !has_end) {
+        return 0;
+    }
+    if (!has_begin) {
+        b = time(NULL);
+    }
+    if (!has_end) {
+        e = b + (time_t)days_valid * 24 * 60 * 60;
+    }
+    if (e <= b) {
+        ca_panic_param(":not-after must be later than :not-before");
+    }
+    if (!unix_time_fits_asn1(b) || !unix_time_fits_asn1(e)) {
+        ca_panic_param("validity window timestamp out of range");
+    }
+    *begin = b;
+    *end = e;
+    return 1;
+}
+
+/* Stamp the resolved validity window onto the certificate. Returns 0 on
+ * OpenSSL failure, leaving the error queue to the caller's raise. */
+static int ca_set_validity_window(X509 *cert, time_t begin, time_t end) {
+    ASN1_TIME *nb = ASN1_TIME_set(NULL, begin);
+    ASN1_TIME *na = ASN1_TIME_set(NULL, end);
+    int ok = 0;
+    if (nb && na) {
+        ok = X509_set1_notBefore(cert, nb) && X509_set1_notAfter(cert, na);
+    }
+    ASN1_TIME_free(nb);
+    ASN1_TIME_free(na);
+    return ok;
+}
+
 /*
  * =============================================================================
  * :sign-csr / ca/sign - Sign a CSR
@@ -83,9 +161,13 @@ static void strip_extension(X509 *cert, int nid) {
     "(:sign-csr ca csr-pem &opt opts) or (ca/sign ca csr-pem &opt opts)\n\n" \
     "Sign a Certificate Signing Request (CSR) to issue a certificate.\n\n"   \
     "Options:\n"                                                             \
-    "  :days-valid <number>      - Validity period in days (default: 365)\n" \
-    "  :not-before <time>        - Custom start time\n"                      \
-    "  :not-after <time>         - Custom end time\n"                        \
+    "  :days-valid <number>      - Validity period in days (default: 365;\n" \
+    "                              :not-before and :not-after win)\n"        \
+    "  :not-before <time>        - Custom start time (Unix timestamp\n"      \
+    "                              seconds)\n"                               \
+    "  :not-after <time>         - Custom end time (Unix timestamp\n"        \
+    "                              seconds; end must be later than\n"        \
+    "                              start)\n"                                 \
     "  :serial <number>          - Override serial (default: "               \
     "auto-increment)\n"                                                      \
     "  :copy-extensions <bool>   - Copy extensions from CSR (default: "      \
@@ -111,6 +193,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     const char *extended_key_usage = NULL;
     JanetArray *san_arr = NULL;
     const char *basic_constraints = "CA:FALSE";
+    time_t window_begin = 0;
+    time_t window_end = 0;
+    int custom_window = 0;
 
     if (ca_opts_valid(opts)) {
         Janet v = ca_opts_get(opts, "days-valid");
@@ -168,6 +253,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         }
     }
 
+    custom_window = ca_resolve_validity_window(opts, days_valid,
+                                               &window_begin, &window_end);
+
     /* Load CSR */
     X509_REQ *csr = ca_pem_to_csr(csr_pem);
 
@@ -218,19 +306,29 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Set validity */
-    if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
-        X509_free(cert);
-        EVP_PKEY_free(csr_key);
-        X509_REQ_free(csr);
-        ca_panic_ssl("failed to set notBefore");
-    }
-    if (!X509_gmtime_adj(X509_getm_notAfter(cert),
-                         (long)days_valid * 24 * 60 * 60)) {
-        X509_free(cert);
-        EVP_PKEY_free(csr_key);
-        X509_REQ_free(csr);
-        ca_panic_ssl("failed to set notAfter");
+    /* Set validity: the :not-before / :not-after window when requested,
+     * else the signing time through :days-valid seconds */
+    if (custom_window) {
+        if (!ca_set_validity_window(cert, window_begin, window_end)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set certificate validity window");
+        }
+    } else {
+        if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set notBefore");
+        }
+        if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                            (long)days_valid * 24 * 60 * 60)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set notAfter");
+        }
     }
 
     /* Copy subject from CSR */
@@ -384,7 +482,13 @@ static const char *cfun_ca_issue_docstring =
     "Options:\n"
     "  :common-name <string>     - Certificate common name (required)\n"
     "  :san [\"DNS:...\" ...]    - Subject Alternative Names\n"
-    "  :days-valid <number>      - Validity period (default: 365)\n"
+    "  :days-valid <number>      - Validity period (default: 365;\n"
+    "                              :not-before and :not-after win)\n"
+    "  :not-before <time>        - Custom start time (Unix timestamp\n"
+    "                              seconds)\n"
+    "  :not-after <time>         - Custom end time (Unix timestamp\n"
+    "                              seconds; end must be later than\n"
+    "                              start)\n"
     "  :key-type <keyword>       - Key type (default: :ec-p256)\n"
     "  :key-usage <string>       - Key usage extension\n"
     "  :extended-key-usage <string> - e.g., \"serverAuth\"\n"
@@ -407,6 +511,9 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     const char *extended_key_usage = NULL;
     const char *organization = NULL;
     const char *country = NULL;
+    time_t window_begin = 0;
+    time_t window_end = 0;
+    int custom_window = 0;
 
     if (ca_opts_valid(opts)) {
         Janet v = ca_opts_get(opts, "common-name");
@@ -477,6 +584,9 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
         ca_panic_param(":common-name is required for ca/issue");
     }
 
+    custom_window = ca_resolve_validity_window(opts, days_valid,
+                                               &window_begin, &window_end);
+
     /* Generate keypair */
     EVP_PKEY *key = ca_generate_keypair(key_type);
 
@@ -502,17 +612,26 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
         ca_panic_ssl("failed to set random serial");
     }
 
-    /* Set validity */
-    if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        ca_panic_ssl("failed to set notBefore");
-    }
-    if (!X509_gmtime_adj(X509_getm_notAfter(cert),
-                         (long)days_valid * 24 * 60 * 60)) {
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        ca_panic_ssl("failed to set notAfter");
+    /* Set validity: the :not-before / :not-after window when requested,
+     * else the signing time through :days-valid seconds */
+    if (custom_window) {
+        if (!ca_set_validity_window(cert, window_begin, window_end)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set certificate validity window");
+        }
+    } else {
+        if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set notBefore");
+        }
+        if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                            (long)days_valid * 24 * 60 * 60)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set notAfter");
+        }
     }
 
     /* Set subject name */
