@@ -1368,7 +1368,6 @@ Encrypt data with RSA public key.
         -   `:oaep-sha384`
         -   `:oaep-sha512`
         -   `:oaep-sha1` (legacy)
-        -   `:pkcs1` (legacy, NOT recommended)
 
 **Returns**: Encrypted ciphertext buffer.
 
