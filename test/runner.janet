@@ -91,5 +91,4 @@
   :categories {:unit "../suites/unit"
                :coverage "../suites/coverage"
                :regression "../suites/regression"
-               :integration "../suites/integration"
                :performance "../suites/performance"})
