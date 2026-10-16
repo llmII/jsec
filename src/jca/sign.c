@@ -193,7 +193,12 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Set version to v3 */
-    X509_set_version(cert, 2);
+    if (!X509_set_version(cert, 2)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set certificate version");
+    }
 
     /* Set serial number: explicit :serial override, else fresh random of at
      * least 64 bits of entropy (issuance no longer walks the counter) */
@@ -205,22 +210,52 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
             ca_panic_ssl("failed to set random serial");
         }
     } else {
-        ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+        if (!ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set serial number");
+        }
     }
 
     /* Set validity */
-    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert),
-                    (long)days_valid * 24 * 60 * 60);
+    if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set notBefore");
+    }
+    if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                         (long)days_valid * 24 * 60 * 60)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set notAfter");
+    }
 
     /* Copy subject from CSR */
-    X509_set_subject_name(cert, X509_REQ_get_subject_name(csr));
+    if (!X509_set_subject_name(cert, X509_REQ_get_subject_name(csr))) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set subject name");
+    }
 
     /* Set issuer from CA */
-    X509_set_issuer_name(cert, X509_get_subject_name(ca->cert));
+    if (!X509_set_issuer_name(cert, X509_get_subject_name(ca->cert))) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set issuer name");
+    }
 
     /* Set public key from CSR */
-    X509_set_pubkey(cert, csr_key);
+    if (!X509_set_pubkey(cert, csr_key)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set public key");
+    }
 
     /* Copy extensions from CSR if requested */
     if (copy_extensions) {
@@ -453,7 +488,11 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     }
 
     /* Set version to v3 */
-    X509_set_version(cert, 2);
+    if (!X509_set_version(cert, 2)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set certificate version");
+    }
 
     /* Set serial number: fresh random of at least 64 bits of entropy
      * (issuance no longer walks the counter) */
@@ -464,28 +503,56 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     }
 
     /* Set validity */
-    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert),
-                    (long)days_valid * 24 * 60 * 60);
+    if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set notBefore");
+    }
+    if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                         (long)days_valid * 24 * 60 * 60)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set notAfter");
+    }
 
     /* Set subject name */
     X509_NAME *name = X509_get_subject_name(cert);
     if (country) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
-                                   -1, -1, 0);
+        if (!X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+                                        OSSL_STR(country), -1, -1, 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add country entry");
+        }
     }
     if (organization) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                   OSSL_STR(organization), -1, -1, 0);
+        if (!X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                        OSSL_STR(organization), -1, -1, 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add organization entry");
+        }
     }
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               OSSL_STR(common_name), -1, -1, 0);
+    if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                    OSSL_STR(common_name), -1, -1, 0)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add common name entry");
+    }
 
     /* Set issuer from CA */
-    X509_set_issuer_name(cert, X509_get_subject_name(ca->cert));
+    if (!X509_set_issuer_name(cert, X509_get_subject_name(ca->cert))) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set issuer name");
+    }
 
     /* Set public key */
-    X509_set_pubkey(cert, key);
+    if (!X509_set_pubkey(cert, key)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set public key");
+    }
 
     /* Add extensions */
     if (!ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE")) {
