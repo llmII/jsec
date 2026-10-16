@@ -358,6 +358,9 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
 
     /* Create state for accept loop */
     TLSAcceptLoopState *state = janet_malloc(sizeof(TLSAcceptLoopState));
+    if (!state) {
+        tls_panic_io("out of memory");
+    }
     state->ctx = ctx;
     state->owns_ctx = owns_ctx;
     state->handler = handler;
@@ -865,6 +868,9 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
 
     /* Create state for async accept */
     TLSAcceptState *state = janet_malloc(sizeof(TLSAcceptState));
+    if (!state) {
+        tls_panic_io("out of memory");
+    }
     state->ctx = ctx;
     state->owns_ctx = owns_ctx;
     state->buffer_size = buffer_size;
