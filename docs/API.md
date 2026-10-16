@@ -558,7 +558,7 @@ Write a datagram to the connection.
 -   **data**: Data to send (string or buffer)
 -   **timeout**: Optional timeout in seconds
 
-**Returns**: Number of bytes written.
+**Returns**: `nil` on success (matching `tls/write` and `ev/write`).
 
 
 ### (dtls/close client &opt force)

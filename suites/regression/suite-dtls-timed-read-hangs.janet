@@ -263,10 +263,12 @@
     (with-pong-loopback
       (fn [conn]
         # A finite timeout on a completing write is accepted and the
-        # write reports its byte count.
+        # write completes with nil - dtls/write returns nil on success,
+        # matching tls/write and ev/write (ruling 2.2a); this sanity
+        # check used to pin the old byte-count return.
         (def n (:write conn "hello" 0.2))
-        (assert (and (number? n) (pos? n))
-                "a timed write with a live connection must return the byte count")
+        (assert (nil? n)
+                "a timed write with a live connection must return nil on success (tls/write and ev/write return nil)")
 
         # The argument must be consumed and validated like jtls
         # parse_timeout_opt (src/jtls/api/io.c:52-82): a negative

@@ -285,7 +285,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     result = dtls_do_write(client->ssl, view.bytes, view.len,
                                            &nwritten);
                     if (result == DTLS_RESULT_OK) {
-                        retval = janet_wrap_integer(nwritten);
+                        retval = janet_wrap_nil();
                     }
                     break;
                 }
