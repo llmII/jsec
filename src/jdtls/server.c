@@ -36,6 +36,53 @@
  */
 
 /*
+ * Record sequence alignment for sessions admitted through the cookie
+ * gate (RFC 6347 section 4.2.1).
+ *
+ * The verified resend that admits a session carries the wire record
+ * sequence its epoch-0 stream has reached - 1 in a single-round
+ * exchange, larger when a multi-round cookie exchange advanced the
+ * client's counter - and the initial ServerHello MUST echo that
+ * number. The session's own write counter restarts at 1 (the
+ * discarded in-session HelloVerifyRequest consumed sequence 0), so
+ * outbound epoch-0 record headers are rewritten with the constant
+ * offset established at admit time. Epoch-0 handshake records carry
+ * no MAC over the header and the handshake hashes cover message
+ * bodies only, so the rewrite is integrity-neutral. Epoch-1 records
+ * (MAC/AEAD over the sequence number) are never touched, and neither
+ * is handshake message_seq.
+ */
+static void server_align_outbound_records(DTLSSession *session, uint8_t *data,
+                                          int len) {
+    int o = 0;
+    if (session->rec_seq_off == 0) {
+        return;
+    }
+    while (o + 13 <= len) {
+        int rl = (data[o + 11] << 8) | data[o + 12];
+        int end = o + 13 + rl;
+        int epoch;
+        if (end > len) {
+            end = len;
+        }
+        epoch = (data[o + 3] << 8) | data[o + 4];
+        if (epoch == 0) {
+            uint64_t rs = 0;
+            int i;
+            for (i = 5; i < 11; i++) {
+                rs = (rs << 8) | data[o + i];
+            }
+            rs = (rs + session->rec_seq_off) & 0xffffffffffffULL;
+            for (i = 10; i >= 5; i--) {
+                data[o + i] = (uint8_t)(rs & 0xff);
+                rs >>= 8;
+            }
+        }
+        o = end;
+    }
+}
+
+/*
  * Send pending data from session's write BIO to peer.
  * Returns bytes sent, or -1 on error.
  * This consolidates the repeated sendto() pattern.
@@ -56,6 +103,7 @@ static ssize_t send_dtls_packet(JanetStream *transport,
     ssize_t sent = 0;
 
     if (send_len > 0) {
+        server_align_outbound_records(session, send_buf, send_len);
         sent = sendto((jsec_socket_t)transport->handle,
                       (const char *)send_buf, (size_t)send_len, 0,
                       (struct sockaddr *)&session->peer_addr.addr,
@@ -143,13 +191,158 @@ const JanetAbstractType dtls_server_type = {"jsec/dtls-server",
 
 /*
  * =============================================================================
- * Cookie Callbacks for OpenSSL
+ * Cookie Generation and Verification (DoS protection)
  * =============================================================================
+ * A cookie is the canonical endpoint identity of the peer (family, port,
+ * address, scope_id - the identity src/jdtls/address.c compares and
+ * hashes, never raw sockaddr bytes) followed by an HMAC of those fields
+ * under a per-process secret. The HMAC binds the full identity; a resend
+ * verifies when the HMAC holds and the cookie's bound family, address
+ * and scope match the presenting datagram, so a client whose source port
+ * rebinds between flights still passes.
  */
+
+/* Dedicated SSL ex_data index for the peer DTLSAddress. Reserved
+ * index 0 belongs to SSL_set_app_data and must not be clobbered. */
+static int dtls_peer_addr_ex_index = -1;
+
+static unsigned char server_cookie_secret[32];
+static int server_cookie_secret_ready = 0;
+
+static int server_cookie_init_secret(void) {
+    if (!server_cookie_secret_ready) {
+        if (RAND_bytes(server_cookie_secret,
+                       sizeof(server_cookie_secret)) != 1) {
+            return 0;
+        }
+        server_cookie_secret_ready = 1;
+    }
+    return 1;
+}
+
+/* Serialize the canonical endpoint identity fields of addr (family,
+ * port, address, scope_id) into out. Returns the serialized length, or
+ * 0 when the family has no canonical identity. */
+static size_t server_cookie_identity(const DTLSAddress *addr,
+                                     unsigned char *out) {
+    uint32_t fam = htonl((uint32_t)addr->addr.ss_family);
+    size_t n = 0;
+    memcpy(out + n, &fam, sizeof(fam));
+    n += sizeof(fam);
+    if (addr->addr.ss_family == AF_INET) {
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
+        memcpy(out + n, &sin->sin_port, sizeof(sin->sin_port));
+        n += sizeof(sin->sin_port);
+        memcpy(out + n, &sin->sin_addr, sizeof(sin->sin_addr));
+        n += sizeof(sin->sin_addr);
+        return n;
+    }
+    if (addr->addr.ss_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
+        memcpy(out + n, &sin6->sin6_port, sizeof(sin6->sin6_port));
+        n += sizeof(sin6->sin6_port);
+        memcpy(out + n, &sin6->sin6_addr, sizeof(sin6->sin6_addr));
+        n += sizeof(sin6->sin6_addr);
+        memcpy(out + n, &sin6->sin6_scope_id, sizeof(sin6->sin6_scope_id));
+        n += sizeof(sin6->sin6_scope_id);
+        return n;
+    }
+    return 0;
+}
+
+/* Generate a cookie for the peer: identity fields then HMAC. Returns 0
+ * when the identity cannot be canonicalized or the RNG or HMAC fails,
+ * so no cookie is emitted from an uninitialized secret or partial
+ * buffer. */
+static int server_cookie_generate(const DTLSAddress *addr,
+                                  unsigned char *cookie,
+                                  unsigned int *cookie_len) {
+    unsigned char identity[32];
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned int mac_len = 0;
+    size_t id_len;
+
+    *cookie_len = 0;
+    id_len = server_cookie_identity(addr, identity);
+    if (id_len == 0 || id_len + 32 > 255) {
+        return 0;
+    }
+    if (!server_cookie_init_secret()) {
+        return 0;
+    }
+    if (HMAC(EVP_sha256(), server_cookie_secret,
+             (int)sizeof(server_cookie_secret), identity, id_len, mac,
+             &mac_len) == NULL) {
+        return 0;
+    }
+    if (mac_len != 32) {
+        return 0;
+    }
+    memcpy(cookie, identity, id_len);
+    memcpy(cookie + id_len, mac, mac_len);
+    *cookie_len = (unsigned int)id_len + mac_len;
+    return 1;
+}
+
+/* Verify a cookie presented by the peer. The HMAC must cover the
+ * identity carried in the cookie, and that identity must match the
+ * presenting datagram on family, address and scope_id. */
+static int server_cookie_verify(const DTLSAddress *addr,
+                                const unsigned char *cookie,
+                                unsigned int cookie_len) {
+    unsigned char identity[32];
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned int mac_len = 0;
+    uint32_t fam;
+    size_t id_len, n;
+
+    if (cookie_len < 4 + 32) {
+        return 0;
+    }
+    memcpy(&fam, cookie, sizeof(fam));
+    fam = ntohl(fam);
+    if (fam == (uint32_t)AF_INET) {
+        id_len = 4 + 2 + 4;
+    } else if (fam == (uint32_t)AF_INET6) {
+        id_len = 4 + 2 + 16 + 4;
+    } else {
+        return 0;
+    }
+    if ((size_t)cookie_len != id_len + 32) {
+        return 0;
+    }
+    if (!server_cookie_init_secret()) {
+        return 0;
+    }
+    if (HMAC(EVP_sha256(), server_cookie_secret,
+             (int)sizeof(server_cookie_secret), cookie, id_len, mac,
+             &mac_len) == NULL) {
+        return 0;
+    }
+    if (mac_len != 32) {
+        return 0;
+    }
+    if (CRYPTO_memcmp(mac, cookie + id_len, 32) != 0) {
+        return 0;
+    }
+    n = server_cookie_identity(addr, identity);
+    if (n != id_len || memcmp(identity, cookie, 4) != 0) {
+        return 0;
+    }
+    return memcmp(identity + 6, cookie + 6, id_len - 6) == 0;
+}
 
 /* Generate stateless cookie based on client address */
 static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
                                   unsigned int *cookie_len) {
+    /* For memory BIO, peer address is stored in ex_data */
+    DTLSAddress *addr = SSL_get_ex_data(ssl, dtls_peer_addr_ex_index);
+    if (addr) {
+        return server_cookie_generate(addr, cookie, cookie_len);
+    }
+
     /* Get peer address from BIO */
     BIO *bio = SSL_get_rbio(ssl);
     union {
@@ -157,50 +350,38 @@ static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
         struct sockaddr_in s4;
         struct sockaddr_in6 s6;
     } peer;
+    DTLSAddress peer_addr;
     memset(&peer, 0, sizeof(peer));
-    socklen_t peerlen = sizeof(peer);
-
-    /* For memory BIO, peer address should be stored in ex_data */
-    DTLSAddress *addr = SSL_get_ex_data(ssl, 0);
-    if (addr) {
-        memcpy(&peer, &addr->addr, addr->addrlen);
-        peerlen = addr->addrlen;
-    } else if (BIO_dgram_get_peer(bio, &peer) <= 0) {
-        /* Can't determine peer - generate random cookie */
-        RAND_bytes(cookie, 32);
-        *cookie_len = 32;
-        return 1;
+    if (bio && BIO_dgram_get_peer(bio, &peer) > 0) {
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        memcpy(&peer_addr.addr, &peer, sizeof(peer_addr.addr));
+        if (peer.ss.ss_family == AF_INET) {
+            peer_addr.addrlen = (socklen_t)sizeof(peer.s4);
+        } else if (peer.ss.ss_family == AF_INET6) {
+            peer_addr.addrlen = (socklen_t)sizeof(peer.s6);
+        } else {
+            peer_addr.addrlen = (socklen_t)sizeof(peer);
+        }
+        return server_cookie_generate(&peer_addr, cookie, cookie_len);
     }
 
-    /* Simple HMAC of peer address */
-    static unsigned char secret[32];
-    static int secret_init = 0;
-    if (!secret_init) {
-        RAND_bytes(secret, sizeof(secret));
-        secret_init = 1;
+    /* Can't determine peer - generate random cookie */
+    *cookie_len = 0;
+    if (RAND_bytes(cookie, 32) != 1) {
+        return 0;
     }
-
-    unsigned int len = 0;
-    HMAC(EVP_sha256(), secret, sizeof(secret), (unsigned char *)&peer,
-         peerlen, cookie, &len);
-    *cookie_len = len;
+    *cookie_len = 32;
     return 1;
 }
 
 static int server_verify_cookie(SSL *ssl, const unsigned char *cookie,
                                 unsigned int cookie_len) {
-    unsigned char expected[EVP_MAX_MD_SIZE];
-    unsigned int expected_len;
-
-    if (!server_generate_cookie(ssl, expected, &expected_len)) {
+    /* For memory BIO, peer address is stored in ex_data */
+    DTLSAddress *addr = SSL_get_ex_data(ssl, dtls_peer_addr_ex_index);
+    if (!addr) {
         return 0;
     }
-
-    if (cookie_len != expected_len) {
-        return 0;
-    }
-
-    return CRYPTO_memcmp(cookie, expected, cookie_len) == 0;
+    return server_cookie_verify(addr, cookie, cookie_len);
 }
 
 /*
@@ -452,10 +633,240 @@ typedef struct {
 } DTLSRecvFromState;
 
 /*
+ * =============================================================================
+ * Pre-Session Cookie Gate (RFC 6347 section 4.2.1)
+ * =============================================================================
+ * First contact is handled statelessly, ahead of session creation: a
+ * cookie-less ClientHello is answered with a HelloVerifyRequest
+ * carrying a cookie and no session state, and only a resend whose
+ * cookie verifies is admitted to the session handshake. Unverified
+ * spoofed ClientHellos therefore allocate zero DTLSServerSession
+ * entries.
+ */
+
+/* Locate the cookie field of the ClientHello carried as the first
+ * handshake message of the datagram's first record. On success returns
+ * 1 and sets *cookie_off / *cookie_len (0 for an empty cookie field);
+ * returns 0 when the datagram is not a parseable first-fragment
+ * ClientHello. */
+static int server_client_hello_cookie(const uint8_t *data, int datalen,
+                                      int *cookie_off, int *cookie_len) {
+    unsigned int rec_len;
+    int rec_end, sid_len, off;
+
+    if (datalen < 61 || data[0] != 0x16) {
+        return 0;
+    }
+    if (data[13] != 1) {
+        return 0;
+    }
+    if (data[19] != 0 || data[20] != 0 || data[21] != 0) {
+        return 0; /* Not the first fragment of the message */
+    }
+    rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
+    rec_end = 13 + (int)rec_len;
+    if (rec_end > datalen) {
+        rec_end = datalen;
+    }
+    sid_len = data[59];
+    off = 60 + sid_len;
+    if (off + 1 > rec_end) {
+        return 0;
+    }
+    *cookie_len = data[off];
+    if (off + 1 + *cookie_len > rec_end) {
+        return 0;
+    }
+    *cookie_off = off + 1;
+    return 1;
+}
+
+/* Answer a datagram with a HelloVerifyRequest carrying cookie. The
+ * request mirrors the hello's record and message versions and creates
+ * no session state. */
+static void server_send_hello_verify(DTLSServer *server,
+                                     const DTLSAddress *peer,
+                                     const uint8_t *data, int datalen,
+                                     const unsigned char *cookie,
+                                     unsigned int cookie_len) {
+    uint8_t out[128];
+    unsigned int body_len = 3 + cookie_len;
+    unsigned int rec_len = 12 + body_len;
+    ssize_t sent;
+
+    if ((int)sizeof(out) < 28 + (int)cookie_len) {
+        return;
+    }
+    memset(out, 0, sizeof(out));
+    out[0] = 0x16;
+    out[1] = data[1];
+    out[2] = data[2];
+    memcpy(out + 5, data + 5, 6); /* RFC 6347: echo the hello record seq */
+    out[11] = (uint8_t)(rec_len >> 8);
+    out[12] = (uint8_t)(rec_len & 0xff);
+    out[13] = 3; /* hello_verify_request */
+    out[14] = (uint8_t)(body_len >> 16);
+    out[15] = (uint8_t)((body_len >> 8) & 0xff);
+    out[16] = (uint8_t)(body_len & 0xff);
+    out[22] = out[14];
+    out[23] = out[15];
+    out[24] = out[16];
+    out[25] = data[25];
+    out[26] = data[26];
+    out[27] = (uint8_t)cookie_len;
+    memcpy(out + 28, cookie, cookie_len);
+
+    sent = sendto((jsec_socket_t)server->transport->handle,
+                  (const char *)out, 28 + cookie_len, 0,
+                  (struct sockaddr *)&peer->addr, peer->addrlen);
+    (void)sent;
+    (void)datalen;
+}
+
+/* Returns 1 when the datagram is admitted to the session handshake,
+ * 0 when it was answered statelessly with a HelloVerifyRequest or
+ * dropped. */
+static int dtls_server_cookie_gate(DTLSServer *server, const uint8_t *data,
+                                   int datalen, const DTLSAddress *peer) {
+    unsigned char cookie[96];
+    unsigned int cookie_len;
+    int cookie_off, echo_len;
+
+    if (!server_client_hello_cookie(data, datalen, &cookie_off, &echo_len)) {
+        return 0;
+    }
+    if (echo_len > 0 && server_cookie_verify(peer, data + cookie_off,
+                                             (unsigned int)echo_len)) {
+        return 1; /* Verified resend - admit to the session handshake */
+    }
+    if (!server_cookie_generate(peer, cookie, &cookie_len)) {
+        return 0;
+    }
+    server_send_hello_verify(server, peer, data, datalen, cookie, cookie_len);
+    return 0;
+}
+
+static int server_synth_client_hello(const uint8_t *data, int datalen,
+                                     uint8_t *out, int *out_len) {
+    unsigned int rec_len, msg_len, frag_len;
+    int cookie_off, cookie_len, drop;
+
+    if (!server_client_hello_cookie(data, datalen, &cookie_off, &cookie_len)) {
+        return 0;
+    }
+    rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
+    msg_len = ((unsigned int)data[14] << 16) | ((unsigned int)data[15] << 8) |
+              (unsigned int)data[16];
+    frag_len = ((unsigned int)data[22] << 16) | ((unsigned int)data[23] << 8) |
+               (unsigned int)data[24];
+    if ((int)rec_len + 13 != datalen || msg_len != frag_len ||
+        frag_len != rec_len - 12) {
+        return 0;
+    }
+    drop = cookie_len + 1;
+    memcpy(out, data, (size_t)(cookie_off - 1));
+    memcpy(out + cookie_off - 1, data + cookie_off + cookie_len,
+           (size_t)(datalen - cookie_off - cookie_len));
+    memset(out + 5, 0, 6);
+    out[11] = (uint8_t)((rec_len - (unsigned int)drop) >> 8);
+    out[12] = (uint8_t)((rec_len - (unsigned int)drop) & 0xff);
+    out[14] = (uint8_t)(((msg_len - (unsigned int)drop) >> 16) & 0xff);
+    out[15] = (uint8_t)(((msg_len - (unsigned int)drop) >> 8) & 0xff);
+    out[16] = (uint8_t)((msg_len - (unsigned int)drop) & 0xff);
+    out[17] = 0;
+    out[18] = 0;
+    out[22] = out[14];
+    out[23] = out[15];
+    out[24] = out[16];
+    *out_len = datalen - drop;
+    return 1;
+}
+
+static void server_drain_wbio(DTLSSession *session) {
+    uint8_t sink[512];
+    while (BIO_read(session->wbio, sink, (int)sizeof(sink)) > 0) {
+    }
+}
+
+static int dtls_server_admit_resend(DTLSSession *session, const uint8_t *data,
+                                    int datalen) {
+    uint8_t *synth;
+    int synth_len = 0;
+    BIO_ADDR *peer;
+    int ret;
+
+    /* Record sequence alignment: read the verified resend's wire
+     * record sequence (bytes 5..10, big-endian; epoch at bytes 3..4)
+     * and advance the session's epoch-0 write counter to it, so the
+     * ServerHello flight echoes that number on the wire. The write
+     * counter restarts at 1 for this session (the discarded
+     * in-session HelloVerifyRequest consumed sequence 0), so the
+     * alignment offset is wire_seq - 1. Zero offset keeps the
+     * single-round case byte-identical. */
+    if (datalen >= 11 && ((data[3] << 8) | data[4]) == 0) {
+        uint64_t wire_seq = 0;
+        int i;
+        for (i = 5; i < 11; i++) {
+            wire_seq = (wire_seq << 8) | data[i];
+        }
+        session->rec_seq_off = wire_seq - 1;
+    }
+
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        return 0;
+    }
+    peer = BIO_ADDR_new();
+    if (!peer) {
+        janet_free(synth);
+        return 0;
+    }
+    if (!server_synth_client_hello(data, datalen, synth, &synth_len) ||
+        BIO_write(session->rbio, synth, synth_len) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    if (ret != 0) {
+        BIO_ADDR_free(peer);
+        server_drain_wbio(session);
+        return 0;
+    }
+    server_drain_wbio(session);
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    memcpy(synth, data, (size_t)datalen);
+    memset(synth + 5, 0, 5);
+    synth[10] = 1;
+    synth[17] = 0;
+    synth[18] = 1;
+    if (BIO_write(session->rbio, synth, datalen) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    BIO_ADDR_free(peer);
+    if (ret != 1) {
+        server_drain_wbio(session);
+        return 0;
+    }
+    return 1;
+}
+
+/*
  * Process received datagram, demultiplex to session.
  *
  * State transitions:
- *   New peer      -> Create session, start handshake
+ *   New peer      -> Cookie gate, then create session
  *   Handshaking   -> Continue handshake, send response if needed
  *   Established   -> Read application data
  *   Peer closes   -> Send close_notify, remove session
@@ -472,18 +883,32 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
     /* Look up or create session for this peer */
     DTLSSession *session = dtls_server_get_session(server, peer_addr);
 
+    int fresh = 0;
+
     if (!session) {
-        /* New connection - create session */
+        /* New connection - run the stateless cookie gate before any
+         * session state is allocated */
+        if (!dtls_server_cookie_gate(server, data, datalen, peer_addr)) {
+            return janet_wrap_nil();
+        }
         session = dtls_server_create_session(server, peer_addr);
         if (!session) {
             return janet_wrap_nil(); /* Out of memory or other error */
         }
+        session->cookie_verified = 1;
         /* Store peer address in SSL ex_data for cookie generation */
-        SSL_set_ex_data(session->ssl, 0, &session->peer_addr);
+        SSL_set_ex_data(session->ssl, dtls_peer_addr_ex_index,
+                        &session->peer_addr);
+        if (!dtls_server_admit_resend(session, data, datalen)) {
+            dtls_server_remove_session(server, peer_addr);
+            return janet_wrap_nil();
+        }
+        fresh = 1;
     }
 
-    /* Feed incoming data to SSL via memory BIO */
-    if (BIO_write(session->rbio, data, datalen) <= 0) {
+    /* Feed incoming data to SSL via memory BIO (the verified resend is
+     * already consumed by dtls_server_admit_resend) */
+    if (!fresh && BIO_write(session->rbio, data, datalen) <= 0) {
         return janet_wrap_nil();
     }
 
@@ -500,6 +925,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         } else {
             int err = SSL_get_error(session->ssl, ret);
             if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+                ERR_clear_error();
                 /* Handshake failed - clean up */
                 dtls_server_remove_session(server, peer_addr);
                 return janet_wrap_nil();
@@ -1038,5 +1464,6 @@ static const JanetReg server_cfuns[] = {
 
 void jdtls_register_server(JanetTable *env) {
     janet_register_abstract_type(&dtls_server_type);
+    dtls_peer_addr_ex_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
     janet_cfuns(env, "jsec/dtls", server_cfuns);
 }

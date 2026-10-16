@@ -110,23 +110,6 @@ typedef enum {
 
 /*
  * =============================================================================
- * DTLS Operations (for async callback)
- * =============================================================================
- */
-
-typedef enum {
-    DTLS_OP_NONE = 0,
-    DTLS_OP_HANDSHAKE,
-    DTLS_OP_READ,
-    DTLS_OP_WRITE,
-    DTLS_OP_SHUTDOWN,
-    DTLS_OP_ACCEPT,    /* Server waiting for new connection */
-    DTLS_OP_RECV_FROM, /* Server recv-from operation */
-    DTLS_OP_SEND_TO    /* Server send-to operation */
-} DTLSOperation;
-
-/*
- * =============================================================================
  * DTLSAddress - Our address type (Janet's janet_address_type is internal)
  * =============================================================================
  * Wraps sockaddr_storage for IPv4/IPv6 support.
@@ -170,6 +153,9 @@ typedef struct DTLSSession {
     DTLSState state;          /* Session state */
     double last_activity;     /* Time of last activity (for timeout) */
     int cookie_verified;      /* Has client passed cookie exchange? */
+    uint64_t rec_seq_off;     /* Record sequence alignment: constant
+                               * offset added to outbound epoch-0 record
+                               * headers (RFC 6347 section 4.2.1) */
     struct DTLSSession *next; /* For linked list in hash bucket */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
@@ -286,39 +272,6 @@ void dtls_server_cleanup_expired(DTLSServer *server, double now);
 
 /*
  * =============================================================================
- * Async State (for janet_async_start callbacks)
- * =============================================================================
- */
-
-typedef struct {
-    DTLSOperation op;         /* Current operation */
-    JanetBuffer *buffer;      /* Buffer for read operations */
-    JanetByteView write_data; /* Data for write operations */
-    int32_t nbytes;           /* Requested bytes for read */
-    int32_t buf_start;        /* buffer->count when read op began; n is
-                               * relative to this, matching ev/read append
-                               * semantics (never treat n as buffer total) */
-    double timeout;           /* Operation timeout */
-    int flags;                /* Operation flags */
-    DTLSAddress *out_addr;    /* Output address for recv-from */
-} DTLSAsyncState;
-
-/*
- * =============================================================================
- * Cookie Generation (DoS protection)
- * =============================================================================
- */
-
-/* Generate cookie for client address */
-int dtls_generate_cookie(SSL *ssl, unsigned char *cookie,
-                         unsigned int *cookie_len);
-
-/* Verify cookie from client */
-int dtls_verify_cookie(SSL *ssl, const unsigned char *cookie,
-                       unsigned int cookie_len);
-
-/*
- * =============================================================================
  * State Machine Operations
  * =============================================================================
  * These drive the async I/O using Janet's event loop.
@@ -351,16 +304,6 @@ DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
 
 /* Process shutdown step */
 DTLSResult dtls_do_shutdown(SSL *ssl);
-
-/* Async operation starters */
-void dtls_async_handshake(JanetStream *transport, SSL *ssl,
-                          DTLSState *state_ptr, void *owner);
-void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
-                     double timeout, void *owner);
-void dtls_async_write(JanetStream *transport, SSL *ssl,
-                      JanetByteView data_view, double timeout, void *owner);
-void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
-                         DTLSState *state_ptr, void *owner);
 
 /*
  * =============================================================================
@@ -411,7 +354,6 @@ void jdtls_register_context(JanetTable *env);
  */
 
 /* async.c - Async callbacks and helpers */
-void jdtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 int dtls_client_start_handshake(DTLSClient *client);
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
