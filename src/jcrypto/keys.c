@@ -4,7 +4,10 @@
 
 #include "internal.h"
 
+#include <limits.h>
+
 /* Key Management */
+/* bits applies to :rsa only */
 Janet cfun_generate_key(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
     const uint8_t *alg_kw = janet_getkeyword(argv, 0);
@@ -20,8 +23,21 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
         type = EVP_PKEY_X25519;
     } else if (strcmp(alg, "rsa") == 0) {
         type = EVP_PKEY_RSA;
-        if (argc > 1 && janet_checktype(argv[1], JANET_NUMBER)) {
-            bits = (int)janet_unwrap_number(argv[1]);
+        if (argc > 1 && !janet_checktype(argv[1], JANET_NIL)) {
+            if (!janet_checktype(argv[1], JANET_NUMBER)) {
+                crypto_panic_param("bits must be a number, got %v", argv[1]);
+            }
+            double bits_num = janet_unwrap_number(argv[1]);
+            int bits_val = 0;
+            if (bits_num >= 8.0 && bits_num <= (double)INT_MAX) {
+                bits_val = (int)bits_num;
+            }
+            if (bits_val <= 0 || bits_num > (double)bits_val ||
+                (bits_val & 7) != 0) {
+                crypto_panic_param("bits must be a positive multiple of 8, "
+                                   "got %v", argv[1]);
+            }
+            bits = bits_val;
         }
     } else if (strcmp(alg, "ec-p256") == 0 || strcmp(alg, "p256") == 0) {
         type = EVP_PKEY_EC;
@@ -70,7 +86,10 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
         }
 
         if (type == EVP_PKEY_RSA) {
-            EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, bits);
+            if (EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, bits) <= 0) {
+                EVP_PKEY_CTX_free(pctx);
+                crypto_panic_ssl("failed to set RSA key size");
+            }
         }
 
         if (EVP_PKEY_keygen(pctx, &pkey) <= 0) {
@@ -304,12 +323,19 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
 
     JanetTable *info = janet_table(4);
 
-    /* Check if encrypted by looking for "ENCRYPTED" in PEM header */
+    /* Check for a genuine PEM encrypted-key header: the PKCS#8 form or
+     * the traditional PEM form carrying a Proc-Type: 4,ENCRYPTED line.
+     * Anything else that merely contains "ENCRYPTED" is not an encrypted
+     * key. */
     int encrypted = 0;
     JanetBuffer *key_buf = janet_buffer(key_data.len + 1);
     janet_buffer_push_bytes(key_buf, key_data.bytes, key_data.len);
     janet_buffer_push_u8(key_buf, 0);
-    if (strstr((const char *)key_buf->data, "ENCRYPTED") != NULL) {
+    const char *key_str = (const char *)key_buf->data;
+    if (strstr(key_str, "-----BEGIN ENCRYPTED PRIVATE KEY-----") != NULL) {
+        encrypted = 1;
+    } else if (strstr(key_str, "-----BEGIN ") != NULL &&
+               strstr(key_str, "Proc-Type: 4,ENCRYPTED") != NULL) {
         encrypted = 1;
     }
     janet_table_put(info, janet_ckeywordv("encrypted"),
@@ -340,11 +366,10 @@ Janet cfun_key_info(int32_t argc, Janet *argv) {
     BIO_free(bio);
 
     if (!pkey) {
-        /* Can't load key */
-        ERR_clear_error();
-        janet_table_put(info, janet_ckeywordv("type"),
-                        janet_ckeywordv("unknown"));
-        return janet_wrap_table(info);
+        /* An unparseable key is a real failure, not documented absence:
+         * raise [CRYPTO:PARSE] carrying the probe's OpenSSL reason and
+         * drain the queue instead of silently reporting :type :unknown. */
+        crypto_panic_parse("failed to parse key: %s", get_ssl_error_string());
     }
 
     /* Get key type */

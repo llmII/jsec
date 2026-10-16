@@ -86,5 +86,9 @@ Janet cfun_verify(int32_t argc, Janet *argv) {
     EVP_PKEY_free(pkey);
     EVP_MD_CTX_free(mdctx);
 
+    /* 0 is the wrong-signature verdict; a negative return is an internal
+     * verify failure (malformed encoding, OOM, algorithm failure) and must
+     * not read as "signature invalid". */
+    if (ret < 0) crypto_panic_ssl("failed to verify signature");
     return janet_wrap_boolean(ret == 1);
 }

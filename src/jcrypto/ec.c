@@ -355,7 +355,27 @@ Janet cfun_ec_point_add(int32_t argc, Janet *argv) {
     /* Extract result coordinates */
     BIGNUM *rx = BN_new();
     BIGNUM *ry = BN_new();
-    EC_POINT_get_affine_coordinates(group, result, rx, ry, ctx);
+    if (!rx || !ry) {
+        BN_free(rx);
+        BN_free(ry);
+        EC_POINT_free(p1);
+        EC_POINT_free(p2);
+        EC_POINT_free(result);
+        BN_CTX_free(ctx);
+        EC_GROUP_free(group);
+        crypto_panic_resource("out of memory");
+    }
+    if (!EC_POINT_get_affine_coordinates(group, result, rx, ry, ctx)) {
+        BN_free(rx);
+        BN_free(ry);
+        EC_POINT_free(p1);
+        EC_POINT_free(p2);
+        EC_POINT_free(result);
+        BN_CTX_free(ctx);
+        EC_GROUP_free(group);
+        crypto_panic_ssl("failed to extract affine coordinates (the point "
+                         "at infinity has none)");
+    }
 
     int field_size = get_curve_field_size(nid);
     uint8_t *x_bytes = janet_smalloc((size_t)field_size);
@@ -533,7 +553,23 @@ Janet cfun_ec_point_from_bytes(int32_t argc, Janet *argv) {
     /* Extract coordinates */
     BIGNUM *x = BN_new();
     BIGNUM *y = BN_new();
-    EC_POINT_get_affine_coordinates(group, point, x, y, ctx);
+    if (!x || !y) {
+        BN_free(x);
+        BN_free(y);
+        EC_POINT_free(point);
+        BN_CTX_free(ctx);
+        EC_GROUP_free(group);
+        crypto_panic_resource("out of memory");
+    }
+    if (!EC_POINT_get_affine_coordinates(group, point, x, y, ctx)) {
+        BN_free(x);
+        BN_free(y);
+        EC_POINT_free(point);
+        BN_CTX_free(ctx);
+        EC_GROUP_free(group);
+        crypto_panic_ssl("failed to extract affine coordinates (the point "
+                         "at infinity has none)");
+    }
 
     int field_size = get_curve_field_size(nid);
     uint8_t *x_bytes = janet_smalloc((size_t)field_size);
@@ -609,7 +645,15 @@ Janet cfun_ec_generate_scalar(int32_t argc, Janet *argv) {
 
     /* Generate random < order, then add 1 to ensure non-zero */
     BIGNUM *order_minus_1 = BN_dup(order);
-    BN_sub_word(order_minus_1, 1);
+    if (!order_minus_1 || !BN_sub_word(order_minus_1, 1)) {
+        BN_free(order_minus_1);
+        BN_free(scalar);
+#if !JSEC_OPENSSL
+        BN_free(order_storage);
+#endif
+        EC_GROUP_free(group);
+        crypto_panic_resource("failed to compute the curve order bound");
+    }
 
     if (!BN_rand_range(scalar, order_minus_1)) {
         BN_free(scalar);
@@ -621,7 +665,15 @@ Janet cfun_ec_generate_scalar(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to generate random scalar");
     }
 
-    BN_add_word(scalar, 1); /* Ensure scalar is at least 1 */
+    if (!BN_add_word(scalar, 1)) { /* Ensure scalar is at least 1 */
+        BN_free(scalar);
+        BN_free(order_minus_1);
+#if !JSEC_OPENSSL
+        BN_free(order_storage);
+#endif
+        EC_GROUP_free(group);
+        crypto_panic_resource("failed to adjust the random scalar");
+    }
     BN_free(order_minus_1);
 
     /* Convert to fixed-size bytes */
