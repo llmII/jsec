@@ -152,6 +152,18 @@ int jutils_add_common_name_san(X509 *cert, const char *cn);
  */
 void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca);
 
+/* One shared client SSL setup for every connection entry point (D-01):
+ * rank the client name (the :hostname option wins over the positional host;
+ * the :sni key never supplies it), install the SNI extension (never for an
+ * IP literal - RFC 6066 section 3), bind certificate name verification
+ * (:verify-hostname wins over the client name) when verify is set, and
+ * attach :session resumption bytes. Every OpenSSL return is checked
+ * (E-20, E-21, E-22). Returns NULL on success, else a static string naming
+ * the failed OpenSSL call; the caller raises with its own module's panic
+ * family. */
+const char *jutils_client_setup(SSL *ssl, Janet opts,
+                                const char *positional_host, int verify);
+
 /*============================================================================
  * PUBLIC API - Low-level Memory Loading
  *============================================================================
@@ -369,6 +381,8 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
 #define dtls_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_DTLS, "SSL", msg)
 #define dtls_panic_socket(msg) jsec_panic_errno(JSEC_MOD_DTLS, "SOCKET", msg)
 #define dtls_panic_param(...) jsec_panic(JSEC_MOD_DTLS, "PARAM", __VA_ARGS__)
+#define dtls_panic_verify(...)                                               \
+    jsec_panic(JSEC_MOD_DTLS, "VERIFY", __VA_ARGS__)
 
 /* CRYPTO module */
 #define crypto_panic_config(...)                                             \

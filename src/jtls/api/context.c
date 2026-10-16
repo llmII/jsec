@@ -62,6 +62,14 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
         if (has_cert && has_key) {
             is_server = 1;
+        } else {
+            Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+            if (!janet_checktype(sni, JANET_NIL)) {
+                tls_panic_param(
+                    ":sni is server-side only (the server virtual-host "
+                    "map on tls/new-context); use :hostname for the "
+                    "client name");
+            }
         }
     }
 

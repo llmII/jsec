@@ -17,20 +17,6 @@
 extern const JanetMethod dtls_client_methods[];
 extern int dtls_client_start_handshake(DTLSClient *client);
 
-/*============================================================================
- * HELPER: IP-literal host detection
- *============================================================================*/
-/* An IP literal is not a DNS name: verification matches it through
- * iPAddress SANs, and RFC 6066 section 3 forbids literal addresses in
- * the server_name extension. */
-static int host_is_ip_literal(const char *host) {
-    struct in_addr a4;
-    struct in6_addr a6;
-    if (!host) return 0;
-    return inet_pton(AF_INET, host, &a4) == 1 ||
-           inet_pton(AF_INET6, host, &a6) == 1;
-}
-
 /*
  * (dtls/upgrade transport &opt opts)
  *
@@ -42,11 +28,13 @@ static int host_is_ip_literal(const char *host) {
  *   :key - Client private key
  *   :verify - Verify peer certificate (default true)
  *   :ca - CA certificate path
- *   :sni - Server name for SNI
+ *   :hostname - Client name for SNI and certificate verification
+ *     (:sni is reserved for the server virtual-host map)
  *   :session - Session data for resumption
  *   :server - If true, act as server (default: client)
  *   :trusted-cert - Trust specific certificate (for self-signed)
- *   :verify-hostname - Hostname for cert verification (can differ from SNI)
+ *   :verify-hostname - Hostname for cert verification (can differ from
+ *     :hostname)
  */
 Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
@@ -58,10 +46,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     Janet opts = argc > 1 ? argv[1] : janet_wrap_nil();
     int verify = 1;
     int is_server = 0;
-    const char *sni = NULL;
-    const char *verify_hostname = NULL;
     int track_handshake_time = 0;
-    Janet session_opt = janet_wrap_nil();
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
@@ -70,21 +55,19 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             verify = janet_truthy(v);
         }
 
-        Janet s = janet_get(opts, janet_ckeywordv("sni"));
-        if (janet_checktype(s, JANET_STRING)) {
-            sni = (const char *)janet_unwrap_string(s);
-        }
-
         Janet srv = janet_get(opts, janet_ckeywordv("server"));
         if (janet_truthy(srv)) {
             is_server = 1;
         }
 
-        /* :verify-hostname option allows verifying cert against a different
-         * hostname than SNI */
-        Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
-        if (janet_checktype(vh, JANET_STRING)) {
-            verify_hostname = (const char *)janet_unwrap_string(vh);
+        if (!is_server) {
+            Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+            if (!janet_checktype(sni, JANET_NIL)) {
+                dtls_panic_param(
+                    ":sni is server-side only (the server virtual-host "
+                    "map on tls/new-context); use :hostname for the "
+                    "client name");
+            }
         }
 
         /* :handshake-timing option enables timing measurement */
@@ -102,7 +85,6 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             !janet_checktype(session, JANET_BUFFER)) {
             dtls_panic_param("session must be a byte string or buffer");
         }
-        session_opt = session;
     } else if (!janet_checktype(opts, JANET_NIL)) {
         dtls_panic_param("options must be a table or struct");
     }
@@ -199,8 +181,12 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         SSL_CTX_set_verify(client->ctx, SSL_VERIFY_PEER, NULL);
         /* Only load default paths if we don't have a trusted cert */
         Janet trusted = janet_get(opts, janet_ckeywordv("trusted-cert"));
-        if (janet_checktype(trusted, JANET_NIL)) {
-            SSL_CTX_set_default_verify_paths(client->ctx);
+        if (janet_checktype(trusted, JANET_NIL) &&
+            SSL_CTX_set_default_verify_paths(client->ctx) != 1) {
+            SSL_CTX_free(client->ctx);
+            client->ctx = NULL;
+            client->owns_ctx = 0;
+            dtls_panic_ssl("failed to load default verify paths");
         }
     } else {
         SSL_CTX_set_verify(client->ctx, SSL_VERIFY_NONE, NULL);
@@ -216,46 +202,14 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         dtls_panic_ssl("failed to create SSL object");
     }
 
-    /* Set SNI hostname (client only) */
-    if (!is_server && sni) {
-        /* IP literals send no server_name extension at all */
-        if (!host_is_ip_literal(sni)) {
-            SSL_set_tlsext_host_name(client->ssl, sni);
-        }
-        if (verify) {
-            const char *host_to_verify =
-                verify_hostname ? verify_hostname : sni;
-            SSL_set_hostflags(client->ssl,
-                              X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            if (host_is_ip_literal(host_to_verify)) {
-                X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
-                                              host_to_verify);
-            } else {
-                SSL_set1_host(client->ssl, host_to_verify);
-            }
-        }
-    } else if (!is_server && verify_hostname && verify) {
-        /* verify_hostname without SNI - just set hostname verification */
-        SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        if (host_is_ip_literal(verify_hostname)) {
-            X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(client->ssl),
-                                          verify_hostname);
-        } else {
-            SSL_set1_host(client->ssl, verify_hostname);
-        }
-    }
-
-    /* Session resumption (validated at option parse; bytes here) */
-    if (!is_server && !janet_checktype(session_opt, JANET_NIL)) {
-        const uint8_t *bytes;
-        int32_t len;
-        if (janet_bytes_view(session_opt, &bytes, &len) && len > 0) {
-            const unsigned char *p = bytes;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, len);
-            if (session) {
-                SSL_set_session(client->ssl, session);
-                SSL_SESSION_free(session);
-            }
+    /* Client name ranking (:hostname only - there is no positional host
+     * here), SNI, certificate name verification and :session attachment:
+     * one shared setup for every entry point (D-01) */
+    if (!is_server) {
+        const char *fail =
+            jutils_client_setup(client->ssl, opts, NULL, verify);
+        if (fail) {
+            dtls_panic_verify("client SSL setup failed in %s", fail);
         }
     }
 
