@@ -247,10 +247,19 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
                 case CLIENT_OP_READ: {
                     int32_t before = state->buffer->count;
-                    result = dtls_do_read(
-                        client->ssl, state->buffer,
+                    int32_t remaining =
                         state->nbytes -
-                            (state->buffer->count - state->buf_start));
+                        (state->buffer->count - state->buf_start);
+                    if (remaining <= 0) {
+                        /* Nothing left to request: complete with the
+                         * buffer and never issue SSL_read(..., 0),
+                         * which would read as EOF. */
+                        retval = janet_wrap_buffer(state->buffer);
+                        result = DTLS_RESULT_OK;
+                        break;
+                    }
+                    result = dtls_do_read(client->ssl, state->buffer,
+                                          remaining);
                     if (result == DTLS_RESULT_UNEXPECTED_EOF) {
                         /* A truncation raises below - it must never
                          * look like a clean end of data */
