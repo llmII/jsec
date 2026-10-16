@@ -78,7 +78,7 @@
    echo server on port and return the negotiated cipher name.``
   [port]
   (def c (dtls/connect "127.0.0.1" port {:verify false}))
-  (def cipher (dtls/cipher c))
+  (def cipher (dtls/get-cipher c))
   (try (dtls/close c) ([_] nil))
   cipher)
 
@@ -139,7 +139,7 @@
         # Defect path: the failed :ciphers value was silently swallowed
         # (src/jdtls/api/connect.c:183 ignores the return), the handshake
         # completed on the default cipher list, and a client came back.
-        (def cipher (try (dtls/cipher c) ([e] (string "cipher-err: " e))))
+        (def cipher (try (dtls/get-cipher c) ([e] (string "cipher-err: " e))))
         (try (dtls/close c) ([_] nil))
         (set outcome {:proceeded true :negotiated cipher}))
       ([err] (set outcome {:raised err})))
@@ -167,7 +167,7 @@
         # Defect path: the failed :ciphers value was silently swallowed
         # (src/jdtls/api/upgrade.c:137 ignores the return), the upgrade
         # completed on the default cipher list, and a client came back.
-        (def cipher (try (dtls/cipher c) ([e] (string "cipher-err: " e))))
+        (def cipher (try (dtls/get-cipher c) ([e] (string "cipher-err: " e))))
         (try (dtls/close c) ([_] nil))
         (set outcome {:proceeded true :negotiated cipher}))
       ([err] (set outcome {:raised err})))

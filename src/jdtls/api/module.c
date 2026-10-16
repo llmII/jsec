@@ -83,24 +83,27 @@ static const JanetReg client_cfuns[] = {
      "Perform DTLS shutdown without closing the underlying socket.\n"
      "Useful for transitioning back to raw UDP.\n"
      "Mode can be :rd, :wr, or :rdwr (default)."},
-    {"version", cfun_dtls_get_version,
-     "(:version client)\n\n"
-     "Get the DTLS protocol version string (e.g., \"DTLSv1.2\")."},
-    {"cipher", cfun_dtls_get_cipher,
-     "(:cipher client)\n\n"
-     "Get the cipher suite name."},
-    {"cipher-bits", cfun_dtls_get_cipher_bits,
-     "(:cipher-bits client)\n\n"
-     "Get the cipher strength in bits.\n"
+    {"get-version", cfun_dtls_get_version,
+     "(dtls-stream/get-version client)\n\n"
+     "Get the DTLS protocol version string (e.g., \"DTLSv1.2\").\n"
+     "The method form is (:version client)."},
+    {"get-cipher", cfun_dtls_get_cipher,
+     "(dtls-stream/get-cipher client)\n\n"
+     "Get the cipher suite name. The method form is (:cipher client)."},
+    {"get-cipher-bits", cfun_dtls_get_cipher_bits,
+     "(dtls-stream/get-cipher-bits client)\n\n"
+     "Get the cipher strength in bits. The method form is "
+     "(:cipher-bits client).\n"
      "Returns nil when no cipher is active."},
-    {"connection-info", cfun_dtls_get_connection_info,
-     "(:connection-info client)\n\n"
+    {"get-connection-info", cfun_dtls_get_connection_info,
+     "(dtls-stream/get-connection-info client)\n\n"
      "Get all connection info as a struct with keys:\n"
      "  :version - Protocol version string\n"
      "  :cipher - Cipher suite name\n"
      "  :cipher-bits - Cipher strength in bits\n"
      "  :alpn - Negotiated ALPN protocol or nil\n"
-     "Returns nil when no cipher is active."},
+     "Returns nil when no cipher is active.\n"
+     "The method form is (:connection-info client)."},
     {"get-peer-cert", cfun_dtls_get_peer_cert,
      "(get-peer-cert client)\n\n"
      "Export the peer certificate as an immutable X.509 DER byte "
@@ -113,11 +116,11 @@ static const JanetReg client_cfuns[] = {
     {"session-reused?", cfun_dtls_session_reused,
      "(:session-reused? client)\n\n"
      "Check if the session was reused from a previous connection."},
-    {"session", cfun_dtls_get_session,
-     "(:session client)\n\n"
+    {"get-session", cfun_dtls_get_session,
+     "(dtls-stream/get-session client)\n\n"
      "Get the session data for resumption.\n"
      "Returns an immutable byte string containing the serialized session, "
-     "or nil if not available."},
+     "or nil if not available. The method form is (:session client)."},
     {"set-session", cfun_dtls_set_session,
      "(dtls/set-session client session-data)\n\n"
      "Set session data for resumption.\n"
@@ -132,8 +135,10 @@ static const JanetReg client_cfuns[] = {
      "The cert-pem should be a string/buffer containing PEM-encoded "
      "certificate."},
     {"peername", cfun_dtls_peername,
-     "(dtls/peername client)\n\n"
-     "Get the peer's address as a DTLSAddress."},
+     "(dtls-stream/peername client)\n\n"
+     "Get the peer's address as a [host port] tuple (or [unix-path] for\n"
+     "AF_UNIX), matching net/peername. Raises [DTLS:IO] when the client "
+     "is closed."},
     {NULL, NULL, NULL}};
 
 void jdtls_register_client(JanetTable *env) {

@@ -8,6 +8,9 @@
 #include "../internal.h"
 #include <string.h>
 #include <time.h>
+#ifndef JANET_WINDOWS
+#include <sys/un.h>
+#endif
 #include <openssl/x509v3.h>
 
 /*
@@ -158,46 +161,104 @@ Janet cfun_dtls_get_session(int32_t argc, Janet *argv) {
     return janet_wrap_string(janet_string_end(str));
 }
 
+/*============================================================================
+ * HELPER: Convert sockaddr to Janet tuple
+ *============================================================================
+ * Returns [host port] for IPv4/IPv6 or [path] for Unix sockets, matching
+ * Janet's net/localname and net/peername return shapes (and the
+ * DTLSServer localname shape in server.c).
+ */
+static Janet dtls_sockaddr_to_tuple(const struct sockaddr_storage *ss) {
+    char buffer[INET6_ADDRSTRLEN + 1];
+
+    switch (ss->ss_family) {
+        case AF_INET: {
+            const struct sockaddr_in *sai = (const struct sockaddr_in *)ss;
+            if (!inet_ntop(AF_INET, &(sai->sin_addr), buffer,
+                           sizeof(buffer))) {
+                dtls_panic_io("unable to decode ipv4 host address");
+            }
+            Janet pair[2] = {janet_cstringv(buffer),
+                             janet_wrap_integer(ntohs(sai->sin_port))};
+            return janet_wrap_tuple(janet_tuple_n(pair, 2));
+        }
+        case AF_INET6: {
+            const struct sockaddr_in6 *sai6 = (const struct sockaddr_in6 *)ss;
+            if (!inet_ntop(AF_INET6, &(sai6->sin6_addr), buffer,
+                           sizeof(buffer))) {
+                dtls_panic_io("unable to decode ipv6 host address");
+            }
+            Janet pair[2] = {janet_cstringv(buffer),
+                             janet_wrap_integer(ntohs(sai6->sin6_port))};
+            return janet_wrap_tuple(janet_tuple_n(pair, 2));
+        }
+#ifndef JANET_WINDOWS
+        case AF_UNIX: {
+            const struct sockaddr_un *sun = (const struct sockaddr_un *)ss;
+            Janet pathname;
+            if (sun->sun_path[0] == '\0') {
+                /* Abstract socket - replace null with @ */
+                char abuf[sizeof(sun->sun_path) + 1];
+                memcpy(abuf, sun->sun_path, sizeof(sun->sun_path));
+                abuf[0] = '@';
+                pathname = janet_cstringv(abuf);
+            } else {
+                pathname = janet_cstringv(sun->sun_path);
+            }
+            return janet_wrap_tuple(janet_tuple_n(&pathname, 1));
+        }
+#endif
+        default:
+            dtls_panic_param("unknown address family");
+    }
+}
+
 /*
  * (dtls/localname client)
  *
- * Get the local address as a DTLSAddress.
+ * Get the client's local address as a [host port] tuple (or [unix-path]
+ * for AF_UNIX), matching net/localname and DTLSServer localname.
+ * Raises [DTLS:IO] when the client is closed and [DTLS:SOCKET] when the
+ * getsockname syscall fails.
  */
 Janet cfun_dtls_localname(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (!client->transport) {
-        return janet_wrap_nil();
+    if (client->closed || !client->transport ||
+        (client->transport->flags & JANET_STREAM_CLOSED)) {
+        dtls_panic_io("stream closed");
     }
 
-    jsec_socket_t fd = (jsec_socket_t)client->transport->handle;
-    if (fd == JSEC_INVALID_SOCKET) {
-        return janet_wrap_nil();
+    struct sockaddr_storage ss;
+    socklen_t slen = sizeof(ss);
+    memset(&ss, 0, slen);
+
+    if (getsockname((jsec_socket_t)client->transport->handle,
+                    (struct sockaddr *)&ss, &slen) < 0) {
+        dtls_panic_socket("failed to get localname");
     }
 
-    DTLSAddress local_addr;
-    memset(&local_addr, 0, sizeof(local_addr));
-    local_addr.addrlen = sizeof(local_addr.addr);
-
-    if (getsockname(fd, (struct sockaddr *)&local_addr.addr,
-                    &local_addr.addrlen) < 0) {
-        return janet_wrap_nil();
-    }
-
-    return dtls_address_wrap(&local_addr);
+    return dtls_sockaddr_to_tuple(&ss);
 }
 
 /*
  * (dtls/peername client)
  *
- * Get the peer's address as a DTLSAddress.
+ * Get the peer's address as a [host port] tuple (or [unix-path] for
+ * AF_UNIX), matching net/peername and the documented shape.
+ * Raises [DTLS:IO] when the client is closed.
  */
 Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    return dtls_address_wrap(&client->peer_addr);
+    if (client->closed || !client->transport ||
+        (client->transport->flags & JANET_STREAM_CLOSED)) {
+        dtls_panic_io("stream closed");
+    }
+
+    return dtls_sockaddr_to_tuple(&client->peer_addr.addr);
 }
 
 /*

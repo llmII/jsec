@@ -182,7 +182,7 @@
             (dtls-stream/read client 1024)
 
             # Test session directly
-            (let [session (dtls-stream/session client)]
+            (let [session (dtls-stream/get-session client)]
               (assert (string? session) "session returns byte string"))
 
             # Test session-reused? directly
@@ -212,21 +212,21 @@
             (dtls-stream/read client 1024)
 
             # Test version directly
-            (let [ver (dtls-stream/version client)]
+            (let [ver (dtls-stream/get-version client)]
               (assert (string? ver) "version returns string")
               (assert (string/has-prefix? "DTLS" ver) "version starts with DTLS"))
 
             # Test cipher directly
-            (let [cipher (dtls-stream/cipher client)]
+            (let [cipher (dtls-stream/get-cipher client)]
               (assert (string? cipher) "cipher returns string"))
 
             # Test cipher-bits directly
-            (let [bits (dtls-stream/cipher-bits client)]
+            (let [bits (dtls-stream/get-cipher-bits client)]
               (assert (number? bits) "cipher-bits returns number")
               (assert (>= bits 128) "cipher bits >= 128"))
 
             # Test connection-info directly
-            (let [info (dtls-stream/connection-info client)]
+            (let [info (dtls-stream/get-connection-info client)]
               (assert (struct? info) "connection-info returns struct")
               (assert (info :version) "info has :version")
               (assert (info :cipher) "info has :cipher"))))
@@ -253,10 +253,17 @@
             (dtls-stream/write client "test")
             (dtls-stream/read client 1024)
 
-            # Test peername directly
-            (let [peer (dtls-stream/peername client)]
-              (assert (dtls-stream/address? peer) "peername returns address")
-              (assert (= (dtls-stream/address-port peer) port) "peername port matches"))))
+            # localname and peername return [host port] tuples (net parity)
+            (let [peer (dtls-stream/peername client)
+                  local (dtls-stream/localname client)]
+              (assert (tuple? peer) "peername returns a tuple")
+              (let [[peer-host peer-port] peer]
+                (assert (= peer-host "127.0.0.1") "peername host matches")
+                (assert (= peer-port port) "peername port matches"))
+              (assert (tuple? local) "localname returns a tuple")
+              (let [[local-host local-port] local]
+                (assert (= local-host "127.0.0.1") "localname host matches")
+                (assert (number? local-port) "localname port is a number")))))
 
         (ev/take done))))
 

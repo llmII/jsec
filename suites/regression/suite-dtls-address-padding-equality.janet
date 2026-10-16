@@ -67,10 +67,9 @@
   [a]
   (string (dtls/address-host a) ":" (dtls/address-port a)))
 
-# NB: the module-level dtls/localname name is shadowed by the server
-# registration (ticket 419dae6ce4); the client local address is taken
-# through the :localname method, which dispatches to the client
-# implementation (src/jdtls/api/types.c:54).
+# NB: (:localname client) returns a [host port] tuple (net/localname
+# parity, ticket c135d5659d); the DTLSAddress for the equality/hash
+# paths is constructed from that tuple via dtls/address.
 
 (def-suite :name "DTLS Address Equality And Hash Regression"
   :description "Ticket 0e9e80e7bd: the same socket address obtained twice must compare equal and hash identically through both paths"
@@ -110,7 +109,7 @@
             # obtained three times: recv-from kernel fill, constructor,
             # getsockname.
             (def via-recv (get recv-addrs 0))
-            (def via-method (:localname client))
+            (def via-method (dtls/address ;(:localname client)))
             (def via-ctor (dtls/address "127.0.0.1"
                                         (dtls/address-port via-method)))
             (assert (dtls/address? via-recv)
@@ -216,9 +215,10 @@
             # session_bucket's dtls_address_hash_fn (src/jdtls/session.c:19)
             # and dtls_server_get_session's dtls_address_equal
             # (src/jdtls/session.c:111).
+            # (:localname client) is a [host port] tuple now (ticket
+            # c135d5659d); take the port from the tuple.
             (def via-ctor (dtls/address "127.0.0.1"
-                                        (dtls/address-port
-                                          (:localname client))))
+                                        ((:localname client) 1)))
 
             # Under the defect on a padding-live platform this raises
             # "no session for peer address" (src/jdtls/server.c:793) -

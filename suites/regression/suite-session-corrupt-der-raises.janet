@@ -119,7 +119,7 @@
 
           # (b) a good session blob must set and return nil, matching
           # tls/set-session. Under the defect the call returns true.
-          (def blob (dtls/session conn))
+          (def blob (dtls/get-session conn))
           (def r (dtls/set-session conn blob))
           (assert (= nil r)
                   (string/format

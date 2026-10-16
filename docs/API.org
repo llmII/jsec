@@ -327,7 +327,7 @@ These methods are available on TLS stream objects. Access via method syntax
 
 *** Connection Information
 
-- ~(:connection-info stream)~ or ~(tls-stream/connection-info stream)~
+- ~(:connection-info stream)~ or ~(tls-stream/get-connection-info stream)~
   Returns a struct with connection details:
   - ~:version~: TLS version (e.g., "TLSv1.3")
   - ~:cipher~: Cipher suite name
@@ -335,13 +335,13 @@ These methods are available on TLS stream objects. Access via method syntax
   - ~:alpn~: Negotiated ALPN protocol
   - ~:server-name~: SNI hostname
 
-- ~(:version stream)~ or ~(tls-stream/version stream)~
+- ~(:version stream)~ or ~(tls-stream/get-version stream)~
   Returns TLS version string (e.g., "TLSv1.3")
 
-- ~(:cipher stream)~ or ~(tls-stream/cipher stream)~
+- ~(:cipher stream)~ or ~(tls-stream/get-cipher stream)~
   Returns cipher suite name
 
-- ~(:cipher-bits stream)~ or ~(tls-stream/cipher-bits stream)~
+- ~(:cipher-bits stream)~ or ~(tls-stream/get-cipher-bits stream)~
   Returns cipher bit strength as integer
 
 - ~(:localname stream)~ or ~(tls-stream/localname stream)~
@@ -366,7 +366,7 @@ These methods are available on TLS stream objects. Access via method syntax
 - ~(:session-reused? stream)~ or ~(tls-stream/session-reused? stream)~
   Returns ~true~ if session was resumed
 
-- ~(:get-session stream)~ or ~(tls-stream/get-session stream)~
+- ~(:session stream)~ or ~(tls-stream/get-session stream)~
   Returns session data (byte string) for resumption
 
 - ~(:peer-cert stream)~ or ~(tls-stream/get-peer-cert stream)~
@@ -553,30 +553,37 @@ syntax ~(:method obj args...)~ or import ~jsec/dtls-stream~ for function version
 
 *** Connection Information (Client)
 
-- ~(:connection-info client)~ or ~(dtls-stream/connection-info client)~
+- ~(:connection-info client)~ or ~(dtls-stream/get-connection-info client)~
   Returns a struct with connection details:
   - ~:version~: DTLS version (e.g., "DTLSv1.2")
   - ~:cipher~: Cipher suite name
   - ~:cipher-bits~: Cipher strength
 
-- ~(:version client)~ or ~(dtls-stream/version client)~
+- ~(:version client)~ or ~(dtls-stream/get-version client)~
   Returns DTLS version string
 
-- ~(:cipher client)~ or ~(dtls-stream/cipher client)~
+- ~(:cipher client)~ or ~(dtls-stream/get-cipher client)~
   Returns cipher suite name
 
-- ~(:cipher-bits client)~ or ~(dtls-stream/cipher-bits client)~
+- ~(:cipher-bits client)~ or ~(dtls-stream/get-cipher-bits client)~
   Returns cipher bit strength
 
+- ~(:localname client)~ or ~(dtls-stream/localname client)~
+  Returns the client's local address as a ~[host port]~ tuple
+  (or ~[unix-path]~ for ~AF_UNIX~), matching ~net/localname~. Raises
+  ~[DTLS:IO]~ when the client is closed.
+
 - ~(:peername client)~ or ~(dtls-stream/peername client)~
-  Returns peer address as ~[host port]~ tuple
+  Returns the peer address as a ~[host port]~ tuple (or ~[unix-path]~
+  for ~AF_UNIX~), matching ~net/peername~. Raises ~[DTLS:IO]~ when the
+  client is closed.
 
 *** Session Management (Client)
 
 - ~(:session-reused? client)~ or ~(dtls-stream/session-reused? client)~
   Returns ~true~ if session was resumed
 
-- ~(:get-session client)~ or ~(dtls-stream/get-session client)~
+- ~(:session client)~ or ~(dtls-stream/get-session client)~
   Returns session data for resumption as an immutable byte string (or ~nil~)
 
 - ~(:peer-cert client)~ or ~(dtls-stream/get-peer-cert client)~

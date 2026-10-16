@@ -82,6 +82,7 @@
 
 (use assay)
 (import jsec/tls :as tls)
+(import jsec/dtls-stream :as dtls)
 (import ../helpers :prefix "")
 
 (def certs (generate-temp-certs {:common-name "127.0.0.1"}))
@@ -555,7 +556,7 @@
 
     (with-dtls-pong
       (fn [conn server]
-        (def addr (:localname conn))
+        (def addr (dtls/address ;(:localname conn)))
         (:close server)
         (try
           (do (:send-to server addr "x") (set outcome [:returned-nil]))

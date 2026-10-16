@@ -27,8 +27,8 @@
 #
 # This test demonstrates:
 #   (a) after full module init, (dtls/localname client) must return
-#       the client's local address - a DTLSAddress with the same host
-#       and port as the (:localname client) method result and with
+#       the client's local address - a [host port] tuple with the same
+#       host and port as the (:localname client) method result and with
 #       host 127.0.0.1 and port above 0 on this loopback connection,
 #   (b) under the defect the module-level name is bound to the server
 #       function, so (dtls/localname client) raises a type error on a
@@ -87,44 +87,45 @@
                     "client should receive the Pong payload")
 
             # Reference truth: the abstract METHOD path is bound to
-            # cfun_dtls_localname and is not shadowed.
+            # cfun_dtls_localname and is not shadowed. Both the method
+            # and the module entry return a [host port] tuple
+            # (net/localname parity, ticket c135d5659d).
             (def via-method (:localname client))
-            (assert (dtls/address? via-method)
-                    "method :localname should return a DTLSAddress")
+            (assert (tuple? via-method)
+                    "method :localname should return a [host port] tuple")
 
             # (a) The proof call: the module-level name must reach the
             # client implementation after full module init. Under the
-            # defect this raises the server function's type error -
-            # the predicted symptom - and the raise propagates so the
-            # test fails with exactly that message.
+            # original defect this raises the server function's type
+            # error - the predicted symptom - and the raise propagates
+            # so the test fails with exactly that message.
             (def via-module (dtls/localname client))
 
-            (assert (dtls/address? via-module)
+            (assert (tuple? via-module)
                     (string/format
                       (string "(dtls/localname client) must return the "
-                              "client local address as a DTLSAddress, got %q")
+                              "client local address as a [host port] "
+                              "tuple, got %q")
                       via-module))
-            (assert (= "127.0.0.1" (dtls/address-host via-module))
-                    (string/format
-                      "client local address host must be 127.0.0.1, got %q"
-                      (dtls/address-host via-module)))
-            (assert (pos? (dtls/address-port via-module))
-                    (string/format
-                      "client local address port must be above 0, got %q"
-                      (dtls/address-port via-module)))
-            (assert (= (dtls/address-host via-method)
-                       (dtls/address-host via-module))
-                    (string/format
-                      (string "module-level (dtls/localname client) must "
-                              "match the (:localname client) method: %q vs %q")
-                      (dtls/address-host via-method)
-                      (dtls/address-host via-module)))
-            (assert (= (dtls/address-port via-method)
-                       (dtls/address-port via-module))
-                    (string/format
-                      (string "module-level (dtls/localname client) must "
-                              "match the (:localname client) method: %q vs %q")
-                      (dtls/address-port via-method)
-                      (dtls/address-port via-module)))))
+            (let [[module-host module-port] via-module
+                  [method-host method-port] via-method]
+              (assert (= "127.0.0.1" module-host)
+                      (string/format
+                        "client local address host must be 127.0.0.1, got %q"
+                        module-host))
+              (assert (pos? module-port)
+                      (string/format
+                        "client local address port must be above 0, got %q"
+                        module-port))
+              (assert (= method-host module-host)
+                      (string/format
+                        (string "module-level (dtls/localname client) must "
+                                "match the (:localname client) method: %q vs %q")
+                        method-host module-host))
+              (assert (= method-port module-port)
+                      (string/format
+                        (string "module-level (dtls/localname client) must "
+                                "match the (:localname client) method: %q vs %q")
+                        method-port module-port)))))
 
         (ev/take done)))))

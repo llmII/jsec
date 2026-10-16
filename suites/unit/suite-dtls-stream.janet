@@ -183,6 +183,56 @@
       (assert (= host "127.0.0.1") "Host is localhost")
       (assert (> port 0) "Port was assigned")))
 
+  (def-test "Client localname and peername return [host port] tuples"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          server (tls/listen "127.0.0.1" 0
+                             {:datagram true :cert (certs :cert) :key (certs :key)})
+          [_ port] (:localname server)
+          done (ev/chan 1)]
+      (defer (:close server)
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def buf (buffer/new 1024))
+                (def addr (:recv-from server 1024 buf))
+                (when addr (:send-to server addr "Pong")))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def client (tls/connect "127.0.0.1" port {:datagram true :verify false}))
+        (:write client "Ping")
+        (def reply (:read client 1024))
+        (assert reply "setup: client should receive the Pong reply")
+        (ev/take done)
+
+        # All four call shapes return [host port] tuples on an open client
+        (each [label f] [["method :localname" |(:localname $)]
+                         ["module localname" |(dtls-stream/localname $)]
+                         ["method :peername" |(:peername $)]
+                         ["module peername" |(dtls-stream/peername $)]]
+          (def v (f client))
+          (assert (tuple? v)
+                  (string/format "%s must return a [host port] tuple, got %q"
+                                 label v))
+          (def [h pnum] v)
+          (assert (= h "127.0.0.1")
+                  (string/format "%s host must be 127.0.0.1, got %q" label h))
+          (assert (number? pnum)
+                  (string/format "%s port must be a number, got %q" label pnum)))
+
+        # Closed client: both names raise [DTLS:IO] instead of returning nil
+        (:close client true)
+        (assert-error (:localname client)
+                      "closed client :localname must raise [DTLS:IO]")
+        (assert-error (:peername client)
+                      "closed client :peername must raise [DTLS:IO]")
+        (assert-error (dtls-stream/localname client)
+                      "closed client dtls-stream/localname must raise [DTLS:IO]")
+        (assert-error (dtls-stream/peername client)
+                      "closed client dtls-stream/peername must raise [DTLS:IO]"))))
+
   (def-test "DTLS verify-hostname option"
     (let [certs (generate-temp-certs {:common-name "localhost"})
           server (tls/listen "127.0.0.1" 0
