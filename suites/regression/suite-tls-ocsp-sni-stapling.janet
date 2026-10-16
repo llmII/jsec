@@ -27,9 +27,13 @@
 # path refuses to staple for self-signed certificates (ossl_get_ocsp_response:
 # "for a selfsigned certificate there will be no OCSP response") and
 # matches the OCSP certID against the leaf's issuer-name hash and serial,
-# so the fixture is a CA-issued leaf (ca/generate + ca/issue, first serial
-# 1) with a ca/create-ocsp-response built for that serial - a self-signed
-# fixture can never staple on this host regardless of the defect.
+# so the fixture is a CA-issued leaf (ca/generate root + ca/sign of a
+# generated CSR with an explicit leaf serial) with a
+# ca/create-ocsp-response built for the leaf's real serial, extracted
+# from the issued certificate - a self-signed fixture can never staple
+# on this host regardless of the defect, and a response built for any
+# other serial never staples either (the CertID serial must match the
+# leaf).
 #
 # This test demonstrates:
 #   (a) control: with no SNI the accepting context serves the staple -
@@ -55,14 +59,26 @@
 (import jsec/tls :as tls)
 (import jsec/tls-stream :as tls-stream)
 (import jsec/ca :as ca)
+(import jsec/cert :as cert)
+(import jsec/crypto :as crypto)
 (import ../helpers :prefix "")
 
 # Fixture: CA-issued leaf + matching OCSP response (see platform notes).
+# The leaf serial is pinned at issuance (ca/sign accepts :serial; ca/issue
+# has no :serial option and draws a fresh random 64-bit serial) and the
+# OCSP response is built for the issued leaf's real serial, extracted
+# with cert/parse - the pinned value keeps the fixture inside the signed
+# 64-bit range the ca/create-ocsp-response CertID builder can express.
 (def root (ca/generate {:common-name "jsec-sni-staple-root" :days-valid 2
                         :serial 1}))
-(def leaf (ca/issue root {:common-name "localhost" :days-valid 2
-                          :key-type :rsa-2048}))
-(def ocsp-der (ca/create-ocsp-response root @{:serial 1} :good))
+(def leaf-key (crypto/generate-key :rsa))
+(def leaf-csr (crypto/generate-csr leaf-key {:common-name "localhost"}))
+(def leaf-cert (ca/sign root leaf-csr {:serial 2 :days-valid 2}))
+(def leaf-serial
+  (int/s64 (string "0x" (string/replace-all ":" ""
+                          ((cert/parse leaf-cert) :serial)))))
+(def leaf @{:cert leaf-cert :key (crypto/export-key leaf-key)})
+(def ocsp-der (ca/create-ocsp-response root @{:serial leaf-serial} :good))
 
 (def ctx
   (tls/new-context
