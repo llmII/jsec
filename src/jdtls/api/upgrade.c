@@ -103,6 +103,8 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             dtls_panic_param("session must be a byte string or buffer");
         }
         session_opt = session;
+    } else if (!janet_checktype(opts, JANET_NIL)) {
+        dtls_panic_param("options must be a table or struct");
     }
 
     /* Get the file descriptor from the stream */

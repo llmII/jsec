@@ -264,11 +264,16 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
 
     /* Get request info */
     Janet req_info = argv[1];
-    if (!janet_checktype(req_info, JANET_TABLE)) {
-        ca_panic_param(
-            "request-info must be a table (from ca/parse-ocsp-request)");
+    JanetTable *req_table = NULL;
+    JanetStruct req_struct = NULL;
+    if (janet_checktype(req_info, JANET_TABLE)) {
+        req_table = janet_unwrap_table(req_info);
+    } else if (janet_checktype(req_info, JANET_STRUCT)) {
+        req_struct = janet_unwrap_struct(req_info);
+    } else {
+        ca_panic_param("request-info must be a table or struct (from "
+                       "ca/parse-ocsp-request)");
     }
-    JanetTable *req_table = janet_unwrap_table(req_info);
 
     /* Get status */
     const char *status_str = janet_to_string_or_keyword(argv[2]);
@@ -320,10 +325,15 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
         if (!janet_checktype(v, JANET_NIL)) {
             gen_nonce_v = v;
         }
+    } else if (!janet_checktype(opts, JANET_NIL)) {
+        ca_panic_param("options must be a table or struct");
     }
 
     /* Get serial from request info */
-    Janet serial_v = janet_table_get(req_table, janet_ckeywordv("serial"));
+    Janet serial_v = req_table
+                         ? janet_table_get(req_table, janet_ckeywordv("serial"))
+                         : janet_struct_get(req_struct,
+                                            janet_ckeywordv("serial"));
     if (janet_checktype(serial_v, JANET_NIL)) {
         ca_panic_param("request-info missing :serial");
     }
@@ -333,7 +343,10 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
      * tables without a :digest key keep the SHA-1 default; an unsupported
      * digest is a parameter error, never a silent SHA-1 fallback. */
     const EVP_MD *digest_md = EVP_sha1();
-    Janet digest_v = janet_table_get(req_table, janet_ckeywordv("digest"));
+    Janet digest_v = req_table
+                         ? janet_table_get(req_table, janet_ckeywordv("digest"))
+                         : janet_struct_get(req_struct,
+                                            janet_ckeywordv("digest"));
     if (!janet_checktype(digest_v, JANET_NIL)) {
         const char *digest_name = janet_to_string_or_keyword(digest_v);
         if (!digest_name) {
@@ -530,7 +543,11 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
      * generate differ by design. */
     int nonce_added = 0;
     if (include_nonce) {
-        Janet nonce_v = janet_table_get(req_table, janet_ckeywordv("nonce"));
+        Janet nonce_v = req_table
+                            ? janet_table_get(req_table,
+                                              janet_ckeywordv("nonce"))
+                            : janet_struct_get(req_struct,
+                                               janet_ckeywordv("nonce"));
         if (!janet_checktype(nonce_v, JANET_NIL)) {
             if (!janet_checktype(nonce_v, JANET_BUFFER) &&
                 !janet_checktype(nonce_v, JANET_STRING)) {

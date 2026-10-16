@@ -449,6 +449,8 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
             if (backlog < 1) backlog = 1;
             if (backlog > 65535) backlog = 65535;
         }
+    } else if (argc >= 3 && !janet_checktype(argv[2], JANET_NIL)) {
+        tls_panic_param("options must be a table or struct");
     }
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;

@@ -141,6 +141,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
             opts = janet_unwrap_table(argv[2]);
         } else if (janet_checktype(argv[2], JANET_STRUCT)) {
             opts_struct = janet_unwrap_struct(argv[2]);
+        } else {
+            crypto_panic_param("options must be a table or struct");
         }
 
         Janet val;

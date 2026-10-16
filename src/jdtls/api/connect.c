@@ -128,6 +128,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
                     "cannot use TLS context for DTLS connection");
             }
         }
+    } else if (!janet_checktype(opts, JANET_NIL)) {
+        dtls_panic_param("options must be a table or struct");
     }
 
     /* Resolve and connect */
