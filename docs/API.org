@@ -1077,16 +1077,38 @@ Sign data using CMS (Cryptographic Message Syntax).
 
 *Returns*: CMS signed data (DER or PEM based on input).
 
-*** (crypto/cms-verify cms-data &opt opts)
+*** (crypto/cms-verify cms-data &opt trusted-certs detached-data)
+*** (crypto/cms-verify cms-data opts)
 
-Verify a CMS signature.
+Verify a CMS signature and report a structured verdict. A
+cryptographic or X.509 verification failure never raises - it returns
+~:valid false~ with ~:error~ and ~:error-code~ filled in. Malformed
+inputs (invalid CMS DER, unparseable trusted certificates, wrong
+argument types) raise.
 
-- *cms-data*: CMS signed data
-- *opts*: Optional table
-  - ~:ca~: CA certificate for verification
-  - ~:detached~: Original data if signature is detached
+- *cms-data*: CMS signed data (DER)
+- *trusted-certs*: Trusted certificates for the signer chain: a PEM
+  string or buffer, or an array or tuple of PEM strings or buffers
+- *detached-data*: Content covered by a detached signature
+- *opts*: Optional table or struct
+  - ~:ca~: Trusted certificates (PEM string or buffer, array, or tuple)
+  - ~:trusted-cert~: Alias for ~:ca~; when both are given both load
+  - ~:verify-certs~: Boolean, default ~true~. When true the signer
+    certificate chain must verify against the trusted certificates for
+    ~:valid true~; with no trusted certificates supplied the verdict is
+    ~:valid false~ with ~:error "no trusted certificates provided"~.
+    When false only the cryptographic signature is checked, the
+    self-signed inspection posture where the caller verifies the signer
+    certificate out-of-band (e.g. SCEP initial enrollment)
 
-*Returns*: Table ~{:valid true/false :content data :certs [...]}~
+*Returns*: Table with:
+
+- ~:valid~: Boolean verdict under the requested posture
+- ~:content~: Verified content string, or nil when not valid
+- ~:signers~: Array of signer certificates in PEM format
+- ~:certs~: Array of certificates carried in the message, in PEM format
+- ~:error~: Failure reason string, or nil when valid
+- ~:error-code~: OpenSSL reason code number, or nil when valid
 
 *** (crypto/cms-encrypt data certs &opt opts)
 

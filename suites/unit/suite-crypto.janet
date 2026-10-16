@@ -493,4 +493,163 @@
     (let [scalar (crypto/ec-generate-scalar :p-521)
           point (crypto/ec-point-mul :p-521 scalar)]
       (assert (= 66 (length scalar)) "P-521 scalar is 66 bytes")
-      (assert (= 66 (length (point :x))) "P-521 x is 66 bytes"))))
+      (assert (= 66 (length (point :x))) "P-521 x is 66 bytes")))
+
+  (def-test "cms-verify trusted envelope returns valid verdict with content and cert arrays"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          r (crypto/cms-verify signed (a :cert))]
+      (assert (true? (get r :valid)) "verdict is valid")
+      (assert (= msg (get r :content)) "content round-trips")
+      (assert (= 1 (length (get r :signers))) "one signer certificate")
+      (assert (string/find "BEGIN CERTIFICATE" (first (get r :signers)))
+              "signer entry is PEM")
+      (assert (>= (length (get r :certs)) 1) "message certificates present")
+      (assert (nil? (get r :error)) "no error on success")
+      (assert (nil? (get r :error-code)) "no error code on success")))
+
+  (def-test "cms-verify accepts options dictionary and array or tuple trusted certs"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          ra (crypto/cms-verify signed @[(a :cert)])
+          rt (crypto/cms-verify signed [(a :cert)])
+          rd (crypto/cms-verify signed {:ca (a :cert)})
+          rb (crypto/cms-verify signed {:trusted-cert [(a :cert)]})
+          rmixed (crypto/cms-verify signed {:ca [] :trusted-cert [(a :cert)]})]
+      (assert (true? (get ra :valid)) "array positional trust verifies")
+      (assert (true? (get rt :valid)) "tuple positional trust verifies")
+      (assert (true? (get rd :valid)) ":ca option verifies")
+      (assert (true? (get rb :valid)) ":trusted-cert option verifies")
+      (assert (true? (get rmixed :valid)) ":ca and :trusted-cert load together")))
+
+  (def-test "cms-verify wrong-CA envelope returns failure verdict with error and error-code"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          b (generate-temp-certs {:common-name "cms-beta"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          r (crypto/cms-verify signed (b :cert))]
+      (assert (false? (get r :valid)) "verdict is not valid")
+      (assert (nil? (get r :content)) "no content on failure")
+      (assert (string? (get r :error)) "error reason is a string")
+      (assert (not (empty? (get r :error))) "error reason is non-empty")
+      (assert (number? (get r :error-code)) "error code is a number")))
+
+  (def-test "cms-verify tampered signature returns failure verdict without raising"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          head (string/slice signed 0 -2)
+          flipped (string/from-bytes (bxor (last signed) 1))
+          tampered (string head flipped)
+          r (crypto/cms-verify tampered (a :cert))]
+      (assert (false? (get r :valid)) "tampered signature is not valid")
+      (assert (nil? (get r :content)) "no content on tampered signature")
+      (assert (string? (get r :error)) "tampered signature reports a reason")))
+
+  (def-test "cms-verify without trusted certs reports no trusted certificates provided"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          r (crypto/cms-verify signed)]
+      (assert (false? (get r :valid)) "no-trust call is not valid by default")
+      (assert (= "no trusted certificates provided" (get r :error))
+              "the no-trust verdict names its cause")
+      (assert (nil? (get r :error-code)) "no OpenSSL code for missing trust")))
+
+  (def-test "cms-verify with :verify-certs false verifies signature only for self-signed"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          b (generate-temp-certs {:common-name "cms-beta"})
+          msg "important signed message"
+          signed (crypto/cms-sign (a :cert) (a :key) msg)
+          off (crypto/cms-verify signed {:verify-certs false})
+          on (crypto/cms-verify signed {:verify-certs true})
+          wrong (crypto/cms-verify signed {:ca (b :cert)})
+          wrong-off (crypto/cms-verify signed {:ca (b :cert)
+                                               :verify-certs false})]
+      (assert (true? (get off :valid)) "signature-only posture accepts self-signed")
+      (assert (= msg (get off :content)) "signature-only posture recovers content")
+      (assert (false? (get on :valid)) "the default posture rejects unanchored signers")
+      (assert (false? (get wrong :valid)) "wrong CA fails with verification on")
+      (assert (true? (get wrong-off :valid))
+              "wrong CA passes with verification off (signature only)")))
+
+  (def-test "cms-verify with :verify-certs false reports tampered signature failure"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          signed (crypto/cms-sign (a :cert) (a :key) "first content")
+          head (string/slice signed 0 -2)
+          tampered (string head (string/from-bytes (bxor (last signed) 1)))
+          r (crypto/cms-verify tampered {:verify-certs false})
+          rc (crypto/cms-verify signed {:verify-certs false})]
+      (assert (false? (get r :valid)) "tampered signature is not valid")
+      (assert (string? (get r :error)) "tampered signature reports a reason")
+      (assert (number? (get r :error-code)) "tampered signature reports a code")
+      (assert (true? (get rc :valid)) "untampered envelope still verifies")))
+
+  (def-test "cms-verify detached positional form verifies content and rejects tampering"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          msg "important signed message"
+          detached (crypto/cms-sign (a :cert) (a :key) msg {:detached true})
+          ok (crypto/cms-verify detached (a :cert) msg)
+          bad (crypto/cms-verify detached (a :cert) "TAMPERED message")]
+      (assert (true? (get ok :valid)) "correct detached content verifies")
+      (assert (= msg (get ok :content)) "detached content is reported")
+      (assert (false? (get bad :valid)) "tampered detached content fails")
+      (assert (string? (get bad :error)) "tampered detached content explains")))
+
+  (def-test "cms-verify raises on malformed CMS data"
+    (assert-error (crypto/cms-verify "garbage not DER")
+                  "malformed CMS must raise")
+    (try
+      (crypto/cms-verify "garbage not DER")
+      ([e] (assert (string/find "failed to parse CMS data" e)
+                   "the raise names the CMS parse failure"))))
+
+  (def-test "cms-verify raises on unparseable trusted certificate input"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          signed (crypto/cms-sign (a :cert) (a :key) "msg")]
+      (assert-error (crypto/cms-verify signed "garbage-no-pem")
+                    "garbage trust PEM must raise")
+      (assert-error (crypto/cms-verify signed ["garbage-no-pem"])
+                    "garbage trust PEM entry must raise")
+      (try
+        (crypto/cms-verify signed "garbage-no-pem")
+        ([e] (assert (string/find "failed to load trusted certificate" e)
+                     "the raise names the trusted-certificate failure")))))
+
+  (def-test "cms-verify raises on invalid argument and option types"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          signed (crypto/cms-sign (a :cert) (a :key) "msg")]
+      (assert-error (crypto/cms-verify signed 42)
+                    "non-bytes non-dictionary trust input raises")
+      (assert-error (crypto/cms-verify signed {:verify-certs "yes"})
+                    "non-boolean :verify-certs raises")
+      (assert-error (crypto/cms-verify signed {:ca 42})
+                    "non-bytes non-indexed :ca raises")
+      (assert-error (crypto/cms-verify signed nil 42)
+                    "non-bytes positional detached data raises")
+      (assert-error (crypto/cms-verify signed {:ca (a :cert)} "msg")
+                    "options dictionary plus positional detached raises")
+      (assert-error (crypto/cms-verify signed {:ca (a :cert) :detached "msg"})
+                    "detached content in the options dictionary raises")))
+
+  (def-test "cms-verify result table keys keep their documented types"
+    (let [a (generate-temp-certs {:common-name "cms-alpha"})
+          b (generate-temp-certs {:common-name "cms-beta"})
+          signed (crypto/cms-sign (a :cert) (a :key) "msg")
+          good (crypto/cms-verify signed (a :cert))
+          bad (crypto/cms-verify signed (b :cert))]
+      (assert (boolean? (get good :valid)) ":valid is boolean")
+      (assert (string? (get good :content)) ":content is string when valid")
+      (assert (indexed? (get good :signers)) ":signers is an array")
+      (assert (indexed? (get good :certs)) ":certs is an array")
+      (assert (nil? (get good :error)) ":error is nil when valid")
+      (assert (nil? (get good :error-code)) ":error-code is nil when valid")
+      (assert (boolean? (get bad :valid)) ":valid stays boolean on failure")
+      (assert (nil? (get bad :content)) ":content is nil on failure")
+      (assert (indexed? (get bad :signers)) ":signers stays an array on failure")
+      (assert (indexed? (get bad :certs)) ":certs stays an array on failure")
+      (assert (string? (get bad :error)) ":error is a string on failure")
+      (assert (number? (get bad :error-code)) ":error-code is a number on failure")))
+)
