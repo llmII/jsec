@@ -50,8 +50,8 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
 
     /* Initialize TLS-specific fields */
     tls->ctx = ctx;
-    tls->owns_ctx = owns_ctx;
-    tls->is_server = is_server;
+    if (is_server) tls->flags |= JTLS_FLAG_SERVER;
+    if (owns_ctx) tls->flags |= JTLS_FLAG_OWNS_CTX;
     tls->transport = transport;
     tls->conn_state = TLS_CONN_INIT;
     tls->buffer_size = buffer_size;
@@ -88,19 +88,27 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     SSL_set_bio(tls->ssl, tls->bio, tls->bio);
 
     /* Enable read-ahead for better performance with non-blocking I/O.
-     * This tells OpenSSL to read more data than strictly needed,
-     * reducing the number of syscalls. */
+     * This tells the TLS library to read more data than strictly needed,
+     * reducing the number of syscalls.
+     * Add 325 bytes of TLS record framing headroom (5-byte header + up to
+     * 320 bytes of IV/AEAD tag/padding) per 16384-byte TLS record so N full
+     * encrypted records summing to the target plaintext size fit in a single
+     * socket read() without truncating the trailing record. */
     SSL_set_read_ahead(tls->ssl, 1);
-
-    /* Allocate BIO read-ahead buffer.
-     * Use buffer_size if specified and reasonable, otherwise default to
-     * 128KB. Testing showed 128KB provides best balance of throughput and
-     * memory. Minimum is 16KB (one TLS record), maximum capped at 256KB. */
-    size_t bio_ahead_size = 131072; /* Default: 128KB (eight TLS records) */
-    if (buffer_size >= 16384 && buffer_size <= 262144) {
-        bio_ahead_size = (size_t)buffer_size;
+    size_t plaintext_size = (size_t)DEFAULT_TLS_BUFFER_SIZE;
+    if (buffer_size > 0 && buffer_size <= MAX_TLS_BUFFER_SIZE) {
+        plaintext_size = (size_t)buffer_size;
     }
-    tls->bio_ahead.capacity = bio_ahead_size;
+    size_t num_records = (plaintext_size + 16383) / 16384;
+    if (num_records == 0) num_records = 1;
+    size_t read_ahead_size = plaintext_size + num_records * 325;
+    if (read_ahead_size < 16709) {
+        read_ahead_size = 16709;
+    }
+#if JSEC_LIBRESSL
+    /* LibreSSL lacks SSL_set_default_read_buffer_len; maintain our own
+     * user-space BIO read-ahead buffer. */
+    tls->bio_ahead.capacity = read_ahead_size;
     tls->bio_ahead.data =
         (unsigned char *)janet_malloc(tls->bio_ahead.capacity);
     if (tls->bio_ahead.data) {
@@ -110,6 +118,12 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
         /* Non-fatal: we'll just do direct reads without buffering */
         tls->bio_ahead.capacity = 0;
     }
+#else
+    /* OpenSSL: enlarge OpenSSL's internal read buffer directly so BIO reads
+     * straight from the kernel socket into OpenSSL's rbuf with zero double
+     * buffering or intermediate memcpy. */
+    SSL_set_default_read_buffer_len(tls->ssl, read_ahead_size);
+#endif
 
     /* Set handshake mode */
     if (is_server) {
@@ -138,16 +152,10 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     /* Handshake timing - only record if explicitly enabled.
      * Uses CLOCK_MONOTONIC which is fast (vDSO on Linux) and doesn't
      * suffer from time adjustments. */
-    tls->track_handshake_time = track_handshake_time;
     if (track_handshake_time) {
+        tls->flags |= JTLS_FLAG_TRACK_HANDSHAKE;
         clock_gettime(CLOCK_MONOTONIC, &tls->ts_connect);
-    } else {
-        tls->ts_connect.tv_sec = 0;
-        tls->ts_connect.tv_nsec = 0;
     }
-    /* Zero out handshake timestamp - will be set when handshake completes */
-    tls->ts_handshake.tv_sec = 0;
-    tls->ts_handshake.tv_nsec = 0;
 
     return tls;
 }

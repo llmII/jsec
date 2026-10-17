@@ -7,6 +7,11 @@
 
 #include "../internal.h"
 
+/* Cached default client SSL_CTX instances (slot 0: verify=0, slot 1: verify=1)
+ * Protected by ctx_cache_lock. Avoids reloading the system CA bundle on every
+ * default client connection. */
+static SSL_CTX *default_client_ctx[2] = {NULL, NULL};
+
 /*============================================================================
  * CREATE CLIENT CONTEXT
  *============================================================================
@@ -17,19 +22,38 @@
  *   security_opts - Janet table or struct with security options
  *                   (:min-version, :ciphers, etc.)
  *   ca_opt        - Supplied CA (trust source). When provided, the system
- * default roots are NOT loaded: the supplied CA replaces them.
+ *                   default roots are NOT loaded: the supplied CA replaces
+ *                   them.
+ *   use_cache     - Whether a default context (nil security_opts and ca_opt)
+ *                   may be shared across connections via default_client_ctx
  */
-SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
+SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt,
+                                int use_cache) {
     /* Validate :security before any SSL_CTX exists or ctx_cache_lock
      * is taken (never longjmp past cleanup). */
     jutils_validate_security_options(security_opts);
+
+    int have_ca = !janet_checktype(ca_opt, JANET_NIL);
+    int can_cache = use_cache && !have_ca &&
+                    janet_checktype(security_opts, JANET_NIL) &&
+                    !keylog_file && ctx_cache_lock != NULL;
+    int slot = verify ? 1 : 0;
+
+    if (can_cache) {
+        janet_os_mutex_lock(ctx_cache_lock);
+        if (default_client_ctx[slot]) {
+            SSL_CTX *cached = default_client_ctx[slot];
+            SSL_CTX_up_ref(cached);
+            janet_os_mutex_unlock(ctx_cache_lock);
+            return cached;
+        }
+        janet_os_mutex_unlock(ctx_cache_lock);
+    }
 
     jutils_cert_load_error_clear();
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) return NULL;
-
-    int have_ca = !janet_checktype(ca_opt, JANET_NIL);
 
     /* Set verification mode */
     if (verify) {
@@ -74,6 +98,15 @@ SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt) {
     /* Enable key logging if SSLKEYLOGFILE is set */
     if (keylog_file) {
         SSL_CTX_set_keylog_callback(ctx, jtls_keylog_callback);
+    }
+
+    if (can_cache) {
+        janet_os_mutex_lock(ctx_cache_lock);
+        if (!default_client_ctx[slot]) {
+            default_client_ctx[slot] = ctx;
+            SSL_CTX_up_ref(ctx);
+        }
+        janet_os_mutex_unlock(ctx_cache_lock);
     }
 
     return ctx;

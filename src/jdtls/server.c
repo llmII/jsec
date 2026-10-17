@@ -661,8 +661,8 @@ typedef struct {
 #endif
     DTLSServer *server;
     JanetBuffer *buffer;
-    int32_t nbytes;
     double timeout;
+    int32_t nbytes;
 } DTLSRecvFromState;
 
 /*
@@ -930,7 +930,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
             ERR_clear_error();
             return janet_wrap_nil(); /* Out of memory or other error */
         }
-        session->cookie_verified = 1;
+        session->flags |= JDTLS_SESS_COOKIE_VERIFIED;
         /* Store peer address in SSL ex_data for cookie generation */
         SSL_set_ex_data(session->ssl, dtls_peer_addr_ex_index,
                         &session->peer_addr);

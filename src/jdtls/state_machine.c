@@ -170,6 +170,9 @@ DTLSResult dtls_do_shutdown(SSL *ssl) {
  * exactly as before.
  */
 
+#define JDTLS_TIMER_WAKE_PHASE (1u << 0)
+#define JDTLS_TIMER_CANCELED (1u << 1)
+
 struct DTLSFlightTimer {
     SSL *ssl;
     void *owner;
@@ -178,8 +181,7 @@ struct DTLSFlightTimer {
     DTLSFlightTimer **slot; /* owner's arm pointer; NULLed on retire */
     JanetFiber *fiber;      /* two-step helper fiber, one per arm */
     double seconds;         /* flight interval the fiber sleeps out */
-    int phase;              /* 0: sleep step pending, 1: wake step pending */
-    int canceled;
+    uint8_t flags;          /* Bitmask of JDTLS_TIMER_* */
 };
 
 /* Janet core marks a fiber parked on the event loop with
@@ -256,14 +258,14 @@ static Janet dtls_flight_timer_step(int32_t argc, Janet *argv) {
     DTLSFlightTimer *arm;
     janet_fixarity(argc, 1);
     arm = (DTLSFlightTimer *)janet_getpointer(argv, 0);
-    if (arm->phase == 0) {
-        arm->phase = 1;
-        if (!arm->canceled) {
+    if (!(arm->flags & JDTLS_TIMER_WAKE_PHASE)) {
+        arm->flags |= JDTLS_TIMER_WAKE_PHASE;
+        if (!(arm->flags & JDTLS_TIMER_CANCELED)) {
             janet_sleep_await(arm->seconds);
         }
         return janet_wrap_nil();
     }
-    if (!arm->canceled && *arm->slot == arm) {
+    if (!(arm->flags & JDTLS_TIMER_CANCELED) && *arm->slot == arm) {
         struct timeval tv;
         int rc;
         /* Detach first: teardown during the tick must not reach the
@@ -311,8 +313,7 @@ void dtls_flight_timer_arm(DTLSFlightTimer **slot, SSL *ssl, void *owner,
     arm->flush = flush;
     arm->slot = slot;
     arm->seconds = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
-    arm->phase = 0;
-    arm->canceled = 0;
+    arm->flags = 0;
     if (!dtls_flight_timer_body) {
         /* Helper body missing (module init never compiled it): keep the
          * handshake running without retransmission, like the OOM case. */
@@ -346,7 +347,7 @@ void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc) {
         return;
     }
     *slot = NULL;
-    arm->canceled = 1;
+    arm->flags |= JDTLS_TIMER_CANCELED;
     if (in_gc) {
         /* A GC finalizer runs during a sweep, where even janet_schedule
          * is unsafe (it may grow the scheduler spawn queue), and at

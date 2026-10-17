@@ -20,7 +20,7 @@ Janet cfun_dtls_shutdown(int32_t argc, Janet *argv) {
 
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (!client->ssl || client->closed) {
+    if (!client->ssl || (client->flags & JDTLS_CLIENT_CLOSED)) {
         return janet_wrap_nil();
     }
 
@@ -56,13 +56,13 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
     int force = argc > 1 && janet_truthy(argv[1]);
 
-    if (client->closed) {
+    if (client->flags & JDTLS_CLIENT_CLOSED) {
         return janet_wrap_nil();
     }
 
     /* For force close or non-established state, skip SSL shutdown */
     if (force || client->state != DTLS_STATE_ESTABLISHED) {
-        client->closed = 1;
+        client->flags |= JDTLS_CLIENT_CLOSED;
         client->state = DTLS_STATE_CLOSED;
         if (client->transport) {
             janet_stream_close(client->transport);
@@ -83,7 +83,7 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
     if (ret >= 0) {
         /* close_notify generated (ret 0: sent, awaiting the peer's;
          * ret 1: bidirectional done) - the local close is complete */
-        client->closed = 1;
+        client->flags |= JDTLS_CLIENT_CLOSED;
         client->state = DTLS_STATE_CLOSED;
         if (client->transport) {
             janet_stream_close(client->transport);
@@ -98,7 +98,7 @@ Janet cfun_dtls_close(int32_t argc, Janet *argv) {
         /* Shutdown complete or the peer already closed: a peer close
          * without close_notify still completes the close; read
          * surfaces own the truncation raise */
-        client->closed = 1;
+        client->flags |= JDTLS_CLIENT_CLOSED;
         client->state = DTLS_STATE_CLOSED;
         if (client->transport) {
             janet_stream_close(client->transport);

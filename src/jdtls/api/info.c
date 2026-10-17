@@ -225,7 +225,7 @@ Janet cfun_dtls_localname(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (client->closed || !client->transport ||
+    if ((client->flags & JDTLS_CLIENT_CLOSED) || !client->transport ||
         (client->transport->flags & JANET_STREAM_CLOSED)) {
         dtls_panic_io("stream closed");
     }
@@ -253,7 +253,7 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (client->closed || !client->transport ||
+    if ((client->flags & JDTLS_CLIENT_CLOSED) || !client->transport ||
         (client->transport->flags & JANET_STREAM_CLOSED)) {
         dtls_panic_io("stream closed");
     }
@@ -365,7 +365,7 @@ Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv) {
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
     /* Return nil if tracking not enabled */
-    if (!client->track_handshake_time) {
+    if (!(client->flags & JDTLS_CLIENT_TRACK_HANDSHAKE)) {
         return janet_wrap_nil();
     }
 
@@ -409,7 +409,8 @@ Janet cfun_dtls_get_peer_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (client->closed || client->state == DTLS_STATE_CLOSED ||
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED ||
         (client->transport &&
          (client->transport->flags & JANET_STREAM_CLOSED))) {
         dtls_panic_io("stream closed");

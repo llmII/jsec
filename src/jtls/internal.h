@@ -73,13 +73,13 @@
 
 /*
  * Buffer size constants for TLS I/O operations
- * DEFAULT_TLS_BUFFER_SIZE (16KB): Optimal for most use cases
+ * DEFAULT_TLS_BUFFER_SIZE (64KB): Optimal for TLS record batching
  * MIN_TLS_BUFFER_SIZE (512B): Minimum for TLS record headers
- * MAX_TLS_BUFFER_SIZE (64KB): Upper limit to prevent excessive allocation
+ * MAX_TLS_BUFFER_SIZE (256KB): Upper limit to prevent excessive allocation
  */
-#define DEFAULT_TLS_BUFFER_SIZE 16384
+#define DEFAULT_TLS_BUFFER_SIZE 65536
 #define MIN_TLS_BUFFER_SIZE 512
-#define MAX_TLS_BUFFER_SIZE 65536
+#define MAX_TLS_BUFFER_SIZE 262144
 
 /*============================================================================
  * CONNECTION STATE MACHINE
@@ -189,23 +189,23 @@ struct TLSState {
     DWORD wsa_flags; /* Flags for WSARecv */
 #endif
     TLSStream *tls;            /* The TLS stream */
-    TLSOpType op;              /* Operation type */
-    TLSIOState io_state;       /* Current I/O state */
     JanetBuffer *user_buf;     /* Buffer for read operations */
     Janet write_src;           /* Write source object (buffer or string);
                                 * the byte pointer is re-derived from it on
                                 * every write attempt - never cached across
                                 * suspension - and it is GC-marked while the
                                 * write is parked (JANET_ASYNC_EVENT_MARK) */
+    double timeout;            /* Operation deadline in seconds; armed by
+                                * jtls_schedule_async only when the fiber
+                                * actually suspends */
+    TLSOpType op;              /* Operation type */
+    TLSIOState io_state;       /* Current I/O state */
     int32_t write_len;         /* Total bytes to write */
     int32_t write_offset;      /* Bytes already written */
     int32_t bytes_requested;   /* Bytes requested for read (-1 for any) */
     int32_t buf_start;         /* user_buf->count when read op began; n is
                                 * relative to this, matching ev/read append
                                 * semantics (never treat n as buffer total) */
-    double timeout;            /* Operation deadline in seconds; armed by
-                                * jtls_schedule_async only when the fiber
-                                * actually suspends */
     uint8_t has_timeout;       /* 1 if timeout is a finite deadline to arm at
                                 * first suspension, 0 otherwise; narrow type,
                                 * and 0 from memset safely means "no deadline" */
@@ -234,34 +234,39 @@ struct TLSState {
  * - write_state: For write operations (can be concurrent with read)
  * This eliminates malloc/free for every I/O operation.
  */
+/* TLSStream boolean flags (packed into uint8_t flags) */
+#define JTLS_FLAG_SERVER (1u << 0)
+#define JTLS_FLAG_OWNS_CTX (1u << 1)
+#define JTLS_FLAG_TRACK_HANDSHAKE (1u << 2)
+
 struct TLSStream {
-    JanetStream stream;     /* Embedded stream for method dispatch */
-    SSL *ssl;               /* OpenSSL SSL object */
-    SSL_CTX *ctx;           /* SSL context */
-    BIO *bio;               /* Custom BIO for socket I/O */
-    JanetStream *transport; /* Underlying TCP/Unix stream */
-    TLSConnectionState conn_state;
-    int is_server;
-    int owns_ctx;
-    int32_t buffer_size;
+    JanetStream stream;        /* Embedded stream for method dispatch */
+    SSL *ssl;                  /* OpenSSL SSL object */
+    SSL_CTX *ctx;              /* SSL context */
+    BIO *bio;                  /* Custom BIO for socket I/O */
+    JanetStream *transport;    /* Underlying TCP/Unix stream */
     /* Track pending operations for cooperative mode switching */
     JanetFiber *pending_read;  /* Fiber waiting on read */
     JanetFiber *pending_write; /* Fiber waiting on write */
-    /* Embedded operation states - eliminates malloc per I/O operation */
-    TLSState read_state;  /* State for read/chunk operations */
-    TLSState write_state; /* State for write/shutdown/close operations */
-    /* BIO read-ahead buffer for reducing syscalls */
+#if JSEC_LIBRESSL
+    /* BIO read-ahead buffer for reducing syscalls on LibreSSL */
     struct {
         unsigned char *data; /* Buffer storage */
         unsigned char *p;    /* Current read position */
         unsigned char *pe;   /* End of valid data */
         size_t capacity;     /* Total buffer capacity */
     } bio_ahead;
+#endif
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when stream was created */
     struct timespec ts_handshake; /* Time when handshake completed */
+    /* Embedded operation states - eliminates malloc per I/O operation */
+    TLSState read_state;  /* State for read/chunk operations */
+    TLSState write_state; /* State for write/shutdown/close operations */
+    TLSConnectionState conn_state;
+    int32_t buffer_size;
+    uint8_t flags; /* Bitmask of JTLS_FLAG_* */
 };
 
 /*============================================================================
@@ -315,10 +320,10 @@ struct ServerCTXCache {
     char *cert_path;
     char *key_path;
     unsigned char *cert_data;
-    int cert_len;
     unsigned char *key_data;
-    int key_len;
     unsigned char *alpn_wire;
+    int cert_len;
+    int key_len;
     unsigned int alpn_len;
 };
 
@@ -375,8 +380,10 @@ void jtls_keylog_callback(const SSL *ssl, const char *line);
  */
 
 /* Create client SSL context (ca_opt, when supplied, is the trust source:
- * system default roots are not loaded) */
-SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt);
+ * system default roots are not loaded; use_cache shares the default
+ * security_opts/ca_opt client context across connections) */
+SSL_CTX *jtls_create_client_ctx(int verify, Janet security_opts, Janet ca_opt,
+                                int use_cache);
 
 /* Create server SSL context (with optional caching) */
 SSL_CTX *jtls_create_server_ctx(Janet cert, Janet key, Janet security_opts,
