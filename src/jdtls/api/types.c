@@ -23,7 +23,7 @@ static int dtls_client_gc(void *p, size_t s) {
         client->ssl = NULL;
     }
     /* Only free ctx if we own it (not from a shared DTLSContext) */
-    if (client->ctx && client->owns_ctx) {
+    if (client->ctx && (client->flags & JDTLS_CLIENT_OWNS_CTX)) {
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
     }

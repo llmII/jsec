@@ -116,11 +116,13 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     client->transport = transport;
     client->state = DTLS_STATE_IDLE;
-    client->is_server = is_server; /* Set based on :server option */
+    if (is_server) {
+        client->flags |= JDTLS_CLIENT_IS_SERVER;
+    }
 
     /* Initialize handshake timing if enabled */
-    client->track_handshake_time = track_handshake_time;
     if (track_handshake_time) {
+        client->flags |= JDTLS_CLIENT_TRACK_HANDSHAKE;
         clock_gettime(CLOCK_MONOTONIC, &client->ts_connect);
     }
 
@@ -146,14 +148,14 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     if (!client->ctx) {
         dtls_panic_ssl("failed to create SSL context");
     }
-    client->owns_ctx = 1;
+    client->flags |= JDTLS_CLIENT_OWNS_CTX;
 
     /* Apply security options */
     if (!apply_security_options(client->ctx, security, 1,
                                 is_server)) { /* is_dtls = 1 */
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
-        client->owns_ctx = 0;
+        client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
         dtls_panic_ssl("failed to apply security options");
     }
 
@@ -185,7 +187,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             SSL_CTX_set_default_verify_paths(client->ctx) != 1) {
             SSL_CTX_free(client->ctx);
             client->ctx = NULL;
-            client->owns_ctx = 0;
+            client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
             dtls_panic_ssl("failed to load default verify paths");
         }
     } else {
@@ -198,7 +200,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         /* ctx was already set on client, need to clean up */
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
-        client->owns_ctx = 0;
+        client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
         dtls_panic_ssl("failed to create SSL object");
     }
 

@@ -178,24 +178,27 @@ void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc);
  * Stored in server's connection table keyed by peer address.
  */
 
+/* DTLSSession boolean flags (packed into uint8_t flags) */
+#define JDTLS_SESS_COOKIE_VERIFIED (1u << 0)
+#define JDTLS_SESS_TRACK_HANDSHAKE (1u << 1)
+
 typedef struct DTLSSession {
     SSL *ssl;                 /* OpenSSL SSL object */
     BIO *rbio;                /* Read BIO (memory BIO for incoming data) */
     BIO *wbio;                /* Write BIO (memory BIO for outgoing data) */
-    DTLSAddress peer_addr;    /* Peer's address */
-    DTLSState state;          /* Session state */
+    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
+    struct DTLSSession *next; /* For linked list in hash bucket */
     double last_activity;     /* Time of last activity (for timeout) */
-    int cookie_verified;      /* Has client passed cookie exchange? */
     uint64_t rec_seq_off;     /* Record sequence alignment: constant
                                * offset added to outbound epoch-0 record
                                * headers (RFC 6347 section 4.2.1) */
-    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
-    struct DTLSSession *next; /* For linked list in hash bucket */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when session was created */
     struct timespec ts_handshake; /* Time when handshake completed */
+    DTLSAddress peer_addr;        /* Peer's address */
+    DTLSState state;              /* Session state */
+    uint8_t flags;                /* Bitmask of JDTLS_SESS_* */
 } DTLSSession;
 
 /*
@@ -209,24 +212,27 @@ typedef struct DTLSSession {
  * Methods like :read, :write, :close work through method dispatch.
  */
 
+/* DTLSClient boolean flags (packed into uint8_t flags) */
+#define JDTLS_CLIENT_CLOSED (1u << 0)
+#define JDTLS_CLIENT_OWNS_CTX (1u << 1)
+#define JDTLS_CLIENT_IS_SERVER (1u << 2)
+#define JDTLS_CLIENT_TRACK_HANDSHAKE (1u << 3)
+
 typedef struct {
-    JanetStream stream;     /* Embedded stream for method dispatch */
-    JanetStream *transport; /* Underlying UDP socket (connected) */
-    SSL *ssl;               /* OpenSSL SSL object */
-    SSL_CTX *ctx;           /* Client SSL context */
+    JanetStream stream;            /* Embedded stream for method dispatch */
+    JanetStream *transport;        /* Underlying UDP socket (connected) */
+    SSL *ssl;                      /* OpenSSL SSL object */
+    SSL_CTX *ctx;                  /* Client SSL context */
     BIO *rbio;             /* Memory BIO: we write received data, SSL reads */
     BIO *wbio;             /* Memory BIO: SSL writes, we sendto() */
-    DTLSState state;       /* Connection state */
-    DTLSAddress peer_addr; /* Server address (for reference) */
     DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
-    int closed;            /* Client has been closed */
-    int owns_ctx;          /* Whether we own ctx (should free on GC) */
-    int is_server;         /* Whether acting as server (for upgrade) */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    int track_handshake_time;     /* Whether to record handshake timing */
-    struct timespec ts_connect;   /* Time when client was created */
-    struct timespec ts_handshake; /* Time when handshake completed */
+    struct timespec ts_connect;    /* Time when client was created */
+    struct timespec ts_handshake;  /* Time when handshake completed */
+    DTLSAddress peer_addr;         /* Server address (for reference) */
+    DTLSState state;               /* Connection state */
+    uint8_t flags;                 /* Bitmask of JDTLS_CLIENT_* */
 } DTLSClient;
 
 /*
@@ -289,10 +295,10 @@ typedef struct {
     JanetStream *transport; /* Underlying UDP socket */
     SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
+    double session_timeout; /* Session timeout in seconds */
     int session_count;      /* Number of active sessions */
     int max_sessions;       /* Upper bound on session_count */
-    double session_timeout; /* Session timeout in seconds */
-    int closed;             /* Server has been closed */
+    uint8_t closed;         /* Server has been closed */
 } DTLSServer;
 
 /* Session lifecycle */

@@ -53,6 +53,11 @@ static void tls_accept_backoff(void) {
  * This is the TLS equivalent of net/accept-loop.
  */
 
+/* Accept state boolean flags (packed into uint8_t flags) */
+#define JTLS_ACCEPT_OWNS_CTX (1u << 0)
+#define JTLS_ACCEPT_TCP_NODELAY (1u << 1)
+#define JTLS_ACCEPT_TRACK_HANDSHAKE (1u << 2)
+
 /* State for TLS accept loop - level triggered to handle multiple connections
  */
 typedef struct {
@@ -63,11 +68,9 @@ typedef struct {
     char accept_buf[2 * (sizeof(SOCKADDR_STORAGE) + 16)]; /* Address buffer */
 #endif
     SSL_CTX *ctx;
-    int owns_ctx;
     JanetFunction *handler;
     int32_t buffer_size;
-    int tcp_nodelay;
-    int track_handshake_time;
+    uint8_t flags; /* Bitmask of JTLS_ACCEPT_* */
 } TLSAcceptLoopState;
 
 #ifdef JANET_WINDOWS
@@ -129,7 +132,7 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             break;
 
         case JANET_ASYNC_EVENT_CLOSE:
-            if (state && state->owns_ctx && state->ctx) {
+            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) && state->ctx) {
                 SSL_CTX_free(state->ctx);
             }
 #ifdef JANET_WINDOWS
@@ -193,7 +196,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             SSL_CTX_up_ref(state->ctx);
             TLSStream *tls = jtls_setup_stream(
                 client_stream, state->ctx, 1, 1, state->buffer_size,
-                state->tcp_nodelay, state->track_handshake_time);
+                (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
             /* Spawn handler fiber */
             Janet tls_val = janet_wrap_abstract(tls);
@@ -263,7 +267,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                 SSL_CTX_up_ref(state->ctx);
                 TLSStream *tls = jtls_setup_stream(
                     client_stream, state->ctx, 1, 1, state->buffer_size,
-                    state->tcp_nodelay, state->track_handshake_time);
+                    (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                    (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
                 /* Spawn a fiber to handle this connection */
                 Janet tls_val = janet_wrap_abstract(tls);
@@ -362,11 +367,11 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
         tls_panic_io("out of memory");
     }
     state->ctx = ctx;
-    state->owns_ctx = owns_ctx;
     state->handler = handler;
     state->buffer_size = buffer_size;
-    state->tcp_nodelay = tcp_nodelay;
-    state->track_handshake_time = track_handshake_time;
+    state->flags = (owns_ctx ? JTLS_ACCEPT_OWNS_CTX : 0) |
+                   (tcp_nodelay ? JTLS_ACCEPT_TCP_NODELAY : 0) |
+                   (track_handshake_time ? JTLS_ACCEPT_TRACK_HANDSHAKE : 0);
 
     /* Use level-triggered mode to handle multiple connections */
     janet_stream_level_triggered(listener);
@@ -596,10 +601,8 @@ typedef struct {
     char accept_buf[2 * (sizeof(SOCKADDR_STORAGE) + 16)]; /* Address buffer */
 #endif
     SSL_CTX *ctx;
-    int owns_ctx;
     int32_t buffer_size;
-    int tcp_nodelay;
-    int track_handshake_time;
+    uint8_t flags; /* Bitmask of JTLS_ACCEPT_* */
 } TLSAcceptState;
 
 #ifdef JANET_WINDOWS
@@ -662,10 +665,10 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * success path, so release a still-owned context; successful
              * accepts transfer ownership to the TLS stream first and leave
              * owns_ctx cleared. */
-            if (state && state->owns_ctx && state->ctx) {
+            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) && state->ctx) {
                 SSL_CTX_free(state->ctx);
                 state->ctx = NULL;
-                state->owns_ctx = 0;
+                state->flags &= (uint8_t)~JTLS_ACCEPT_OWNS_CTX;
             }
             break;
 
@@ -723,12 +726,13 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
             /* Create TLS stream */
             TLSStream *tls = jtls_setup_stream(
-                client_stream, state->ctx, 1, state->owns_ctx,
-                state->buffer_size, state->tcp_nodelay,
-                state->track_handshake_time);
+                client_stream, state->ctx, 1,
+                (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0, state->buffer_size,
+                (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
             /* Ownership transferred to TLS stream */
-            state->owns_ctx = 0;
+            state->flags &= (uint8_t)~JTLS_ACCEPT_OWNS_CTX;
 
             /* Return the TLS stream */
             janet_schedule(fiber, janet_wrap_abstract(tls));
@@ -766,12 +770,14 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
                 /* Create TLS stream - handshake will happen on first I/O */
                 TLSStream *tls = jtls_setup_stream(
-                    client_stream, state->ctx, 1, state->owns_ctx,
-                    state->buffer_size, state->tcp_nodelay,
-                    state->track_handshake_time);
+                    client_stream, state->ctx, 1,
+                    (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0,
+                    state->buffer_size,
+                    (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                    (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
                 /* Ownership transferred to TLS stream */
-                state->owns_ctx = 0;
+                state->flags &= (uint8_t)~JTLS_ACCEPT_OWNS_CTX;
 
                 /* Return the TLS stream - handshake happens lazily */
                 janet_schedule(fiber, janet_wrap_abstract(tls));
@@ -872,10 +878,10 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
         tls_panic_io("out of memory");
     }
     state->ctx = ctx;
-    state->owns_ctx = owns_ctx;
     state->buffer_size = buffer_size;
-    state->tcp_nodelay = tcp_nodelay;
-    state->track_handshake_time = track_handshake_time;
+    state->flags = (owns_ctx ? JTLS_ACCEPT_OWNS_CTX : 0) |
+                   (tcp_nodelay ? JTLS_ACCEPT_TCP_NODELAY : 0) |
+                   (track_handshake_time ? JTLS_ACCEPT_TRACK_HANDSHAKE : 0);
 
     /* Optional timeout: arm like timed Janet I/O (net/accept, ev/read) so
      * the fiber raises "timeout" when the deadline expires. */

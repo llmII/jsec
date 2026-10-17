@@ -266,7 +266,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem);
  */
 typedef struct {
     SSL_CTX *ctx;
-    int is_dtls; /* 0 = TLS, 1 = DTLS */
+    uint8_t is_dtls; /* 0 = TLS, 1 = DTLS */
 } SSLContext;
 
 /* Unified context abstract type - shared between TLS and DTLS modules */

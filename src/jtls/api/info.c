@@ -30,8 +30,8 @@ static void check_handshake(TLSStream *tls) {
     if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
         SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
-            tls->ts_handshake.tv_nsec == 0) {
+        if ((tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) &&
+            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }
@@ -177,7 +177,7 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
     TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
     /* Return nil if timing is disabled */
-    if (!tls->track_handshake_time) {
+    if (!(tls->flags & JTLS_FLAG_TRACK_HANDSHAKE)) {
         return janet_wrap_nil();
     }
 

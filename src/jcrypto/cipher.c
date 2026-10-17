@@ -20,7 +20,7 @@ typedef struct {
     int key_len;
     int nonce_len; /* IV length for non-AEAD */
     int tag_len;   /* 0 for non-AEAD */
-    int is_aead;
+    uint8_t is_aead;
 } CipherInfo;
 
 static const CipherInfo cipher_table[] = {

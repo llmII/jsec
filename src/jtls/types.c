@@ -26,8 +26,8 @@ int ocsp_idx = -1;
 int alpn_idx = -1;
 
 /* Server context cache for session resumption */
-ServerCTXCache server_ctx_cache = {NULL, NULL, NULL, NULL, 0,
-                                   NULL, 0,    NULL, 0};
+ServerCTXCache server_ctx_cache = {NULL, NULL, NULL, NULL, NULL,
+                                   NULL, 0,    0,    0};
 
 /* Mutex protecting the context cache (allocated in module init) */
 JanetOSMutex *ctx_cache_lock = NULL;
@@ -62,6 +62,7 @@ int jtls_stream_gc(void *p, size_t s) {
     (void)s;
     TLSStream *tls = (TLSStream *)p;
 
+#if JSEC_LIBRESSL
     /* Free BIO read-ahead buffer */
     if (tls->bio_ahead.data) {
         janet_free(tls->bio_ahead.data);
@@ -69,13 +70,14 @@ int jtls_stream_gc(void *p, size_t s) {
         tls->bio_ahead.p = NULL;
         tls->bio_ahead.pe = NULL;
     }
+#endif
 
     if (tls->ssl) {
         SSL_free(tls->ssl);
         tls->ssl = NULL;
         tls->bio = NULL; /* BIO is freed by SSL_free */
     }
-    if (tls->ctx && tls->owns_ctx) {
+    if (tls->ctx && (tls->flags & JTLS_FLAG_OWNS_CTX)) {
         SSL_CTX_free(tls->ctx);
         tls->ctx = NULL;
     }

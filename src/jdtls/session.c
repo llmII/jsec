@@ -82,7 +82,7 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
 
     session->state = DTLS_STATE_IDLE;
     session->last_activity = get_current_time();
-    session->cookie_verified = 0;
+    session->flags = 0;
     session->next = NULL;
 
     return session;

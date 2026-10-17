@@ -94,7 +94,8 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
     int32_t n = janet_getinteger(argv, 1);
 
-    if (client->closed || client->state == DTLS_STATE_CLOSED) {
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
         dtls_panic_io("DTLS client is closed");
     }
 
@@ -164,7 +165,8 @@ Janet cfun_dtls_flush(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
 
-    if (client->closed || client->state == DTLS_STATE_CLOSED) {
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
         dtls_panic_io("DTLS client is closed");
     }
 
@@ -190,7 +192,8 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
     JanetByteView data = janet_getbytes(argv, 1);
 
-    if (client->closed || client->state == DTLS_STATE_CLOSED) {
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
         dtls_panic_io("DTLS client is closed");
     }
 

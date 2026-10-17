@@ -82,10 +82,39 @@
 #include "internal.h"
 #include <math.h>
 
-/* Cap on bytes read per iteration, matching Janet's ev/chunk rate
- * (core/ev.c). Bounds buffer growth to the data actually read, not the
- * request size. */
-#define JSEC_READ_CHUNK 4096
+/*============================================================================
+ * HELPER: Prepare buffer capacity and compute slice size for SSL_read
+ *============================================================================
+ * Sizes the next SSL_read slice to the caller's pre-allocated buffer capacity
+ * or the stream's configured buffer_size, eliminating the fixed 4KB read cap:
+ * - If remaining fits in the caller buffer's already-allocated unused capacity
+ *   (buf->capacity - buf->count), returns remaining with zero realloc.
+ * - If remaining <= stream buffer_size, ensures exact capacity (growth=1) and
+ *   returns remaining.
+ * - If remaining exceeds both unused buffer capacity and stream buffer_size
+ *   (e.g., :all / INT32_MAX or a multi-step chunk), grows in stream
+ *   buffer_size steps so buffer memory grows with data actually received.
+ */
+static inline int32_t jtls_prepare_read_slice(TLSStream *tls,
+                                              JanetBuffer *buf,
+                                              int32_t remaining) {
+    int32_t step_cap =
+        tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+    int32_t avail_cap = buf->capacity - buf->count;
+    if (remaining < 0) {
+        remaining = step_cap;
+    }
+    if (remaining <= avail_cap) {
+        return remaining;
+    }
+    if (remaining <= step_cap) {
+        janet_buffer_ensure(buf, buf->count + remaining, 1);
+        return remaining;
+    }
+    int32_t want = avail_cap > step_cap ? avail_cap : step_cap;
+    janet_buffer_extra(buf, want);
+    return want;
+}
 
 /*============================================================================
  * KEYLOG CALLBACK
@@ -115,8 +144,8 @@ void jtls_keylog_callback(const SSL *ssl, const char *line) {
 static inline void check_record_handshake_time(TLSStream *tls) {
     if (tls->conn_state != TLS_CONN_READY && SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
-            tls->ts_handshake.tv_nsec == 0) {
+        if ((tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) &&
+            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }
@@ -233,17 +262,17 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
  * HELPER: Check for buffered TLS record data
  *============================================================================
  * True while record bytes are still held ahead of the socket: the BIO's
- * read-ahead buffer first, then the SSL library's own buffer. The read
- * loops stop at this boundary - one more SSL_read past the last buffered
- * record forces a kernel read of an empty socket that can only come back
- * with EAGAIN. LibreSSL has no SSL_has_pending; its SSL_pending reports
+ * read-ahead buffer first (on LibreSSL), then the SSL library's own buffer.
+ * The read loops stop at this boundary - one more SSL_read past the last
+ * buffered record forces a kernel read of an empty socket that can only come
+ * back with EAGAIN. LibreSSL has no SSL_has_pending; its SSL_pending reports
  * the same buffered-record state.
  */
 static inline int jtls_has_buffered_data(TLSStream *tls) {
+#if JSEC_LIBRESSL
     if (tls->bio_ahead.p < tls->bio_ahead.pe) {
         return 1;
     }
-#if JSEC_LIBRESSL
     return SSL_pending(tls->ssl) > 0;
 #else
     return SSL_has_pending(tls->ssl);
@@ -288,13 +317,13 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * WANT_READ or WANT_WRITE.
          */
         case TLS_OP_HANDSHAKE: {
-            ret =
-                tls->is_server ? SSL_accept(tls->ssl) : SSL_connect(tls->ssl);
+            ret = (tls->flags & JTLS_FLAG_SERVER) ? SSL_accept(tls->ssl)
+                                                  : SSL_connect(tls->ssl);
 
             if (ret == 1) {
                 /* Handshake complete - connection ready for use */
                 tls->conn_state = TLS_CONN_READY;
-                if (tls->track_handshake_time) {
+                if (tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) {
                     clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
                 }
                 return TLS_IO_COMPLETE;
@@ -330,18 +359,14 @@ TLSIOState jtls_process_operation(TLSState *state) {
                  * bytes_requested counts bytes appended since buf_start, not
                  * the buffer's total length (buffers may arrive pre-filled).
                  */
-                int read_size = state->bytes_requested -
-                                (state->user_buf->count - state->buf_start);
-                if (state->bytes_requested < 0) {
-                    read_size = JSEC_READ_CHUNK; /* unbounded: fixed slices */
-                } else if (read_size <= 0) {
+                int32_t read_size = state->bytes_requested -
+                                    (state->user_buf->count - state->buf_start);
+                if (state->bytes_requested >= 0 && read_size <= 0) {
                     return TLS_IO_COMPLETE;
                 }
-                int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
-                                                       : read_size;
-
-                /* want bounds both ensured capacity and SSL_read length */
-                janet_buffer_extra(state->user_buf, want);
+                int32_t want = jtls_prepare_read_slice(
+                    tls, state->user_buf,
+                    state->bytes_requested < 0 ? -1 : read_size);
 
                 ret = SSL_read(tls->ssl,
                                state->user_buf->data + state->user_buf->count,
@@ -382,16 +407,13 @@ TLSIOState jtls_process_operation(TLSState *state) {
         case TLS_OP_CHUNK: {
             int just_read_data = 0; /* Track if we just successfully read */
             while (1) {
-                int remaining = state->bytes_requested -
-                                (state->user_buf->count - state->buf_start);
+                int32_t remaining = state->bytes_requested -
+                                    (state->user_buf->count - state->buf_start);
                 if (remaining <= 0) {
                     return TLS_IO_COMPLETE;
                 }
-                int want = remaining > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
-                                                       : remaining;
-
-                /* want bounds both ensured capacity and SSL_read length */
-                janet_buffer_extra(state->user_buf, want);
+                int32_t want =
+                    jtls_prepare_read_slice(tls, state->user_buf, remaining);
 
                 ret = SSL_read(tls->ssl,
                                state->user_buf->data + state->user_buf->count,
@@ -709,7 +731,12 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
          */
         if (io_state == TLS_IO_WANT_READ &&
             jtls_has_buffered_data(tls) &&
-            (tls->bio_ahead.p < tls->bio_ahead.pe || !retried)) {
+#if JSEC_LIBRESSL
+            (tls->bio_ahead.p < tls->bio_ahead.pe || !retried)
+#else
+            !retried
+#endif
+        ) {
             retried = 1;
             continue;
         }
@@ -1054,10 +1081,13 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (state &&
                 (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
                 TLSStream *tls = state->tls;
+                int32_t step_cap = tls->buffer_size > 0
+                                       ? tls->buffer_size
+                                       : DEFAULT_TLS_BUFFER_SIZE;
                 /* For CHUNK, only read what was requested.
-                 * For READ, read up to 64KB. */
-                int read_size = state->bytes_requested -
-                                (state->user_buf->count - state->buf_start);
+                 * For READ, read up to step_cap. */
+                int32_t read_size = state->bytes_requested -
+                                    (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested >= 0 && read_size <= 0) {
                     if (state->op == TLS_OP_CHUNK) {
                         /* Already have enough data */
@@ -1074,9 +1104,9 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     return;
                 }
                 if (state->bytes_requested < 0) {
-                    read_size = 65536;
-                } else if (state->op != TLS_OP_CHUNK && read_size > 65536) {
-                    read_size = 65536;
+                    read_size = step_cap;
+                } else if (state->op != TLS_OP_CHUNK && read_size > step_cap) {
+                    read_size = step_cap;
                 }
 
                 /* Drain pending data in bounded slices so the buffer
@@ -1086,9 +1116,8 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 int ret = 0;
                 int sock_err = 0;
                 while (read_size > 0) {
-                    int want = read_size > JSEC_READ_CHUNK ? JSEC_READ_CHUNK
-                                                          : read_size;
-                    janet_buffer_extra(state->user_buf, want);
+                    int32_t want = jtls_prepare_read_slice(
+                        tls, state->user_buf, read_size);
                     ret = SSL_read(
                         tls->ssl,
                         state->user_buf->data + state->user_buf->count,

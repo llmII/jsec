@@ -33,19 +33,29 @@ Janet cfun_read(int32_t argc, Janet *argv) {
         tls_panic_io("stream is closed");
     }
 
-    /* Handle :all keyword or integer for n */
+    /* Handle integer or :all keyword for n (check number first on hot path) */
     int read_all = 0;
-    int32_t bytes_to_read = 4096;
+    int32_t step_cap =
+        tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+    int32_t bytes_to_read;
 
-    if (janet_keyeq(argv[1], "all")) {
+    if (janet_checktype(argv[1], JANET_NUMBER)) {
+        bytes_to_read = janet_getnat(argv, 1);
+    } else if (janet_keyeq(argv[1], "all")) {
         read_all = 1;
         bytes_to_read = INT32_MAX;
     } else {
         bytes_to_read = janet_getnat(argv, 1);
     }
 
-    JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
-    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
+    JanetBuffer *buffer;
+    if (argc >= 3 && !janet_checktype(argv[2], JANET_NIL)) {
+        buffer = janet_getbuffer(argv, 2);
+    } else {
+        int32_t init_cap =
+            (read_all || bytes_to_read > step_cap) ? step_cap : bytes_to_read;
+        buffer = janet_buffer(init_cap);
+    }
 
     /* Use embedded read_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance.
@@ -56,8 +66,14 @@ Janet cfun_read(int32_t argc, Janet *argv) {
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
-    state->timeout = timeout;
-    state->has_timeout = !is_infinite_timeout(timeout);
+    if (argc > 3 && !janet_checktype(argv[3], JANET_NIL)) {
+        double timeout =
+            parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
+        state->timeout = timeout;
+        state->has_timeout = !is_infinite_timeout(timeout);
+    } else {
+        state->has_timeout = 0;
+    }
     /* write_src, write_len, write_offset unused for reads - not zeroed */
     /* error_msg only written on error via snprintf - not pre-zeroed */
 
@@ -90,8 +106,16 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     }
 
     int32_t bytes_to_read = janet_getnat(argv, 1);
-    JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 10);
-    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
+    JanetBuffer *buffer;
+    if (argc >= 3 && !janet_checktype(argv[2], JANET_NIL)) {
+        buffer = janet_getbuffer(argv, 2);
+    } else {
+        int32_t step_cap =
+            tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+        int32_t init_cap =
+            bytes_to_read > step_cap ? step_cap : bytes_to_read;
+        buffer = janet_buffer(init_cap);
+    }
 
     /* Use embedded read_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance. */
@@ -101,8 +125,14 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
-    state->timeout = timeout;
-    state->has_timeout = !is_infinite_timeout(timeout);
+    if (argc > 3 && !janet_checktype(argv[3], JANET_NIL)) {
+        double timeout =
+            parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
+        state->timeout = timeout;
+        state->has_timeout = !is_infinite_timeout(timeout);
+    } else {
+        state->has_timeout = 0;
+    }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         /* Same EOF rule as cfun_read and the async read completions:
@@ -140,7 +170,6 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     }
 
     JanetByteView bytes = janet_getbytes(argv, 1);
-    double timeout = parse_timeout_opt(argc, argv, 2, JSEC_MOD_TLS, INFINITY);
 
     /* Use embedded write_state - no malloc needed.
      * Selective initialization instead of memset(0) for performance. */
@@ -158,8 +187,14 @@ Janet cfun_write(int32_t argc, Janet *argv) {
     state->write_len = bytes.len;
     state->write_offset =
         0; /* Only write field that must be explicitly set */
-    state->timeout = timeout;
-    state->has_timeout = !is_infinite_timeout(timeout);
+    if (argc > 2 && !janet_checktype(argv[2], JANET_NIL)) {
+        double timeout =
+            parse_timeout_opt(argc, argv, 2, JSEC_MOD_TLS, INFINITY);
+        state->timeout = timeout;
+        state->has_timeout = !is_infinite_timeout(timeout);
+    } else {
+        state->has_timeout = 0;
+    }
     /* user_buf, bytes_requested unused for writes - not zeroed */
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {

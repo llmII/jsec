@@ -51,6 +51,9 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 
     BIO_clear_retry_flags(bio);
 
+    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
+
+#if JSEC_LIBRESSL
     /* First, check if we have data in the read-ahead buffer */
     if (tls->bio_ahead.p < tls->bio_ahead.pe) {
         size_t avail = (size_t)(tls->bio_ahead.pe - tls->bio_ahead.p);
@@ -59,9 +62,6 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         tls->bio_ahead.p += count;
         return (int)count;
     }
-
-    /* Ahead buffer is empty - read from socket */
-    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
 
     /* If request is small and we have a buffer, read ahead */
     if (tls->bio_ahead.data && (size_t)len < tls->bio_ahead.capacity) {
@@ -100,8 +100,9 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
             return -1;
         }
     }
+#endif
 
-    /* No buffer or large request - read directly */
+    /* Direct socket read into caller's destination buffer */
 #ifdef JANET_WINDOWS
     int n;
     do {

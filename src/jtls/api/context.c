@@ -266,7 +266,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         Janet security_opts = janet_get(opts, janet_ckeywordv("security"));
         Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
 
-        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt, 0);
         if (!ctx) {
             jsec_panic(JSEC_MOD_TLS, "SSL",
                        "failed to create client context: %s",

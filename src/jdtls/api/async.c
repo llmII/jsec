@@ -36,7 +36,7 @@ typedef struct {
         CLIENT_OP_WRITE,
         CLIENT_OP_CLOSE
     } op;
-    int want_write; /* Track if we're waiting for write vs read */
+    uint8_t want_write; /* Track if we're waiting for write vs read */
 } DTLSClientAsyncState;
 
 /*
@@ -237,7 +237,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         client->state = DTLS_STATE_ESTABLISHED;
                         /* Record handshake completion time if tracking
                          * enabled */
-                        if (client->track_handshake_time) {
+                        if (client->flags & JDTLS_CLIENT_TRACK_HANDSHAKE) {
                             clock_gettime(CLOCK_MONOTONIC,
                                           &client->ts_handshake);
                         }
@@ -304,7 +304,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     if (result == DTLS_RESULT_OK ||
                         result == DTLS_RESULT_EOF ||
                         result == DTLS_RESULT_UNEXPECTED_EOF) {
-                        client->closed = 1;
+                        client->flags |= JDTLS_CLIENT_CLOSED;
                         client->state = DTLS_STATE_CLOSED;
                         /* The transport close is deferred past the
                          * completion below: closing it here let its
@@ -446,7 +446,7 @@ int dtls_client_start_handshake(DTLSClient *client) {
     if (result == DTLS_RESULT_OK) {
         client->state = DTLS_STATE_ESTABLISHED;
         /* Record handshake completion time if tracking enabled */
-        if (client->track_handshake_time) {
+        if (client->flags & JDTLS_CLIENT_TRACK_HANDSHAKE) {
             clock_gettime(CLOCK_MONOTONIC, &client->ts_handshake);
         }
         return 1; /* Completed synchronously */

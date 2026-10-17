@@ -276,20 +276,31 @@ client_setup:
             }
         }
 
-        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
+        Janet trusted_cert = janet_wrap_nil();
+        Janet client_cert = janet_wrap_nil();
+        Janet client_key = janet_wrap_nil();
+        if (!janet_checktype(opts, JANET_NIL)) {
+            trusted_cert = janet_get(opts, janet_ckeywordv("trusted-cert"));
+            client_cert = janet_get(opts, janet_ckeywordv("cert"));
+            client_key = janet_get(opts, janet_ckeywordv("key"));
+        }
+        int ocsp_req = opts_ocsp_stapling(opts);
+        int shareable = janet_checktype(trusted_cert, JANET_NIL) &&
+                        janet_checktype(client_cert, JANET_NIL) &&
+                        janet_checktype(client_key, JANET_NIL) && !ocsp_req;
+
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt, shareable);
         if (!ctx) {
             tls_panic_ssl("failed to create client context");
         }
 
         /* Top-level :ocsp-stapling opts in status requests on the wire */
-        if (opts_ocsp_stapling(opts)) {
+        if (ocsp_req) {
             SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp);
         }
 
         /* Handle :trusted-cert option for certificate pinning */
         if (!janet_checktype(opts, JANET_NIL)) {
-            Janet trusted_cert =
-                janet_get(opts, janet_ckeywordv("trusted-cert"));
             if (!janet_checktype(trusted_cert, JANET_NIL)) {
                 if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
                     SSL_CTX_free(ctx);
@@ -299,8 +310,6 @@ client_setup:
 
             /* Handle client certificate for mTLS (client providing cert to
              * server) */
-            Janet client_cert = janet_get(opts, janet_ckeywordv("cert"));
-            Janet client_key = janet_get(opts, janet_ckeywordv("key"));
             if (!janet_checktype(client_cert, JANET_NIL) &&
                 !janet_checktype(client_key, JANET_NIL)) {
                 /* Load client certificate */
@@ -586,13 +595,20 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (!ctx) {
                 Janet security_opts = janet_wrap_nil();
                 Janet ca_opt = janet_wrap_nil();
+                Janet trusted_cert = janet_wrap_nil();
                 if (!janet_checktype(opts, JANET_NIL)) {
                     security_opts =
                         janet_get(opts, janet_ckeywordv("security"));
                     ca_opt = janet_get(opts, janet_ckeywordv("ca"));
+                    trusted_cert =
+                        janet_get(opts, janet_ckeywordv("trusted-cert"));
                 }
+                int ocsp_req = opts_ocsp_stapling(opts);
+                int shareable = janet_checktype(trusted_cert, JANET_NIL) &&
+                                !ocsp_req;
 
-                ctx = jtls_create_client_ctx(verify, security_opts, ca_opt);
+                ctx = jtls_create_client_ctx(verify, security_opts, ca_opt,
+                                             shareable);
                 if (!ctx) {
                     janet_free(hostname);
                     janet_cancel(fiber, janet_cstringv(
@@ -603,27 +619,23 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
                 /* Top-level :ocsp-stapling opts in status requests on the
                  * wire */
-                if (opts_ocsp_stapling(opts)) {
+                if (ocsp_req) {
                     SSL_CTX_set_tlsext_status_type(ctx,
                                                    TLSEXT_STATUSTYPE_ocsp);
                 }
 
                 /* Handle trusted-cert option (only when creating new context)
                  */
-                if (!janet_checktype(opts, JANET_NIL)) {
-                    Janet trusted_cert =
-                        janet_get(opts, janet_ckeywordv("trusted-cert"));
-                    if (!janet_checktype(trusted_cert, JANET_NIL)) {
-                        if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
-                            SSL_CTX_free(ctx);
-                            janet_free(hostname);
-                            janet_cancel(
-                                fiber,
-                                janet_cstringv(
-                                    "failed to add trusted certificate"));
-                            janet_async_end(fiber);
-                            return;
-                        }
+                if (!janet_checktype(trusted_cert, JANET_NIL)) {
+                    if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
+                        SSL_CTX_free(ctx);
+                        janet_free(hostname);
+                        janet_cancel(
+                            fiber,
+                            janet_cstringv(
+                                "failed to add trusted certificate"));
+                        janet_async_end(fiber);
+                        return;
                     }
                 }
             }
