@@ -16,12 +16,33 @@
 # Server Implementation
 # --------------------------------------------------------------------------
 
+(defn- run-datagram-echo-loop
+  "Receive datagrams and echo them back using a pre-allocated buffer"
+  [server metrics]
+  (def buf (buffer/new 65536))
+  (while (try (not (get server :closed)) ([_] true))
+    (buffer/clear buf)
+    (try
+      (when-let [peer-addr (:recv-from server 65536 buf 1.0)]
+        (when (> (length buf) 0)
+          (:send-to server peer-addr buf)
+          (when metrics
+            (:add-bytes metrics (length buf) 0))))
+      ([err]
+        (let [err-str (string err)]
+          (if (or (string/find "closed" err-str)
+                  (string/find "Bad file descriptor" err-str))
+            (break)
+            (unless (string/find "timeout" err-str)
+              (when metrics
+                (:add-error metrics (categorize-error err))))))))))
+
 (defn make-server
   "Create echo server listener.
-   config should contain: :protocol (:tcp, :tls, :unix, or :unix-tls), :host, :port, :backlog
-   For TLS: :cert, :key, :handshake-timing, :buffer-size, :ciphers, :ciphersuites
+   config should contain: :protocol (:tcp, :tls, :unix, :unix-tls, :udp, or :dtls), :host, :port, :backlog
+   For TLS/DTLS: :cert, :key, :handshake-timing, :buffer-size, :ciphers, :ciphersuites
    For unix: :socket-path instead of :host/:port
-   handler-fn receives (conn) for each connection.
+   handler-fn receives (conn) for each connection (streams only).
    Returns the listener object."
   [config handler-fn]
   (let [protocol (or (config :protocol) :tls)
@@ -38,6 +59,24 @@
         (when (config :ciphers) (put opts :ciphers (config :ciphers)))
         (when (config :ciphersuites) (put opts :ciphersuites (config :ciphersuites)))
         (tls/server host port handler-fn opts))
+
+      :dtls
+      (let [host (or (config :host) "127.0.0.1")
+            port (string (config :port))
+            opts @{:cert (config :cert)
+                   :key (config :key)
+                   :datagram true
+                   :handshake-timing (or (config :handshake-timing) false)}
+            server (tls/listen host port opts)]
+        (ev/go (fn [] (run-datagram-echo-loop server (config :metrics))))
+        server)
+
+      :udp
+      (let [host (or (config :host) "127.0.0.1")
+            port (string (config :port))
+            server (net/listen host port :datagram)]
+        (ev/go (fn [] (run-datagram-echo-loop server (config :metrics))))
+        server)
 
       :unix
       (let [sock-path (config :socket-path)]
@@ -70,26 +109,26 @@
   (var bytes-echoed 0)
   (var client-completed false)
   (def conn-start (os/clock :monotonic))
+  (def buf (buffer/new 65536))
   (defer (:close conn)
     (try
       (while true
-        (let [buf (:read conn 65536)]
-          (unless buf (break))
-          # Capture handshake time after first read (TLS only)
-          (when (and (not hs-captured) (> (length buf) 0))
-            (set hs-captured true)
-            (when (get conn :handshake-time)
-              (when-let [hs (:handshake-time conn)]
-                (:add-handshake-time metrics hs))))
-          (when (> (length buf) 0)
-            (let [s (string buf)]
-              (if (string/has-prefix? "DONE:" s)
-                (do
-                  (set client-completed true)
-                  (break))
-                (do
-                  (+= bytes-echoed (length buf))
-                  (:write conn buf)))))))
+        (buffer/clear buf)
+        (unless (:read conn 65536 buf) (break))
+        # Capture handshake time after first read (TLS only)
+        (when (and (not hs-captured) (> (length buf) 0))
+          (set hs-captured true)
+          (when (get conn :handshake-time)
+            (when-let [hs (:handshake-time conn)]
+              (:add-handshake-time metrics hs))))
+        (when (> (length buf) 0)
+          (if (string/has-prefix? "DONE:" buf)
+            (do
+              (set client-completed true)
+              (break))
+            (do
+              (+= bytes-echoed (length buf))
+              (:write conn buf)))))
       ([err]
         (:add-error metrics (categorize-error err))))
     # Record connection
@@ -100,7 +139,7 @@
 (defn make-client
   "Create client connection stream.
    config should contain: :protocol, :host, :port
-   For TLS: :handshake-timing, :buffer-size, :ciphers, :ciphersuites
+   For TLS/DTLS: :handshake-timing, :buffer-size, :ciphers, :ciphersuites
    For unix: :socket-path instead of :host/:port
    Returns the stream directly."
   [config]
@@ -115,6 +154,21 @@
         (when (config :ciphers) (put opts :ciphers (config :ciphers)))
         (when (config :ciphersuites) (put opts :ciphersuites (config :ciphersuites)))
         (tls/connect host port opts))
+
+      :dtls
+      (let [host (or (config :host) "127.0.0.1")
+            port (string (config :port))
+            opts @{:verify false
+                   :datagram true
+                   :handshake-timing (or (config :handshake-timing) false)}]
+        (when (config :ciphers) (put opts :ciphers (config :ciphers)))
+        (when (config :ciphersuites) (put opts :ciphersuites (config :ciphersuites)))
+        (tls/connect host port opts))
+
+      :udp
+      (let [host (or (config :host) "127.0.0.1")
+            port (string (config :port))]
+        (net/connect host port :datagram))
 
       :unix
       (let [sock-path (config :socket-path)]
@@ -136,15 +190,18 @@
 
 (defn run-client
   "Run a single client echo loop using serial write-chunk pattern.
-   Uses :chunk method to read exactly N bytes (the echo response).
+   Uses :chunk / :read method to read exactly N bytes (the echo response).
    conn: stream from make-client
    config: should have :chunk-size, :duration or :iterations, :handshake-timing
    start-time: shared start timestamp for duration mode
    metrics: metrics object to accumulate into
    Returns true if client completed successfully."
   [conn config start-time metrics]
-  (let [chunk-size (or (config :chunk-size) (* 256 1024))
+  (let [proto (config :protocol)
+        is-datagram (or (= proto :udp) (= proto :dtls))
+        chunk-size (or (config :chunk-size) (if is-datagram 1024 (* 256 1024)))
         chunk (buffer/new-filled chunk-size (chr "X"))
+        recv-buf (buffer/new chunk-size)
         iteration-mode (not (nil? (config :iterations)))
         target-iterations (or (config :iterations) 0)]
 
@@ -182,18 +239,22 @@
               (when (get conn :handshake-time)
                 (when-let [hs (:handshake-time conn)]
                   (:add-handshake-time metrics hs))))
-            (if-let [buf (:chunk conn chunk-size)]
+            (buffer/clear recv-buf)
+            (if (if is-datagram
+                  (:read conn chunk-size recv-buf 5.0)
+                  (:chunk conn chunk-size recv-buf))
               (do
-                (+= bytes-recv (length buf))
+                (+= bytes-recv (length recv-buf))
                 (++ iterations))
               (do
                 (set success false)
                 (break))))
 
-          # Send final stats (outside perf measurement)
-          (let [runtime (- (os/clock :monotonic) run-start)
-                msg (string/format "DONE:%d:%d:%.3f:%d\n" bytes-sent bytes-recv runtime iterations)]
-            (try (:write conn msg) ([_] nil))))
+          # Send final stats (outside perf measurement) - streams only
+          (unless is-datagram
+            (let [runtime (- (os/clock :monotonic) run-start)
+                  msg (string/format "DONE:%d:%d:%.3f:%d\n" bytes-sent bytes-recv runtime iterations)]
+              (try (:write conn msg) ([_] nil)))))
         ([err]
           (set success false)
           (:add-error metrics (categorize-error err))))
