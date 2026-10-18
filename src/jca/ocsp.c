@@ -11,6 +11,7 @@
  */
 
 #include "internal.h"
+#include <openssl/bn.h>
 #include <openssl/ocsp.h>
 
 /*
@@ -26,7 +27,7 @@ static const char *cfun_ca_parse_ocsp_request_docstring =
     "Returns a table:\n"
     "  :issuer-name-hash <buffer>  - Hash of issuer's distinguished name\n"
     "  :issuer-key-hash <buffer>   - Hash of issuer's public key\n"
-    "  :serial <number>            - Certificate serial number\n"
+    "  :serial <string>            - Certificate serial number (canonical decimal string)\n"
     "  :digest <string>            - CertID digest name the request named "
     "(e.g. \"sha256\")\n"
     "  :nonce <buffer|nil>         - Nonce extension's content bytes (if "
@@ -113,13 +114,20 @@ Janet cfun_ca_parse_ocsp_request(int32_t argc, Janet *argv) {
 
     /* Serial number */
     if (serial) {
-        int64_t serial_val = 0;
-        if (ASN1_INTEGER_get_int64(&serial_val, serial) <= 0) {
+        BIGNUM *bn = ASN1_INTEGER_to_BN(serial, NULL);
+        if (!bn) {
             OCSP_REQUEST_free(req);
             ca_panic_ssl("failed to read certificate id serial");
         }
-        janet_table_put(result, janet_ckeywordv("serial"),
-                        janet_wrap_s64(serial_val));
+        char *dec_str = BN_bn2dec(bn);
+        BN_free(bn);
+        if (!dec_str) {
+            OCSP_REQUEST_free(req);
+            ca_panic_resource("failed to format certificate id serial");
+        }
+        Janet serial_val = janet_cstringv(dec_str);
+        OPENSSL_free(dec_str);
+        janet_table_put(result, janet_ckeywordv("serial"), serial_val);
     }
 
     /* CertID digest the request named */
@@ -192,7 +200,8 @@ static const char *cfun_ca_create_ocsp_response_docstring =
     "option value is generated instead via OCSP_basic_add1_nonce, which "
     "wraps it in an OCTET STRING: echo and generate differ by design. The "
     "response CertID uses the digest the request named (request-info's "
-    ":digest, SHA-1 when absent) and the request's :serial.\n\n"
+    ":digest, SHA-1 when absent) and the request's :serial (a canonical "
+    "decimal string or integer).\n\n"
     "Returns a DER-encoded OCSP response string.\n\n"
     "Note: You implement the HTTP server; this just creates the crypto "
     "response.";
@@ -258,6 +267,62 @@ static int ca_ocsp_set_time(ASN1_TIME *t, Janet v) {
         return CA_OCSP_TIME_BAD_FORMAT;
     }
     return CA_OCSP_TIME_BAD_SHAPE;
+}
+
+/* Convert a Janet integer, s64, or canonical decimal string/buffer to ASN1_INTEGER.
+ * Accepts strings with optional leading '-' for non-conforming serials.
+ * Returns NULL on failure or invalid syntax. */
+static ASN1_INTEGER *ca_serial_to_asn1(Janet serial_v) {
+    if (janet_checktype(serial_v, JANET_STRING) ||
+        janet_checktype(serial_v, JANET_BUFFER)) {
+        JanetByteView bv = janet_getbytes(&serial_v, 0);
+        if (bv.len == 0) return NULL;
+        int32_t start = 0;
+        if (bv.bytes[0] == '-') {
+            if (bv.len == 1) return NULL;
+            start = 1;
+        }
+        for (int32_t i = start; i < bv.len; i++) {
+            if (bv.bytes[i] < '0' || bv.bytes[i] > '9') {
+                return NULL;
+            }
+        }
+        char *str = janet_malloc((size_t)bv.len + 1);
+        if (!str) return NULL;
+        memcpy(str, bv.bytes, (size_t)bv.len);
+        str[bv.len] = '\0';
+        BIGNUM *bn = NULL;
+        int ok = BN_dec2bn(&bn, str);
+        janet_free(str);
+        if (!ok || !bn) {
+            if (bn) BN_free(bn);
+            return NULL;
+        }
+        ASN1_INTEGER *ai = BN_to_ASN1_INTEGER(bn, NULL);
+        BN_free(bn);
+        return ai;
+    } else if (janet_checktype(serial_v, JANET_NUMBER) ||
+               janet_is_int(serial_v) != JANET_INT_NONE) {
+        ASN1_INTEGER *ai = ASN1_INTEGER_new();
+        if (!ai) return NULL;
+#ifdef JANET_INT_TYPES
+        if (janet_is_int(serial_v) == JANET_INT_U64) {
+            uint64_t u64 = janet_unwrap_u64(serial_v);
+            if (!ASN1_INTEGER_set_uint64(ai, u64)) {
+                ASN1_INTEGER_free(ai);
+                return NULL;
+            }
+            return ai;
+        }
+#endif
+        int64_t s64 = janet_unwrap_s64(serial_v);
+        if (!ASN1_INTEGER_set_int64(ai, s64)) {
+            ASN1_INTEGER_free(ai);
+            return NULL;
+        }
+        return ai;
+    }
+    return NULL;
 }
 
 Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
@@ -340,7 +405,10 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     if (janet_checktype(serial_v, JANET_NIL)) {
         ca_panic_param("request-info missing :serial");
     }
-    int64_t serial = janet_getinteger64(&serial_v, 0);
+    ASN1_INTEGER *asn_serial = ca_serial_to_asn1(serial_v);
+    if (!asn_serial) {
+        ca_panic_param("request-info :serial must be an integer or canonical decimal string");
+    }
 
     /* Resolve the CertID digest the request named. Hand-built request-info
      * tables without a :digest key keep the SHA-1 default; an unsupported
@@ -353,10 +421,12 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     if (!janet_checktype(digest_v, JANET_NIL)) {
         const char *digest_name = janet_to_string_or_keyword(digest_v);
         if (!digest_name) {
+            ASN1_INTEGER_free(asn_serial);
             ca_panic_param("request-info :digest must be a string or keyword");
         }
         digest_md = EVP_get_digestbyname(digest_name);
         if (!digest_md) {
+            ASN1_INTEGER_free(asn_serial);
             ca_panic_param("unsupported CertID digest: %s", digest_name);
         }
     }
@@ -364,24 +434,12 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     /* Create OCSP basic response */
     OCSP_BASICRESP *basic = OCSP_BASICRESP_new();
     if (!basic) {
+        ASN1_INTEGER_free(asn_serial);
         ca_panic_ssl("failed to create OCSP basic response");
     }
 
     /* Build cert ID from the CA cert, the request serial and the
      * resolved digest */
-    ASN1_INTEGER *asn_serial = ASN1_INTEGER_new();
-    if (!asn_serial) {
-        OCSP_BASICRESP_free(basic);
-        ca_panic_resource(
-            "failed to allocate ASN1_INTEGER for the certificate ID");
-    }
-    if (!ASN1_INTEGER_set_int64(asn_serial, serial)) {
-        ASN1_INTEGER_free(asn_serial);
-        OCSP_BASICRESP_free(basic);
-        ca_panic_resource("failed to set the certificate ID serial number");
-    }
-
-    /* Get issuer name and key for cert ID */
     OCSP_CERTID *certid =
         OCSP_cert_id_new(digest_md, X509_get_subject_name(ca->cert),
                          X509_get0_pubkey_bitstr(ca->cert), asn_serial);
