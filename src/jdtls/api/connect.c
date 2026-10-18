@@ -213,6 +213,8 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         }
         jutils_validate_security_options(security);
 
+        jutils_cert_load_error_clear();
+
         /* Create new context - free on GC */
         client->ctx = SSL_CTX_new(DTLS_client_method());
         if (!client->ctx) {
@@ -226,7 +228,9 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             SSL_CTX_free(client->ctx);
             client->ctx = NULL;
             client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
-            dtls_panic_ssl("failed to apply security options");
+            jsec_panic(JSEC_MOD_DTLS, "SSL",
+                       "failed to apply security options: %s",
+                       jutils_cert_load_error());
         }
 
         /* Load certificates if provided */
@@ -243,7 +247,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             Janet trusted = janet_get(opts, janet_ckeywordv("trusted-cert"));
             if (!janet_checktype(trusted, JANET_NIL)) {
                 if (!add_trusted_cert(client->ctx, trusted)) {
-                    dtls_panic_ssl("failed to add trusted certificate");
+                    SSL_CTX_free(client->ctx);
+                    client->ctx = NULL;
+                    client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to add trusted certificate: %s",
+                               jutils_cert_load_error());
                 }
             }
         }
