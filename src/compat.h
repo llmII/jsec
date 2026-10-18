@@ -11,9 +11,15 @@
 #ifndef JSEC_COMPAT_H
 #define JSEC_COMPAT_H
 
-/* Enable POSIX features before any system includes (clock_gettime, strdup) */
+/* Enable standard feature test macros before any system includes */
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+#ifndef __EXTENSIONS__
+#define __EXTENSIONS__ 1
 #endif
 
 #include <janet.h>
@@ -148,7 +154,7 @@
  * =============================================================================
  */
 
-#ifdef _WIN32
+#ifdef JANET_WINDOWS
 /* Winsock2 must be included before windows.h to avoid conflicts */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -229,6 +235,7 @@ static inline const char *jsec_socket_strerror(int err) {
 #define JSEC_EAGAIN WSAEWOULDBLOCK
 #define JSEC_EINTR WSAEINTR
 #define JSEC_ECONNRESET WSAECONNRESET
+#define JSEC_ECONNABORTED WSAECONNABORTED
 #define JSEC_EPIPE WSAECONNRESET
 
 /* fcntl/ioctl compatibility */
@@ -251,6 +258,37 @@ static inline void jsec_winsock_cleanup(void) {
     WSACleanup();
 }
 
+/* Socket flags for jsec_accept4 (fallback bitmask for Windows) */
+#define JSEC_SOCK_CLOEXEC 0x01
+#define JSEC_SOCK_NONBLOCK 0x02
+
+static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
+                                         struct sockaddr *addr, int *addrlen,
+                                         int flags) {
+    SOCKET s = accept(sockfd, addr, addrlen);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (flags & JSEC_SOCK_NONBLOCK) {
+        u_long mode = 1;
+        if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+            int err = WSAGetLastError();
+            closesocket(s);
+            WSASetLastError(err);
+            return INVALID_SOCKET;
+        }
+    }
+    if (flags & JSEC_SOCK_CLOEXEC) {
+        if (!SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0)) {
+            int err = GetLastError();
+            closesocket(s);
+            SetLastError(err);
+            return INVALID_SOCKET;
+        }
+    }
+    return s;
+}
+
 #else
 /* Unix/POSIX systems */
 #define JSEC_HAS_ARPA_INET 1
@@ -258,6 +296,24 @@ static inline void jsec_winsock_cleanup(void) {
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+/*
+ * Socket flags for jsec_accept4:
+ * When the platform defines SOCK_CLOEXEC and SOCK_NONBLOCK (Linux, BSDs, Illumos),
+ * JSEC_SOCK_* directly aliases the system constants so accept4(2) can consume
+ * them without translation overhead. Otherwise fallback bit values are used.
+ */
+#ifdef SOCK_CLOEXEC
+#define JSEC_SOCK_CLOEXEC SOCK_CLOEXEC
+#else
+#define JSEC_SOCK_CLOEXEC 0x01
+#endif
+
+#ifdef SOCK_NONBLOCK
+#define JSEC_SOCK_NONBLOCK SOCK_NONBLOCK
+#else
+#define JSEC_SOCK_NONBLOCK 0x02
+#endif
 
 typedef int jsec_socket_t;
 #define JSEC_INVALID_SOCKET (-1)
@@ -278,6 +334,7 @@ typedef int jsec_socket_t;
 #define JSEC_EAGAIN EAGAIN
 #define JSEC_EINTR EINTR
 #define JSEC_ECONNRESET ECONNRESET
+#define JSEC_ECONNABORTED ECONNABORTED
 #define JSEC_EPIPE EPIPE
 
 /* MSG_DONTWAIT and MSG_NOSIGNAL may not be available on all platforms */
@@ -293,6 +350,59 @@ static inline int jsec_winsock_init(void) {
     return 0;
 }
 static inline void jsec_winsock_cleanup(void) {}
+
+/*
+ * Platform accept4 capability detection using Janet's OS macros:
+ * Linux, BSDs (FreeBSD 10+, OpenBSD 5.7+, NetBSD 8.0+, DragonFly), and Illumos
+ * provide accept4(2) in <sys/socket.h> with SOCK_NONBLOCK and SOCK_CLOEXEC.
+ * macOS and other POSIX platforms fall back to accept() + fcntl.
+ */
+#if (defined(JANET_LINUX) || defined(JANET_BSD) || defined(JANET_ILLUMOS)) && \
+    defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+#define JSEC_HAVE_ACCEPT4 1
+#else
+#define JSEC_HAVE_ACCEPT4 0
+#endif
+
+static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
+                                         struct sockaddr *addr,
+                                         socklen_t *addrlen, int flags) {
+    jsec_socket_t fd;
+#if JSEC_HAVE_ACCEPT4
+    fd = accept4(sockfd, addr, addrlen, flags);
+    if (fd >= 0) {
+        return fd;
+    }
+    /* Fall back to accept() + fcntl only if accept4 is unimplemented in running kernel */
+    if (errno != ENOSYS) {
+        return fd;
+    }
+#endif
+    fd = accept(sockfd, addr, addrlen);
+    if (fd < 0) {
+        return fd;
+    }
+    if (flags & JSEC_SOCK_NONBLOCK) {
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl == -1 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) == -1) {
+            int err = errno;
+            close(fd);
+            errno = err;
+            return -1;
+        }
+    }
+    if (flags & JSEC_SOCK_CLOEXEC) {
+        int fl = fcntl(fd, F_GETFD, 0);
+        if (fl == -1 || fcntl(fd, F_SETFD, fl | FD_CLOEXEC) == -1) {
+            int err = errno;
+            close(fd);
+            errno = err;
+            return -1;
+        }
+    }
+    return fd;
+}
+
 #endif
 
 #endif /* JSEC_COMPAT_H */

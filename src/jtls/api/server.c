@@ -11,10 +11,6 @@
  * License: ISC
  */
 
-#ifdef __linux__
-#define _GNU_SOURCE /* For accept4 */
-#endif
-
 #include "../internal.h"
 #include <math.h>
 #ifndef JANET_WINDOWS
@@ -225,12 +221,9 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             /* Try to accept connections - level triggered so we may get
              * multiple */
             while (1) {
-#ifdef JANET_LINUX
-                int client_fd =
-                    accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
-#else
-                int client_fd = accept(listener->handle, NULL, NULL);
-#endif
+                jsec_socket_t client_fd =
+                    jsec_accept4(listener->handle, NULL, NULL,
+                                 JSEC_SOCK_NONBLOCK | JSEC_SOCK_CLOEXEC);
                 if (client_fd < 0) {
                     int sock_err = jsec_socket_errno;
                     if (sock_err == JSEC_EAGAIN ||
@@ -238,22 +231,20 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                         /* No more connections ready - wait for next event */
                         break;
                     }
+                    if (sock_err == JSEC_EINTR) {
+                        /* Interrupted by signal - retry accept */
+                        continue;
+                    }
+                    if (sock_err == JSEC_ECONNABORTED) {
+                        /* Client closed before accept - drain next */
+                        continue;
+                    }
                     /* Other accept error - back off briefly and stop
                      * draining, matching Janet core's accept handling.
                      * Continuing here spins inside the event callback on
                      * persistent errors like EMFILE/ENFILE/EBADF. */
                     tls_accept_backoff();
                     break;
-                }
-
-                /* Got a connection - set non-blocking */
-                int flags = fcntl(client_fd, F_GETFL, 0);
-                if (flags != -1) {
-                    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
-                }
-                flags = fcntl(client_fd, F_GETFD, 0);
-                if (flags != -1) {
-                    fcntl(client_fd, F_SETFD, flags | FD_CLOEXEC);
                 }
 
                 /* Create stream for client socket */
@@ -478,7 +469,7 @@ Janet cfun_listen(int32_t argc, Janet *argv) {
         socklen_t addrlen = sizeof(addr);
 
         /* Support Linux abstract namespace sockets (start with @) */
-#ifdef __linux__
+#ifdef JANET_LINUX
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
@@ -737,23 +728,10 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         case JANET_ASYNC_EVENT_INIT:
         case JANET_ASYNC_EVENT_READ: {
             /* Try to accept a TCP connection */
-#ifdef JANET_LINUX
-            int client_fd =
-                accept4(listener->handle, NULL, NULL, SOCK_CLOEXEC);
-#else
-            int client_fd = accept(listener->handle, NULL, NULL);
-#endif
+            jsec_socket_t client_fd =
+                jsec_accept4(listener->handle, NULL, NULL,
+                             JSEC_SOCK_NONBLOCK | JSEC_SOCK_CLOEXEC);
             if (client_fd >= 0) {
-                /* Got a connection - set non-blocking */
-                int flags = fcntl(client_fd, F_GETFL, 0);
-                if (flags != -1) {
-                    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
-                }
-                flags = fcntl(client_fd, F_GETFD, 0);
-                if (flags != -1) {
-                    fcntl(client_fd, F_SETFD, flags | FD_CLOEXEC);
-                }
-
                 /* Create stream for client socket */
                 JanetStream *client_stream =
                     janet_stream(client_fd,
@@ -778,6 +756,10 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 return;
             } else {
                 int sock_err = jsec_socket_errno;
+                if (sock_err == JSEC_EINTR || sock_err == JSEC_ECONNABORTED) {
+                    /* Transient event - keep waiting for a valid connection */
+                    break;
+                }
                 if (sock_err != JSEC_EAGAIN && sock_err != JSEC_EWOULDBLOCK) {
                     /* Real error */
                     janet_cancel(fiber, janet_cstringv(
