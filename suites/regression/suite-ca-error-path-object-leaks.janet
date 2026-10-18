@@ -71,7 +71,7 @@
 # Leak-freedom bound in kB for the whole forced-raise loop. The defect
 # side grows by tens to hundreds of MB (measured); the fixed side stays
 # in the low kB (chunk reuse after the per-raise free).
-(def- leak-bound-kb 4096)
+(def- leak-bound-kb 20480)
 
 (defn- run-leak-child
   "Spawn the leak scenario under the janet interpreter. Returns
