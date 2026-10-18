@@ -72,6 +72,15 @@ int jtls_stream_gc(void *p, size_t s) {
     }
 #endif
 
+    /* Free write coalescing buffer */
+    if (tls->write_buffer.data) {
+        janet_free(tls->write_buffer.data);
+        tls->write_buffer.data = NULL;
+        tls->write_buffer.capacity = 0;
+        tls->write_buffer.head = 0;
+        tls->write_buffer.tail = 0;
+    }
+
     if (tls->ssl) {
         SSL_free(tls->ssl);
         tls->ssl = NULL;
@@ -129,6 +138,7 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :handshake-time   - Get handshake duration in seconds (nil if not
  * complete) :renegotiate      - Trigger renegotiation (TLS 1.2) :key-update
  *     - Trigger key update (TLS 1.3)
+ *   :buffer           - Get buffer configuration {:read ... :write ...}
  */
 const JanetMethod tls_stream_methods[] = {
     {"close", cfun_close},
@@ -150,6 +160,7 @@ const JanetMethod tls_stream_methods[] = {
     {"handshake-time", cfun_get_handshake_time},
     {"renegotiate", cfun_renegotiate},
     {"key-update", cfun_key_update},
+    {"buffer", cfun_get_buffer_config},
     {NULL, NULL}};
 
 const JanetAbstractType tls_stream_type = {

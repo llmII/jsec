@@ -127,6 +127,139 @@
 
         (ev/take done))))
 
+  (def-test "buffer configuration inspection and structured per-connection options"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          done (ev/chan 1)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def conn (:accept server))
+                (def s (tls/wrap conn {:cert (certs :cert) :key (certs :key)}))
+                (assert (= (:buffer s) {:read 65536 :write 65536}))
+                (:read s 1024)
+                (:write s "ack"))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (def s (tls/wrap raw {:verify false}))
+        # Default buffer configuration: both read and write default to 65536
+        (assert (= (:buffer s) {:read 65536 :write 65536})
+                "default buffer should be {:read 65536 :write 65536}")
+        (assert (= (tls-stream/buffer s) {:read 65536 :write 65536})
+                "tls-stream/buffer should return {:read 65536 :write 65536}")
+        (:write s "hello")
+        (:read s 1024)
+        (:close s)
+        (ev/take done))
+
+      # Test various buffer option combinations on wrapping
+      (let [[s1 _] (make-server :tcp)
+            s1-addr (get-server-addr s1 :tcp nil)]
+        (defer (:close s1)
+          (ev/go
+            (fn []
+              (try
+                (forever
+                  (def conn (:accept s1))
+                  (when (nil? conn) (break))
+                  (ev/go
+                    (fn []
+                      (try
+                        (with [sc (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                          (:read sc 1))
+                        ([_] nil)))))
+                ([_] nil))))
+
+          # Structured :buffer {:read ... :write ...}
+          (let [r1 (make-client-conn :tcp s1-addr)
+                c1 (tls/wrap r1 {:verify false :buffer {:read false :write false}})]
+            (defer (:close c1 true)
+              (assert (= (:buffer c1) {:read false :write false})
+                      ":buffer {:read false :write false} should disable both")))
+
+          (let [r2 (make-client-conn :tcp s1-addr)
+                c2 (tls/wrap r2 {:verify false :buffer {:read 32768 :write false}})]
+            (defer (:close c2 true)
+              (assert (= (:buffer c2) {:read 32768 :write false})
+                      ":buffer {:read 32768 :write false} should set read and disable write")))
+
+          (let [r3 (make-client-conn :tcp s1-addr)
+                c3 (tls/wrap r3 {:verify false :buffer {:read false :write 131072}})]
+            (defer (:close c3 true)
+              (assert (= (:buffer c3) {:read false :write 131072})
+                      ":buffer {:read false :write 131072} should disable read and set write")))
+
+          (let [r4 (make-client-conn :tcp s1-addr)
+                c4 (tls/wrap r4 {:verify false :buffer false})]
+            (defer (:close c4 true)
+              (assert (= (:buffer c4) {:read false :write false})
+                      ":buffer false should disable both")))
+
+          (let [r5 (make-client-conn :tcp s1-addr)
+                c5 (tls/wrap r5 {:verify false :buffer 32768})]
+            (defer (:close c5 true)
+              (assert (= (:buffer c5) {:read 32768 :write 32768})
+                      ":buffer 32768 should set both to 32768")))
+
+          # Validation errors
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer {:read -1}})
+                            "negative read buffer must raise error")))
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer {:write -1}})
+                            "negative write buffer must raise error")))
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer "bad"})
+                            "invalid buffer option type must raise error")))))))
+
+  (def-test "bounded write buffer coalescing transfers multi-record payload correctly"
+    :timeout 30
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          payload-size (* 256 1024) # 256 KB payload across multiple 64 KB coalesced chunks
+          payload (string/repeat "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" (/ payload-size 32))
+          received (buffer/new payload-size)
+          done (ev/chan 1)]
+      (var server-err nil)
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (with [conn (:accept server)]
+                (with [s (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                  (while (< (length received) payload-size)
+                    (def chunk (:read s 65536))
+                    (if (or (not chunk) (empty? chunk))
+                      (break)
+                      (buffer/push-string received chunk)))
+                  (:write s "ACK")))
+              ([err] (set server-err err)))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (with [s (tls/wrap raw {:verify false :buffer {:read true :write 65536}})]
+          (:write s payload)
+          (:flush s)
+          (def ack (:read s 3))
+          (assert (= (string ack) "ACK") "server should acknowledge payload receipt"))
+
+        (ev/take done)
+        (assert (nil? server-err) (string "server error: " server-err))
+        (assert (= (length received) payload-size)
+                "server should receive all bytes of multi-record payload")
+        (assert (= (string received) payload)
+                "payload content integrity must match perfectly"))))
+
   # ===========================================================================
   # Main Test Matrix - Socket Type x TLS Version x Verify Mode x Options
   # ===========================================================================

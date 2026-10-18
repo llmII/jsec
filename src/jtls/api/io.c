@@ -33,10 +33,11 @@ Janet cfun_read(int32_t argc, Janet *argv) {
         tls_panic_io("stream is closed");
     }
 
-    /* Handle integer or :all keyword for n (check number first on hot path) */
+    /* Handle integer or :all keyword for n (check number first on hot path)
+     */
     int read_all = 0;
-    int32_t step_cap =
-        tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+    int32_t step_cap = tls->read_buffer_size > 0 ? tls->read_buffer_size
+                                                 : DEFAULT_TLS_BUFFER_SIZE;
     int32_t bytes_to_read;
 
     if (janet_checktype(argv[1], JANET_NUMBER)) {
@@ -110,8 +111,9 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
     if (argc >= 3 && !janet_checktype(argv[2], JANET_NIL)) {
         buffer = janet_getbuffer(argv, 2);
     } else {
-        int32_t step_cap =
-            tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+        int32_t step_cap = tls->read_buffer_size > 0
+                               ? tls->read_buffer_size
+                               : DEFAULT_TLS_BUFFER_SIZE;
         int32_t init_cap =
             bytes_to_read > step_cap ? step_cap : bytes_to_read;
         buffer = janet_buffer(init_cap);
