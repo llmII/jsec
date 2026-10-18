@@ -113,12 +113,14 @@ void dtls_session_free(DTLSSession *session, int in_gc) {
  */
 
 /*
- * Look up a session by peer address.
+ * Look up a session by peer address, optionally returning bucket index.
  * Returns NULL if not found.
  */
-DTLSSession *dtls_server_get_session(DTLSServer *server,
-                                     const DTLSAddress *addr) {
+DTLSSession *dtls_server_get_session_bucket(DTLSServer *server,
+                                            const DTLSAddress *addr,
+                                            int *out_bucket) {
     int bucket = session_bucket(addr);
+    if (out_bucket) *out_bucket = bucket;
     DTLSSession *session = server->sessions[bucket];
 
     while (session) {
@@ -131,19 +133,18 @@ DTLSSession *dtls_server_get_session(DTLSServer *server,
     return NULL;
 }
 
+DTLSSession *dtls_server_get_session(DTLSServer *server,
+                                     const DTLSAddress *addr) {
+    return dtls_server_get_session_bucket(server, addr, NULL);
+}
+
 /*
- * Create a new session and add to server's table.
+ * Create a new session in a known bucket without duplicate lookup.
  * Returns the new session or NULL on failure.
  */
-DTLSSession *dtls_server_create_session(DTLSServer *server,
-                                        const DTLSAddress *addr) {
-    /* Check if session already exists */
-    DTLSSession *existing = dtls_server_get_session(server, addr);
-    if (existing) {
-        existing->last_activity = get_current_time();
-        return existing;
-    }
-
+DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
+                                                  const DTLSAddress *addr,
+                                                  int bucket) {
     if (server->session_count >= server->max_sessions) {
         dtls_server_cleanup_expired(server, get_current_time());
         if (server->session_count >= server->max_sessions) {
@@ -179,12 +180,27 @@ DTLSSession *dtls_server_create_session(DTLSServer *server,
     if (!session) return NULL;
 
     /* Add to hash table (prepend to bucket) */
-    int bucket = session_bucket(addr);
     session->next = server->sessions[bucket];
     server->sessions[bucket] = session;
     server->session_count++;
 
     return session;
+}
+
+/*
+ * Create a new session and add to server's table.
+ * Returns the existing/new session or NULL on failure.
+ */
+DTLSSession *dtls_server_create_session(DTLSServer *server,
+                                        const DTLSAddress *addr) {
+    int bucket = 0;
+    DTLSSession *existing = dtls_server_get_session_bucket(server, addr, &bucket);
+    if (existing) {
+        existing->last_activity = get_current_time();
+        return existing;
+    }
+
+    return dtls_server_create_session_in_bucket(server, addr, bucket);
 }
 
 /*
@@ -211,6 +227,12 @@ void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr) {
  * Called periodically to clean up idle connections.
  */
 void dtls_server_cleanup_expired(DTLSServer *server, double now) {
+    if (server->session_count < server->max_sessions &&
+        server->last_cleanup > 0.0 && (now - server->last_cleanup) < 1.0) {
+        return;
+    }
+    server->last_cleanup = now;
+
     for (int i = 0; i < DTLS_SESSION_TABLE_SIZE; i++) {
         DTLSSession **pp = &server->sessions[i];
 

@@ -13,31 +13,7 @@
  * =============================================================================
  */
 
-typedef struct {
-#ifdef JANET_WINDOWS
-    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
-    WSAOVERLAPPED overlapped;
-    WSABUF wsa_buf;
-    DWORD wsa_flags;
-    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
-    DWORD bytes_received;
-#endif
-    DTLSClient *client;
-    JanetBuffer *buffer;      /* For read */
-    Janet write_src;          /* For write */
-    int32_t write_len;        /* For write length at entry */
-    int32_t nbytes;           /* For read */
-    int32_t buf_start;        /* buffer->count when read op began; n is
-                               * relative to this, matching ev/read append
-                               * semantics (never treat n as buffer total) */
-    enum {
-        CLIENT_OP_HANDSHAKE,
-        CLIENT_OP_READ,
-        CLIENT_OP_WRITE,
-        CLIENT_OP_CLOSE
-    } op;
-    uint8_t want_write; /* Track if we're waiting for write vs read */
-} DTLSClientAsyncState;
+
 
 /*
  * Helper: Flush wbio - use shared helper from internal.h

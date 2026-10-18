@@ -90,29 +90,44 @@ static void server_align_outbound_records(DTLSSession *session, uint8_t *data,
  */
 static ssize_t send_dtls_packet(JanetStream *transport,
                                 DTLSSession *session) {
-    size_t pending = BIO_ctrl_pending(session->wbio);
-    if (pending == 0) {
-        return 0;
+    uint8_t stack_buf[JDTLS_PACKET_BUF_SIZE];
+    ssize_t total_sent = 0;
+
+    while (BIO_ctrl_pending(session->wbio) > 0) {
+        size_t pending = BIO_ctrl_pending(session->wbio);
+        uint8_t *send_buf = stack_buf;
+        uint8_t *heap_buf = NULL;
+
+        if (pending > sizeof(stack_buf)) {
+            heap_buf = (uint8_t *)janet_malloc(pending);
+            if (!heap_buf) {
+                return total_sent > 0 ? total_sent : -1;
+            }
+            send_buf = heap_buf;
+        }
+
+        int send_len = BIO_read(session->wbio, send_buf, (int)pending);
+        if (send_len > 0) {
+            server_align_outbound_records(session, send_buf, send_len);
+            ssize_t sent = sendto((jsec_socket_t)transport->handle,
+                                  (const char *)send_buf, (size_t)send_len, 0,
+                                  (struct sockaddr *)&session->peer_addr.addr,
+                                  session->peer_addr.addrlen);
+            if (sent > 0) {
+                total_sent += sent;
+            }
+        }
+
+        if (heap_buf) {
+            janet_free(heap_buf);
+        }
+
+        if (send_len <= 0) {
+            break;
+        }
     }
 
-    uint8_t *send_buf = janet_malloc(pending);
-    if (!send_buf) {
-        return -1;
-    }
-
-    int send_len = BIO_read(session->wbio, send_buf, (int)pending);
-    ssize_t sent = 0;
-
-    if (send_len > 0) {
-        server_align_outbound_records(session, send_buf, send_len);
-        sent = sendto((jsec_socket_t)transport->handle,
-                      (const char *)send_buf, (size_t)send_len, 0,
-                      (struct sockaddr *)&session->peer_addr.addr,
-                      session->peer_addr.addrlen);
-    }
-
-    janet_free(send_buf);
-    return sent;
+    return total_sent;
 }
 
 /* Flight-timer flush: a retransmitted flight in the session's wbio goes
@@ -648,22 +663,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
  * =============================================================================
  */
 
-typedef struct {
-#ifdef JANET_WINDOWS
-    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
-    WSAOVERLAPPED overlapped;
-    WSABUF wsa_buf;
-    DWORD wsa_flags;
-    uint8_t recv_buf[65536];           /* Buffer for received datagram */
-    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
-    int peer_addrlen;
-    DWORD bytes_received;
-#endif
-    DTLSServer *server;
-    JanetBuffer *buffer;
-    double timeout;
-    int32_t nbytes;
-} DTLSRecvFromState;
+
 
 /*
  * =============================================================================
@@ -915,7 +915,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
                               DTLSAddress *peer_addr, JanetBuffer *out_buf,
                               int32_t nbytes) {
     /* Look up or create session for this peer */
-    DTLSSession *session = dtls_server_get_session(server, peer_addr);
+    int bucket = 0;
+    DTLSSession *session = dtls_server_get_session_bucket(server, peer_addr, &bucket);
 
     int fresh = 0;
 
@@ -925,7 +926,7 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         if (!dtls_server_cookie_gate(server, data, datalen, peer_addr)) {
             return janet_wrap_nil();
         }
-        session = dtls_server_create_session(server, peer_addr);
+        session = dtls_server_create_session_in_bucket(server, peer_addr, bucket);
         if (!session) {
             ERR_clear_error();
             return janet_wrap_nil(); /* Out of memory or other error */
@@ -1315,7 +1316,37 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
 
     double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
 
-    /* Add timeout if specified */
+    /* Try non-blocking receive directly before suspending to the event loop */
+#ifndef JANET_WINDOWS
+    while (1) {
+        uint8_t recv_buf[65536];
+        DTLSAddress peer_addr;
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        peer_addr.addrlen = sizeof(peer_addr.addr);
+
+        ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
+                             recv_buf, sizeof(recv_buf), MSG_DONTWAIT,
+                             (struct sockaddr *)&peer_addr.addr,
+                             &peer_addr.addrlen);
+        if (n < 0) {
+            int sock_err = jsec_socket_errno;
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
+                break;
+            }
+            dtls_panic_io("%s", jsec_socket_strerror(sock_err));
+        }
+
+        dtls_server_cleanup_expired(server, get_current_time());
+
+        Janet result = process_datagram(server, recv_buf, (int)n,
+                                        &peer_addr, buf, nbytes);
+        if (janet_checktype(result, JANET_ABSTRACT)) {
+            return result;
+        }
+    }
+#endif
+
+    /* Add timeout if specified (only when actually suspending) */
     if (timeout >= 0) {
         janet_addtimeout(timeout);
     }
@@ -1325,6 +1356,7 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
     if (!state) {
         dtls_panic_io("out of memory");
     }
+    memset(state, 0, sizeof(DTLSRecvFromState));
     state->server = server;
     state->buffer = buf;
     state->nbytes = nbytes;
