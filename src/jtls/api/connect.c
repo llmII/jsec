@@ -79,7 +79,8 @@ Janet cfun_wrap(int32_t argc, Janet *argv) {
     int is_server = 0;
     int verify = 1;
     int owns_ctx = 1;
-    int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
+    int32_t read_buffer_size = DEFAULT_TLS_BUFFER_SIZE;
+    int32_t write_buffer_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
 
     SSL_CTX *ctx = NULL;
     Janet security_opts = janet_wrap_nil();
@@ -289,7 +290,8 @@ client_setup:
                         janet_checktype(client_cert, JANET_NIL) &&
                         janet_checktype(client_key, JANET_NIL) && !ocsp_req;
 
-        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt, shareable);
+        ctx =
+            jtls_create_client_ctx(verify, security_opts, ca_opt, shareable);
         if (!ctx) {
             tls_panic_ssl("failed to create client context");
         }
@@ -335,19 +337,10 @@ client_setup:
     }
 
 common_setup:
-    /* Parse buffer-size option */
-    if (!janet_checktype(opts, JANET_NIL)) {
-        Janet buf_size_opt = janet_get(opts, janet_ckeywordv("buffer-size"));
-        if (!janet_checktype(buf_size_opt, JANET_NIL)) {
-            if (!janet_checktype(buf_size_opt, JANET_NUMBER)) {
-                tls_panic_param("buffer-size must be a number");
-            }
-            int32_t size = (int32_t)janet_unwrap_integer(buf_size_opt);
-            if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
-            if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
-            buffer_size = size;
-        }
+    /* Parse buffer options */
+    jtls_parse_buffer_opts(opts, &read_buffer_size, &write_buffer_size);
 
+    if (!janet_checktype(opts, JANET_NIL)) {
         if (janet_checktype(session_opt, JANET_NIL)) {
             session_opt = janet_get(opts, janet_ckeywordv("session"));
             if (!janet_checktype(session_opt, JANET_NIL) &&
@@ -382,9 +375,9 @@ common_setup:
     }
 
     /* Create the TLS stream */
-    TLSStream *tls =
-        jtls_setup_stream(transport, ctx, is_server, owns_ctx, buffer_size,
-                          tcp_nodelay, track_handshake_time);
+    TLSStream *tls = jtls_setup_stream(transport, ctx, is_server, owns_ctx,
+                                       read_buffer_size, write_buffer_size,
+                                       tcp_nodelay, track_handshake_time);
 
     /* Per-connection :ocsp-stapling arms the status request on the
      * connection itself, which is the only lever when the context is
@@ -604,8 +597,8 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         janet_get(opts, janet_ckeywordv("trusted-cert"));
                 }
                 int ocsp_req = opts_ocsp_stapling(opts);
-                int shareable = janet_checktype(trusted_cert, JANET_NIL) &&
-                                !ocsp_req;
+                int shareable =
+                    janet_checktype(trusted_cert, JANET_NIL) && !ocsp_req;
 
                 ctx = jtls_create_client_ctx(verify, security_opts, ca_opt,
                                              shareable);
@@ -631,32 +624,19 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         SSL_CTX_free(ctx);
                         janet_free(hostname);
                         janet_cancel(
-                            fiber,
-                            janet_cstringv(
-                                "failed to add trusted certificate"));
+                            fiber, janet_cstringv(
+                                       "failed to add trusted certificate"));
                         janet_async_end(fiber);
                         return;
                     }
                 }
             }
 
-            /* Parse buffer-size option */
-            int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
-            if (!janet_checktype(opts, JANET_NIL)) {
-                Janet buf_size_opt =
-                    janet_get(opts, janet_ckeywordv("buffer-size"));
-                if (!janet_checktype(buf_size_opt, JANET_NIL)) {
-                    if (janet_checktype(buf_size_opt, JANET_NUMBER)) {
-                        int32_t buf_sz =
-                            (int32_t)janet_unwrap_integer(buf_size_opt);
-                        if (buf_sz < MIN_TLS_BUFFER_SIZE)
-                            buf_sz = MIN_TLS_BUFFER_SIZE;
-                        if (buf_sz > MAX_TLS_BUFFER_SIZE)
-                            buf_sz = MAX_TLS_BUFFER_SIZE;
-                        buffer_size = buf_sz;
-                    }
-                }
-            }
+            /* Parse buffer options */
+            int32_t read_buffer_size = DEFAULT_TLS_BUFFER_SIZE;
+            int32_t write_buffer_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
+            jtls_parse_buffer_opts(opts, &read_buffer_size,
+                                   &write_buffer_size);
 
             /* Parse tcp-nodelay option (default: enabled) */
             int tcp_nodelay = 1;
@@ -679,9 +659,9 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             }
 
             /* Create TLS stream - handshake happens on first I/O */
-            TLSStream *tls =
-                jtls_setup_stream(stream, ctx, 0, owns_ctx, buffer_size,
-                                  tcp_nodelay, track_handshake_time);
+            TLSStream *tls = jtls_setup_stream(
+                stream, ctx, 0, owns_ctx, read_buffer_size, write_buffer_size,
+                tcp_nodelay, track_handshake_time);
 
             /* Attach an explicit non-nil :session before any handshake
              * flight, with the shared wrap site's contract: corrupt or

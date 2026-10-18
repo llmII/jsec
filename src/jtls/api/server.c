@@ -69,7 +69,8 @@ typedef struct {
 #endif
     SSL_CTX *ctx;
     JanetFunction *handler;
-    int32_t buffer_size;
+    int32_t read_buffer_size;
+    int32_t write_buffer_size;
     uint8_t flags; /* Bitmask of JTLS_ACCEPT_* */
 } TLSAcceptLoopState;
 
@@ -132,7 +133,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             break;
 
         case JANET_ASYNC_EVENT_CLOSE:
-            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) && state->ctx) {
+            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) &&
+                state->ctx) {
                 SSL_CTX_free(state->ctx);
             }
 #ifdef JANET_WINDOWS
@@ -195,7 +197,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             /* Create TLS stream */
             SSL_CTX_up_ref(state->ctx);
             TLSStream *tls = jtls_setup_stream(
-                client_stream, state->ctx, 1, 1, state->buffer_size,
+                client_stream, state->ctx, 1, 1, state->read_buffer_size,
+                state->write_buffer_size,
                 (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
                 (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
@@ -266,7 +269,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                  * connections */
                 SSL_CTX_up_ref(state->ctx);
                 TLSStream *tls = jtls_setup_stream(
-                    client_stream, state->ctx, 1, 1, state->buffer_size,
+                    client_stream, state->ctx, 1, 1, state->read_buffer_size,
+                    state->write_buffer_size,
                     (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
                     (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
@@ -323,21 +327,10 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
             "accept-loop requires a TLS context or options table");
     }
 
-    /* Parse buffer-size option */
-    int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
-    if (janet_checktype(argv[1], JANET_TABLE) ||
-        janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet buf_size_opt =
-            janet_get(argv[1], janet_ckeywordv("buffer-size"));
-        if (!janet_checktype(buf_size_opt, JANET_NIL)) {
-            if (janet_checktype(buf_size_opt, JANET_NUMBER)) {
-                int32_t size = (int32_t)janet_unwrap_integer(buf_size_opt);
-                if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
-                if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
-                buffer_size = size;
-            }
-        }
-    }
+    /* Parse buffer options */
+    int32_t read_buffer_size = DEFAULT_TLS_BUFFER_SIZE;
+    int32_t write_buffer_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
+    jtls_parse_buffer_opts(argv[1], &read_buffer_size, &write_buffer_size);
 
     /* Parse tcp-nodelay option (default: enabled) */
     int tcp_nodelay = 1;
@@ -368,7 +361,8 @@ Janet cfun_accept_loop(int32_t argc, Janet *argv) {
     }
     state->ctx = ctx;
     state->handler = handler;
-    state->buffer_size = buffer_size;
+    state->read_buffer_size = read_buffer_size;
+    state->write_buffer_size = write_buffer_size;
     state->flags = (owns_ctx ? JTLS_ACCEPT_OWNS_CTX : 0) |
                    (tcp_nodelay ? JTLS_ACCEPT_TCP_NODELAY : 0) |
                    (track_handshake_time ? JTLS_ACCEPT_TRACK_HANDSHAKE : 0);
@@ -408,14 +402,10 @@ Janet cfun_server(int32_t argc, Janet *argv) {
  * the listener gets its own table: :localname works via cfun_localname's
  * core/stream dispatch, and :accept / :accept-loop wrap with TLS. */
 static const JanetMethod tls_listener_methods[] = {
-    {"close", janet_cfun_stream_close},
-    {"localname", cfun_localname},
-    {"read", janet_cfun_stream_read},
-    {"chunk", janet_cfun_stream_chunk},
-    {"write", janet_cfun_stream_write},
-    {"accept", cfun_accept},
-    {"accept-loop", cfun_accept_loop},
-    {NULL, NULL}};
+    {"close", janet_cfun_stream_close}, {"localname", cfun_localname},
+    {"read", janet_cfun_stream_read},   {"chunk", janet_cfun_stream_chunk},
+    {"write", janet_cfun_stream_write}, {"accept", cfun_accept},
+    {"accept-loop", cfun_accept_loop},  {NULL, NULL}};
 
 /*============================================================================
  * LISTEN - Create a TCP/Unix listener for TLS server
@@ -601,7 +591,8 @@ typedef struct {
     char accept_buf[2 * (sizeof(SOCKADDR_STORAGE) + 16)]; /* Address buffer */
 #endif
     SSL_CTX *ctx;
-    int32_t buffer_size;
+    int32_t read_buffer_size;
+    int32_t write_buffer_size;
     uint8_t flags; /* Bitmask of JTLS_ACCEPT_* */
 } TLSAcceptState;
 
@@ -665,7 +656,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * success path, so release a still-owned context; successful
              * accepts transfer ownership to the TLS stream first and leave
              * owns_ctx cleared. */
-            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) && state->ctx) {
+            if (state && (state->flags & JTLS_ACCEPT_OWNS_CTX) &&
+                state->ctx) {
                 SSL_CTX_free(state->ctx);
                 state->ctx = NULL;
                 state->flags &= (uint8_t)~JTLS_ACCEPT_OWNS_CTX;
@@ -727,7 +719,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Create TLS stream */
             TLSStream *tls = jtls_setup_stream(
                 client_stream, state->ctx, 1,
-                (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0, state->buffer_size,
+                (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0,
+                state->read_buffer_size, state->write_buffer_size,
                 (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
                 (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
@@ -772,7 +765,7 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 TLSStream *tls = jtls_setup_stream(
                     client_stream, state->ctx, 1,
                     (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0,
-                    state->buffer_size,
+                    state->read_buffer_size, state->write_buffer_size,
                     (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
                     (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
@@ -834,21 +827,10 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
         tls_panic_config("accept requires a TLS context or options table");
     }
 
-    /* Parse buffer-size option */
-    int32_t buffer_size = DEFAULT_TLS_BUFFER_SIZE;
-    if (janet_checktype(argv[1], JANET_TABLE) ||
-        janet_checktype(argv[1], JANET_STRUCT)) {
-        Janet buf_size_opt =
-            janet_get(argv[1], janet_ckeywordv("buffer-size"));
-        if (!janet_checktype(buf_size_opt, JANET_NIL)) {
-            if (janet_checktype(buf_size_opt, JANET_NUMBER)) {
-                int32_t size = (int32_t)janet_unwrap_integer(buf_size_opt);
-                if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
-                if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
-                buffer_size = size;
-            }
-        }
-    }
+    /* Parse buffer options */
+    int32_t read_buffer_size = DEFAULT_TLS_BUFFER_SIZE;
+    int32_t write_buffer_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
+    jtls_parse_buffer_opts(argv[1], &read_buffer_size, &write_buffer_size);
 
     /* Parse tcp-nodelay option (default: enabled) */
     int tcp_nodelay = 1;
@@ -878,7 +860,8 @@ Janet cfun_accept(int32_t argc, Janet *argv) {
         tls_panic_io("out of memory");
     }
     state->ctx = ctx;
-    state->buffer_size = buffer_size;
+    state->read_buffer_size = read_buffer_size;
+    state->write_buffer_size = write_buffer_size;
     state->flags = (owns_ctx ? JTLS_ACCEPT_OWNS_CTX : 0) |
                    (tcp_nodelay ? JTLS_ACCEPT_TCP_NODELAY : 0) |
                    (track_handshake_time ? JTLS_ACCEPT_TRACK_HANDSHAKE : 0);

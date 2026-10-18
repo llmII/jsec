@@ -213,6 +213,10 @@ void jtls_module_init(JanetTable *env) {
          "completes or when the peer presented none. Raises on a closed "
          "stream.\n"
          "Call after handshake completes.\n"},
+        {"buffer", cfun_get_buffer_config,
+         "(buffer stream)\n\n"
+         "Get the stream's buffer configuration as "
+         "{:read <int|false> :write <int|false>}.\n"},
         {NULL, NULL, NULL}};
 
     janet_cfuns(env, "jsec/tls", cfuns);

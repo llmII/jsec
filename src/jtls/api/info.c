@@ -394,3 +394,27 @@ Janet cfun_peername(int32_t argc, Janet *argv) {
 
     return sockaddr_to_tuple(&ss);
 }
+
+/*============================================================================
+ * BUFFER CONFIG - Get stream buffer configuration
+ *============================================================================
+ * (:buffer stream)
+ *
+ * Get the current read and write buffer configuration for this TLS stream:
+ * returns a struct {:read <int|false> :write <int|false>}
+ */
+Janet cfun_get_buffer_config(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+
+    JanetKV *st = janet_struct_begin(2);
+    janet_struct_put(st, janet_ckeywordv("read"),
+                     tls->read_buffer_size > 0
+                         ? janet_wrap_integer(tls->read_buffer_size)
+                         : janet_wrap_boolean(0));
+    janet_struct_put(st, janet_ckeywordv("write"),
+                     tls->write_buffer_size > 0
+                         ? janet_wrap_integer(tls->write_buffer_size)
+                         : janet_wrap_boolean(0));
+    return janet_wrap_struct(janet_struct_end(st));
+}

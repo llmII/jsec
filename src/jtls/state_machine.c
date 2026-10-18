@@ -87,19 +87,18 @@
  *============================================================================
  * Sizes the next SSL_read slice to the caller's pre-allocated buffer capacity
  * or the stream's configured buffer_size, eliminating the fixed 4KB read cap:
- * - If remaining fits in the caller buffer's already-allocated unused capacity
- *   (buf->capacity - buf->count), returns remaining with zero realloc.
+ * - If remaining fits in the caller buffer's already-allocated unused
+ * capacity (buf->capacity - buf->count), returns remaining with zero realloc.
  * - If remaining <= stream buffer_size, ensures exact capacity (growth=1) and
  *   returns remaining.
  * - If remaining exceeds both unused buffer capacity and stream buffer_size
  *   (e.g., :all / INT32_MAX or a multi-step chunk), grows in stream
  *   buffer_size steps so buffer memory grows with data actually received.
  */
-static inline int32_t jtls_prepare_read_slice(TLSStream *tls,
-                                              JanetBuffer *buf,
-                                              int32_t remaining) {
-    int32_t step_cap =
-        tls->buffer_size > 0 ? tls->buffer_size : DEFAULT_TLS_BUFFER_SIZE;
+static inline int32_t
+jtls_prepare_read_slice(TLSStream *tls, JanetBuffer *buf, int32_t remaining) {
+    int32_t step_cap = tls->read_buffer_size > 0 ? tls->read_buffer_size
+                                                 : DEFAULT_TLS_BUFFER_SIZE;
     int32_t avail_cap = buf->capacity - buf->count;
     if (remaining < 0) {
         remaining = step_cap;
@@ -317,6 +316,18 @@ TLSIOState jtls_process_operation(TLSState *state) {
          * WANT_READ or WANT_WRITE.
          */
         case TLS_OP_HANDSHAKE: {
+            if (tls->write_buffer.head < tls->write_buffer.tail) {
+                int flush_res = jtls_bio_flush(tls);
+                if (flush_res < 0) {
+                    int sock_err = jsec_socket_errno;
+                    return handle_ssl_error(SSL_ERROR_SYSCALL, -1, state,
+                                            "Handshake", 0, NULL, sock_err);
+                }
+                if (flush_res == 0) {
+                    return TLS_IO_WANT_WRITE;
+                }
+            }
+
             ret = (tls->flags & JTLS_FLAG_SERVER) ? SSL_accept(tls->ssl)
                                                   : SSL_connect(tls->ssl);
 
@@ -326,7 +337,22 @@ TLSIOState jtls_process_operation(TLSState *state) {
                 if (tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) {
                     clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
                 }
+                if (tls->write_buffer.head < tls->write_buffer.tail) {
+                    jtls_bio_flush(tls);
+                }
                 return TLS_IO_COMPLETE;
+            }
+
+            if (tls->write_buffer.head < tls->write_buffer.tail) {
+                int flush_res = jtls_bio_flush(tls);
+                if (flush_res < 0) {
+                    int sock_err = jsec_socket_errno;
+                    return handle_ssl_error(SSL_ERROR_SYSCALL, -1, state,
+                                            "Handshake", 0, NULL, sock_err);
+                }
+                if (flush_res == 0) {
+                    return TLS_IO_WANT_WRITE;
+                }
             }
 
             int sock_err = jsec_socket_errno;
@@ -359,8 +385,9 @@ TLSIOState jtls_process_operation(TLSState *state) {
                  * bytes_requested counts bytes appended since buf_start, not
                  * the buffer's total length (buffers may arrive pre-filled).
                  */
-                int32_t read_size = state->bytes_requested -
-                                    (state->user_buf->count - state->buf_start);
+                int32_t read_size =
+                    state->bytes_requested -
+                    (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested >= 0 && read_size <= 0) {
                     return TLS_IO_COMPLETE;
                 }
@@ -407,8 +434,9 @@ TLSIOState jtls_process_operation(TLSState *state) {
         case TLS_OP_CHUNK: {
             int just_read_data = 0; /* Track if we just successfully read */
             while (1) {
-                int32_t remaining = state->bytes_requested -
-                                    (state->user_buf->count - state->buf_start);
+                int32_t remaining =
+                    state->bytes_requested -
+                    (state->user_buf->count - state->buf_start);
                 if (remaining <= 0) {
                     return TLS_IO_COMPLETE;
                 }
@@ -487,31 +515,62 @@ TLSIOState jtls_process_operation(TLSState *state) {
             const uint8_t *bytes;
             int32_t src_len;
             if (!janet_bytes_view(state->write_src, &bytes, &src_len) ||
-                src_len != state->write_len || src_len < state->write_offset) {
+                src_len != state->write_len ||
+                src_len < state->write_offset) {
                 snprintf(state->error_msg, sizeof(state->error_msg),
                          "Write error: write source changed during write");
                 return TLS_IO_ERROR;
             }
+
+            /* Drain any pending ciphertext left in write_buffer from a prior
+             * partial send before continuing. */
+            if (tls->write_buffer.head < tls->write_buffer.tail) {
+                int flush_res = jtls_bio_flush(tls);
+                if (flush_res < 0) {
+                    int sock_err = jsec_socket_errno;
+                    return handle_ssl_error(SSL_ERROR_SYSCALL, -1, state,
+                                            "Write", 0, tls, sock_err);
+                }
+                if (flush_res == 0) {
+                    return TLS_IO_WANT_WRITE;
+                }
+            }
+
             while (state->write_offset < state->write_len) {
                 int remaining = state->write_len - state->write_offset;
+                int chunk = remaining;
 
-                ret = SSL_write(tls->ssl, bytes + state->write_offset,
-                                remaining);
+                /* Bound each chunk to write buffer capacity (or default)
+                 * so that large writes (e.g. 2 GB) do not cause unbounded
+                 * intermediate allocations or OpenSSL state retention. */
+                if (tls->write_buffer_size > 0 &&
+                    chunk > tls->write_buffer_size) {
+                    chunk = tls->write_buffer_size;
+                }
+
+                ret = SSL_write(tls->ssl, bytes + state->write_offset, chunk);
 
                 if (ret > 0) {
                     check_record_handshake_time(tls);
                     state->write_offset += ret;
-
-                    if (state->write_offset == state->write_len) {
-                        return TLS_IO_COMPLETE;
-                    }
-                    /* Continue writing more */
                 } else {
                     int sock_err = jsec_socket_errno;
                     ssl_err = SSL_get_error(tls->ssl, ret);
                     return handle_ssl_error(ssl_err, ret, state, "Write", 0,
                                             NULL, sock_err);
                 }
+            }
+
+            /* All application data passed to SSL_write. Flush any accumulated
+             * coalesced records in the write buffer to the network socket. */
+            int flush_res = jtls_bio_flush(tls);
+            if (flush_res < 0) {
+                int sock_err = jsec_socket_errno;
+                return handle_ssl_error(SSL_ERROR_SYSCALL, -1, state, "Write",
+                                        0, tls, sock_err);
+            }
+            if (flush_res == 0) {
+                return TLS_IO_WANT_WRITE;
             }
 
             return TLS_IO_COMPLETE;
@@ -533,6 +592,18 @@ TLSIOState jtls_process_operation(TLSState *state) {
          */
         case TLS_OP_SHUTDOWN:
         case TLS_OP_CLOSE: {
+            if (tls->write_buffer.head < tls->write_buffer.tail) {
+                int flush_res = jtls_bio_flush(tls);
+                if (flush_res < 0) {
+                    int sock_err = jsec_socket_errno;
+                    return handle_ssl_error(SSL_ERROR_SYSCALL, -1, state,
+                                            "Close", 0, tls, sock_err);
+                }
+                if (flush_res == 0) {
+                    return TLS_IO_WANT_WRITE;
+                }
+            }
+
             ret = SSL_shutdown(tls->ssl);
 
             if (ret == 1) {
@@ -729,8 +800,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
          * also reports a partially received record that still needs
          * network bytes, and retrying that state spins without progress.
          */
-        if (io_state == TLS_IO_WANT_READ &&
-            jtls_has_buffered_data(tls) &&
+        if (io_state == TLS_IO_WANT_READ && jtls_has_buffered_data(tls) &&
 #if JSEC_LIBRESSL
             (tls->bio_ahead.p < tls->bio_ahead.pe || !retried)
 #else
@@ -1081,13 +1151,14 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (state &&
                 (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
                 TLSStream *tls = state->tls;
-                int32_t step_cap = tls->buffer_size > 0
-                                       ? tls->buffer_size
+                int32_t step_cap = tls->read_buffer_size > 0
+                                       ? tls->read_buffer_size
                                        : DEFAULT_TLS_BUFFER_SIZE;
                 /* For CHUNK, only read what was requested.
                  * For READ, read up to step_cap. */
-                int32_t read_size = state->bytes_requested -
-                                    (state->user_buf->count - state->buf_start);
+                int32_t read_size =
+                    state->bytes_requested -
+                    (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested >= 0 && read_size <= 0) {
                     if (state->op == TLS_OP_CHUNK) {
                         /* Already have enough data */
@@ -1105,7 +1176,8 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
                 if (state->bytes_requested < 0) {
                     read_size = step_cap;
-                } else if (state->op != TLS_OP_CHUNK && read_size > step_cap) {
+                } else if (state->op != TLS_OP_CHUNK &&
+                           read_size > step_cap) {
                     read_size = step_cap;
                 }
 
@@ -1120,8 +1192,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         tls, state->user_buf, read_size);
                     ret = SSL_read(
                         tls->ssl,
-                        state->user_buf->data + state->user_buf->count,
-                        want);
+                        state->user_buf->data + state->user_buf->count, want);
                     if (ret <= 0) {
                         /* Capture the socket errno before SSL_get_error
                          * runs (the jtls_process_operation discipline) */
@@ -1162,11 +1233,10 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         /* A hard reset raises with the OS reason under
                          * the TLS IO category - never a clean nil */
                         char msg[320];
-                        snprintf(msg, sizeof(msg),
-                                 "[TLS:IO] %s syscall error: %s",
-                                 state->op == TLS_OP_CHUNK ? "Chunk read"
-                                                           : "Read",
-                                 jsec_socket_strerror(sock_err));
+                        snprintf(
+                            msg, sizeof(msg), "[TLS:IO] %s syscall error: %s",
+                            state->op == TLS_OP_CHUNK ? "Chunk read" : "Read",
+                            jsec_socket_strerror(sock_err));
                         janet_cancel(fiber, janet_cstringv(msg));
                         clear_pending_for(state);
                         janet_async_end(fiber);

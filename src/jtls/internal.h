@@ -80,6 +80,8 @@
 #define DEFAULT_TLS_BUFFER_SIZE 65536
 #define MIN_TLS_BUFFER_SIZE 512
 #define MAX_TLS_BUFFER_SIZE 262144
+#define JSEC_DEFAULT_WRITE_BUFFER_SIZE 65536
+#define JSEC_MAX_WRITE_BUFFER_BOUND 262144
 
 /*============================================================================
  * CONNECTION STATE MACHINE
@@ -188,28 +190,28 @@ struct TLSState {
     WSABUF wsa_buf;  /* Zero-byte buffer descriptor */
     DWORD wsa_flags; /* Flags for WSARecv */
 #endif
-    TLSStream *tls;            /* The TLS stream */
-    JanetBuffer *user_buf;     /* Buffer for read operations */
-    Janet write_src;           /* Write source object (buffer or string);
-                                * the byte pointer is re-derived from it on
-                                * every write attempt - never cached across
-                                * suspension - and it is GC-marked while the
-                                * write is parked (JANET_ASYNC_EVENT_MARK) */
-    double timeout;            /* Operation deadline in seconds; armed by
-                                * jtls_schedule_async only when the fiber
-                                * actually suspends */
-    TLSOpType op;              /* Operation type */
-    TLSIOState io_state;       /* Current I/O state */
-    int32_t write_len;         /* Total bytes to write */
-    int32_t write_offset;      /* Bytes already written */
-    int32_t bytes_requested;   /* Bytes requested for read (-1 for any) */
-    int32_t buf_start;         /* user_buf->count when read op began; n is
-                                * relative to this, matching ev/read append
-                                * semantics (never treat n as buffer total) */
-    uint8_t has_timeout;       /* 1 if timeout is a finite deadline to arm at
-                                * first suspension, 0 otherwise; narrow type,
-                                * and 0 from memset safely means "no deadline" */
-    char error_msg[256];       /* Error message buffer */
+    TLSStream *tls;          /* The TLS stream */
+    JanetBuffer *user_buf;   /* Buffer for read operations */
+    Janet write_src;         /* Write source object (buffer or string);
+                              * the byte pointer is re-derived from it on
+                              * every write attempt - never cached across
+                              * suspension - and it is GC-marked while the
+                              * write is parked (JANET_ASYNC_EVENT_MARK) */
+    double timeout;          /* Operation deadline in seconds; armed by
+                              * jtls_schedule_async only when the fiber
+                              * actually suspends */
+    TLSOpType op;            /* Operation type */
+    TLSIOState io_state;     /* Current I/O state */
+    int32_t write_len;       /* Total bytes to write */
+    int32_t write_offset;    /* Bytes already written */
+    int32_t bytes_requested; /* Bytes requested for read (-1 for any) */
+    int32_t buf_start;       /* user_buf->count when read op began; n is
+                              * relative to this, matching ev/read append
+                              * semantics (never treat n as buffer total) */
+    uint8_t has_timeout;     /* 1 if timeout is a finite deadline to arm at
+                              * first suspension, 0 otherwise; narrow type,
+                              * and 0 from memset safely means "no deadline" */
+    char error_msg[256];     /* Error message buffer */
 };
 
 /*============================================================================
@@ -240,11 +242,11 @@ struct TLSState {
 #define JTLS_FLAG_TRACK_HANDSHAKE (1u << 2)
 
 struct TLSStream {
-    JanetStream stream;        /* Embedded stream for method dispatch */
-    SSL *ssl;                  /* OpenSSL SSL object */
-    SSL_CTX *ctx;              /* SSL context */
-    BIO *bio;                  /* Custom BIO for socket I/O */
-    JanetStream *transport;    /* Underlying TCP/Unix stream */
+    JanetStream stream;     /* Embedded stream for method dispatch */
+    SSL *ssl;               /* OpenSSL SSL object */
+    SSL_CTX *ctx;           /* SSL context */
+    BIO *bio;               /* Custom BIO for socket I/O */
+    JanetStream *transport; /* Underlying TCP/Unix stream */
     /* Track pending operations for cooperative mode switching */
     JanetFiber *pending_read;  /* Fiber waiting on read */
     JanetFiber *pending_write; /* Fiber waiting on write */
@@ -257,16 +259,27 @@ struct TLSStream {
         size_t capacity;     /* Total buffer capacity */
     } bio_ahead;
 #endif
+    /* Bounded dynamic write buffer for record coalescing */
+    struct {
+        unsigned char *data; /* Buffer storage */
+        size_t head;         /* Offset of next unsent byte */
+        size_t tail;         /* Offset of end of buffered ciphertext */
+        size_t capacity;     /* Allocated capacity; 0 if unbuffered */
+    } write_buffer;
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
+
     struct timespec ts_connect;   /* Time when stream was created */
     struct timespec ts_handshake; /* Time when handshake completed */
     /* Embedded operation states - eliminates malloc per I/O operation */
     TLSState read_state;  /* State for read/chunk operations */
     TLSState write_state; /* State for write/shutdown/close operations */
     TLSConnectionState conn_state;
-    int32_t buffer_size;
-    uint8_t flags; /* Bitmask of JTLS_FLAG_* */
+    int32_t
+        read_buffer_size; /* Configured read buffer size (0 if unbuffered) */
+    int32_t write_buffer_size; /* Configured write buffer size (0 if
+                                  unbuffered) */
+    uint8_t flags;             /* Bitmask of JTLS_FLAG_* */
 };
 
 /*============================================================================
@@ -351,6 +364,9 @@ void jtls_init_bio_method(void);
 /* Get the BIO method (must be called after jtls_init_bio_method) */
 BIO_METHOD *jtls_get_bio_method(void);
 
+/* Flush buffered write data to the socket */
+int jtls_bio_flush(TLSStream *tls);
+
 /*============================================================================
  * STATE MACHINE FUNCTIONS (state_machine.c)
  *============================================================================
@@ -429,10 +445,16 @@ void jtls_ocsp_free_cb(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
  * TLS stream setup and method implementations.
  */
 
+/* Parse structured or legacy buffer options */
+void jtls_parse_buffer_opts(Janet opts, int32_t *read_buf_size,
+                            int32_t *write_buf_size);
+
 /* Setup a TLS stream wrapping a transport */
 TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
-                             int is_server, int owns_ctx, int32_t buffer_size,
-                             int tcp_nodelay, int track_handshake_time);
+                             int is_server, int owns_ctx,
+                             int32_t read_buffer_size,
+                             int32_t write_buffer_size, int tcp_nodelay,
+                             int track_handshake_time);
 
 /* GC callbacks */
 int jtls_stream_gc(void *p, size_t s);
@@ -491,6 +513,7 @@ Janet cfun_get_cipher_bits(int32_t argc, Janet *argv);
 Janet cfun_get_connection_info(int32_t argc, Janet *argv);
 Janet cfun_get_handshake_time(int32_t argc, Janet *argv);
 Janet cfun_get_peer_cert(int32_t argc, Janet *argv);
+Janet cfun_get_buffer_config(int32_t argc, Janet *argv);
 
 /* Clear the pending slot (internal.h:244-245) for this state's role
  * (read_state -> pending_read, write_state -> pending_write) */
