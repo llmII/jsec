@@ -575,6 +575,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     }
     jutils_validate_security_options(security);
 
+    jutils_cert_load_error_clear();
+
     /* Create SSL context */
     server->ctx = SSL_CTX_new(DTLS_server_method());
     if (!server->ctx) {
@@ -594,7 +596,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
                                 1)) { /* is_dtls, is_server */
         SSL_CTX_free(server->ctx);
         server->ctx = NULL;
-        dtls_panic_ssl("failed to apply security options");
+        jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to apply security options: %s",
+                   jutils_cert_load_error());
     }
 
     /* Load certificate and key (required for server) */
@@ -610,12 +613,18 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
         /* Load certificate */
         if (!jutils_load_cert(server->ctx, cert)) {
-            dtls_panic_ssl("failed to load certificate");
+            SSL_CTX_free(server->ctx);
+            server->ctx = NULL;
+            jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to load certificate: %s",
+                       jutils_cert_load_error());
         }
 
         /* Load private key */
         if (!jutils_load_key(server->ctx, key)) {
-            dtls_panic_ssl("failed to load private key");
+            SSL_CTX_free(server->ctx);
+            server->ctx = NULL;
+            jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to load private key: %s",
+                       jutils_cert_load_error());
         }
 
         /* Verify key matches certificate */
@@ -638,7 +647,9 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
                 if (!add_trusted_cert(server->ctx, trusted_cert)) {
                     SSL_CTX_free(server->ctx);
                     server->ctx = NULL;
-                    dtls_panic_ssl("failed to add trusted certificate");
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to add trusted certificate: %s",
+                               jutils_cert_load_error());
                 }
             }
 
@@ -646,7 +657,11 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
             Janet ca = janet_get(opts, janet_ckeywordv("ca"));
             if (!janet_checktype(ca, JANET_NIL)) {
                 if (!jutils_load_ca(server->ctx, ca)) {
-                    dtls_panic_ssl("failed to load CA certificates");
+                    SSL_CTX_free(server->ctx);
+                    server->ctx = NULL;
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to load CA certificates: %s",
+                               jutils_cert_load_error());
                 }
             }
         }
