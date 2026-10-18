@@ -8,14 +8,9 @@
 #ifndef JUTILS_H
 #define JUTILS_H
 
-/* Enable POSIX features for clock_gettime, strdup, etc. */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-
+#include "compat.h"
 #include <errno.h>
 #include <janet.h>
-#include "compat.h"
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
