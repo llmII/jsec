@@ -218,7 +218,54 @@ typedef struct DTLSSession {
 #define JDTLS_CLIENT_IS_SERVER (1u << 2)
 #define JDTLS_CLIENT_TRACK_HANDSHAKE (1u << 3)
 
+/* Forward declarations */
+typedef struct DTLSClient DTLSClient;
+typedef struct DTLSServer DTLSServer;
+
+/* Embedded async state for DTLSClient operations */
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
+    DWORD bytes_received;
+#endif
+    DTLSClient *client;
+    JanetBuffer *buffer;      /* For read */
+    Janet write_src;          /* For write */
+    int32_t write_len;        /* For write length at entry */
+    int32_t nbytes;           /* For read */
+    int32_t buf_start;        /* buffer->count when read op began */
+    enum {
+        CLIENT_OP_HANDSHAKE,
+        CLIENT_OP_READ,
+        CLIENT_OP_WRITE,
+        CLIENT_OP_CLOSE
+    } op;
+    uint8_t want_write; /* Track if we're waiting for write vs read */
+} DTLSClientAsyncState;
+
+/* Embedded async state for DTLSServer recv-from operations */
+typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    uint8_t recv_buf[65536];           /* Buffer for received datagram */
+    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
+    int peer_addrlen;
+    DWORD bytes_received;
+#endif
+    DTLSServer *server;
+    JanetBuffer *buffer;
+    double timeout;
+    int32_t nbytes;
+} DTLSRecvFromState;
+
+struct DTLSClient {
     JanetStream stream;            /* Embedded stream for method dispatch */
     JanetStream *transport;        /* Underlying UDP socket (connected) */
     SSL *ssl;                      /* OpenSSL SSL object */
@@ -231,9 +278,10 @@ typedef struct {
     struct timespec ts_connect;    /* Time when client was created */
     struct timespec ts_handshake;  /* Time when handshake completed */
     DTLSAddress peer_addr;         /* Server address (for reference) */
+    DTLSClientAsyncState async_state; /* Embedded async state (eliminates malloc) */
     DTLSState state;               /* Connection state */
     uint8_t flags;                 /* Bitmask of JDTLS_CLIENT_* */
-} DTLSClient;
+};
 
 /*
  * Helper: Flush any pending data from client's wbio to the socket via sendto.
@@ -244,6 +292,8 @@ typedef struct {
  * Note: When using dgram BIO (Unix), wbio is NULL - dgram handles I/O
  * directly. This function handles that case by returning 0.
  */
+#define JDTLS_PACKET_BUF_SIZE 17408
+
 static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
     /* Skip if wbio is NULL (dgram BIO handles I/O directly) or transport
      * closed */
@@ -251,28 +301,43 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
         return 0;
     }
 
-    size_t pending = BIO_ctrl_pending(client->wbio);
-    if (pending == 0) {
-        return 0;
+    uint8_t stack_buf[JDTLS_PACKET_BUF_SIZE];
+    ssize_t total_sent = 0;
+
+    while (BIO_ctrl_pending(client->wbio) > 0) {
+        size_t pending = BIO_ctrl_pending(client->wbio);
+        uint8_t *buf = stack_buf;
+        uint8_t *heap_buf = NULL;
+
+        if (pending > sizeof(stack_buf)) {
+            heap_buf = (uint8_t *)janet_malloc(pending);
+            if (!heap_buf) {
+                return total_sent > 0 ? total_sent : -1;
+            }
+            buf = heap_buf;
+        }
+
+        int n = BIO_read(client->wbio, buf, (int)pending);
+        if (n > 0) {
+            ssize_t sent = sendto((jsec_socket_t)client->transport->handle,
+                                  (const char *)buf, (size_t)n, 0,
+                                  (struct sockaddr *)&client->peer_addr.addr,
+                                  client->peer_addr.addrlen);
+            if (sent > 0) {
+                total_sent += sent;
+            }
+        }
+
+        if (heap_buf) {
+            janet_free(heap_buf);
+        }
+
+        if (n <= 0) {
+            break;
+        }
     }
 
-    uint8_t *buf = (uint8_t *)janet_malloc(pending);
-    if (!buf) {
-        return -1;
-    }
-
-    int n = BIO_read(client->wbio, buf, (int)pending);
-    ssize_t sent = 0;
-
-    if (n > 0) {
-        sent = sendto((jsec_socket_t)client->transport->handle,
-                      (const char *)buf, (size_t)n, 0,
-                      (struct sockaddr *)&client->peer_addr.addr,
-                      client->peer_addr.addrlen);
-    }
-
-    janet_free(buf);
-    return sent;
+    return total_sent;
 }
 
 /*
@@ -290,16 +355,18 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
 #define DTLS_SESSION_TIMEOUT 300.0  /* 5 minutes default timeout */
 #define DTLS_MAX_SESSIONS_DEFAULT 1024 /* Default session table bound */
 
-typedef struct {
+struct DTLSServer {
     JanetStream stream;     /* Embedded stream for method dispatch */
     JanetStream *transport; /* Underlying UDP socket */
     SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
     double session_timeout; /* Session timeout in seconds */
+    double last_cleanup;    /* Timestamp of last expired session cleanup sweep */
+    DTLSRecvFromState recvfrom_state; /* Embedded recvfrom async state (eliminates malloc) */
     int session_count;      /* Number of active sessions */
     int max_sessions;       /* Upper bound on session_count */
     uint8_t closed;         /* Server has been closed */
-} DTLSServer;
+};
 
 /* Session lifecycle */
 DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer);
@@ -308,8 +375,14 @@ void dtls_session_free(DTLSSession *session, int in_gc);
 /* Server operations */
 DTLSSession *dtls_server_get_session(DTLSServer *server,
                                      const DTLSAddress *addr);
+DTLSSession *dtls_server_get_session_bucket(DTLSServer *server,
+                                            const DTLSAddress *addr,
+                                            int *out_bucket);
 DTLSSession *dtls_server_create_session(DTLSServer *server,
                                         const DTLSAddress *addr);
+DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
+                                                  const DTLSAddress *addr,
+                                                  int bucket);
 void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr);
 void dtls_server_cleanup_expired(DTLSServer *server, double now);
 
