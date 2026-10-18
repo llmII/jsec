@@ -137,45 +137,47 @@ Janet cfun_encrypt(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Allocate output buffer (ciphertext may be larger due to padding for
-     * CBC) */
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     * (ciphertext may be larger due to padding for CBC) */
     int block_size = EVP_CIPHER_CTX_block_size(ctx);
     size_t out_len = (size_t)plaintext.len + (size_t)block_size;
-    JanetBuffer *ciphertext = janet_buffer((int32_t)out_len);
+    uint8_t *ciphertext_buf = janet_string_begin((int32_t)out_len);
 
     /* Encrypt */
     int len;
-    if (EVP_EncryptUpdate(ctx, ciphertext->data, &len, plaintext.bytes,
+    if (EVP_EncryptUpdate(ctx, ciphertext_buf, &len, plaintext.bytes,
                           (int)plaintext.len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         crypto_panic_ssl("encryption failed");
     }
-    ciphertext->count = len;
 
     /* Finalize (handles padding for CBC) */
     int final_len;
-    if (EVP_EncryptFinal_ex(ctx, ciphertext->data + len, &final_len) != 1) {
+    if (EVP_EncryptFinal_ex(ctx, ciphertext_buf + len, &final_len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         crypto_panic_ssl("encryption finalization failed");
     }
-    ciphertext->count += final_len;
+    int32_t total_ct_len = len + final_len;
+    janet_string_head(ciphertext_buf)->length = total_ct_len;
+    ciphertext_buf[total_ct_len] = 0;
+    Janet ciphertext = janet_wrap_string(janet_string_end(ciphertext_buf));
 
     /* Build result */
     JanetKV *result = janet_struct_begin(2);
-    janet_struct_put(result, janet_ckeywordv("ciphertext"),
-                     janet_wrap_buffer(ciphertext));
+    janet_struct_put(result, janet_ckeywordv("ciphertext"), ciphertext);
 
     /* Get authentication tag for AEAD */
     if (info->is_aead) {
-        JanetBuffer *tag = janet_buffer(info->tag_len);
-        tag->count = info->tag_len;
+        uint8_t *tag_buf = janet_string_begin(info->tag_len);
         if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, info->tag_len,
-                                tag->data) != 1) {
+                                tag_buf) != 1) {
             EVP_CIPHER_CTX_free(ctx);
             crypto_panic_ssl("failed to get authentication tag");
         }
-        janet_struct_put(result, janet_ckeywordv("tag"),
-                         janet_wrap_buffer(tag));
+        janet_string_head(tag_buf)->length = info->tag_len;
+        tag_buf[info->tag_len] = 0;
+        Janet tag = janet_wrap_string(janet_string_end(tag_buf));
+        janet_struct_put(result, janet_ckeywordv("tag"), tag);
     } else {
         janet_struct_put(result, janet_ckeywordv("tag"), janet_wrap_nil());
     }
@@ -289,17 +291,16 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Allocate output buffer */
-    JanetBuffer *plaintext = janet_buffer(ciphertext.len);
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *plaintext_buf = janet_string_begin((int32_t)ciphertext.len);
 
     /* Decrypt */
     int len;
-    if (EVP_DecryptUpdate(ctx, plaintext->data, &len, ciphertext.bytes,
+    if (EVP_DecryptUpdate(ctx, plaintext_buf, &len, ciphertext.bytes,
                           (int)ciphertext.len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         crypto_panic_ssl("decryption failed");
     }
-    plaintext->count = len;
 
     /* Set expected tag for AEAD verification */
     if (info->is_aead) {
@@ -313,7 +314,7 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
 
     /* Finalize and verify tag */
     int final_len;
-    if (EVP_DecryptFinal_ex(ctx, plaintext->data + len, &final_len) != 1) {
+    if (EVP_DecryptFinal_ex(ctx, plaintext_buf + len, &final_len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         if (info->is_aead) {
             crypto_panic_config(
@@ -322,10 +323,12 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
             crypto_panic_ssl("decryption finalization failed");
         }
     }
-    plaintext->count += final_len;
+    int32_t total_pt_len = len + final_len;
+    janet_string_head(plaintext_buf)->length = total_pt_len;
+    plaintext_buf[total_pt_len] = 0;
 
     EVP_CIPHER_CTX_free(ctx);
-    return janet_wrap_buffer(plaintext);
+    return janet_wrap_string(janet_string_end(plaintext_buf));
 }
 
 /*============================================================================
@@ -341,7 +344,7 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
  *   algo - Cipher algorithm keyword
  *
  * Returns:
- *   Random nonce buffer of appropriate length
+ *   Random nonce string of appropriate length
  *
  * IMPORTANT: Never reuse a nonce with the same key!
  */
@@ -353,14 +356,14 @@ Janet cfun_generate_nonce(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported cipher algorithm: %v", argv[0]);
     }
 
-    JanetBuffer *nonce = janet_buffer(info->nonce_len);
-    nonce->count = info->nonce_len;
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *nonce = janet_string_begin(info->nonce_len);
 
-    if (RAND_bytes(nonce->data, info->nonce_len) != 1) {
+    if (RAND_bytes(nonce, info->nonce_len) != 1) {
         crypto_panic_ssl("failed to generate random nonce");
     }
 
-    return janet_wrap_buffer(nonce);
+    return janet_wrap_string(janet_string_end(nonce));
 }
 
 /*============================================================================

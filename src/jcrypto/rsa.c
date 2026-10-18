@@ -152,31 +152,25 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Allocate output buffer */
-    uint8_t *outbuf = janet_malloc(outlen);
-    if (!outbuf) {
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        crypto_panic_resource("out of memory");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Encrypt */
     if (EVP_PKEY_encrypt(ctx, outbuf, &outlen, plaintext.bytes,
                          plaintext.len) <= 0) {
-        janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         crypto_panic_ssl(
             "encryption failed (plaintext may be too large for key size)");
     }
 
-    Janet result = janet_stringv(outbuf, (int32_t)outlen);
+    janet_string_head(outbuf)->length = (int32_t)outlen;
+    outbuf[outlen] = 0;
 
-    janet_free(outbuf);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
-    return result;
+    return janet_wrap_string(janet_string_end(outbuf));
 }
 
 /*
@@ -281,31 +275,25 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Allocate output buffer */
-    uint8_t *outbuf = janet_malloc(outlen);
-    if (!outbuf) {
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        crypto_panic_resource("out of memory");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Decrypt */
     if (EVP_PKEY_decrypt(ctx, outbuf, &outlen, ciphertext.bytes,
                          ciphertext.len) <= 0) {
-        janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         crypto_panic_ssl("decryption failed (wrong key, corrupted data, or "
                          "padding mismatch)");
     }
 
-    Janet result = janet_stringv(outbuf, (int32_t)outlen);
+    janet_string_head(outbuf)->length = (int32_t)outlen;
+    outbuf[outlen] = 0;
 
-    janet_free(outbuf);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
-    return result;
+    return janet_wrap_string(janet_string_end(outbuf));
 }
 
 /*

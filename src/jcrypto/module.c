@@ -208,7 +208,7 @@ static const JanetReg cfuns[] = {
      "  :aes-128-cbc - AES-128 in CBC mode (16-byte key, 16-byte IV)\n"
      "  :aes-256-cbc - AES-256 in CBC mode (32-byte key, 16-byte IV)\n\n"
      "For AEAD ciphers, optional aad is authenticated but not encrypted.\n"
-     "Returns struct {:ciphertext <buffer> :tag <buffer>}\n"
+     "Returns struct {:ciphertext <string> :tag <string>}\n"
      "IMPORTANT: Never reuse a nonce with the same key!"},
     {"decrypt", cfun_decrypt,
      "(jsec/crypto/decrypt algo key nonce ciphertext tag &opt aad)\n\n"
@@ -216,12 +216,12 @@ static const JanetReg cfuns[] = {
      "Parameters must match those used for encryption.\n"
      "tag is required for AEAD ciphers (nil for CBC).\n"
      "aad must match what was used during encryption.\n"
-     "Returns plaintext buffer.\n"
+     "Returns plaintext string.\n"
      "Errors if authentication fails (tag mismatch)."},
     {"generate-nonce", cfun_generate_nonce,
      "(jsec/crypto/generate-nonce algo)\n\n"
      "Generate a random nonce suitable for the specified cipher algorithm.\n"
-     "Returns buffer of appropriate length for the algorithm.\n"
+     "Returns string of appropriate length for the algorithm.\n"
      "IMPORTANT: Never reuse a nonce with the same key!"},
     {"cipher-info", cfun_cipher_info,
      "(jsec/crypto/cipher-info algo)\n\n"
