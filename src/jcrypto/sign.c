@@ -32,26 +32,23 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to get signature length");
     }
 
-    unsigned char *sig = janet_malloc(siglen);
-    if (!sig) {
-        EVP_PKEY_free(pkey);
-        EVP_MD_CTX_free(mdctx);
-        crypto_panic_resource("failed to allocate signature buffer");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy */
+    uint8_t *sig = janet_string_begin((int32_t)siglen);
+
     if (EVP_DigestSign(mdctx, sig, &siglen, data.bytes, (size_t)data.len) <=
         0) {
-        janet_free(sig);
         EVP_PKEY_free(pkey);
         EVP_MD_CTX_free(mdctx);
         crypto_panic_ssl("failed to sign");
     }
 
-    Janet result = janet_stringv(sig, (int32_t)siglen);
-    janet_free(sig);
+    janet_string_head(sig)->length = (int32_t)siglen;
+    sig[siglen] = 0;
+
     EVP_PKEY_free(pkey);
     EVP_MD_CTX_free(mdctx);
 
-    return result;
+    return janet_wrap_string(janet_string_end(sig));
 }
 
 /* Verify */
