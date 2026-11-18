@@ -79,7 +79,7 @@
           (try
             (repeat 3
               (def buf (buffer/new 1024))
-              (def addr (dtls-stream/recv-from dtls-server 1024 buf))
+              (def addr (dtls-stream/recv-from dtls-server 1024 buf 5.0))
               (when addr
                 (dtls-stream/send-to dtls-server addr
                                      (string "echo:" (string buf)))))
@@ -91,8 +91,9 @@
       # cannot be an environment failure in disguise.
       (def control
         (probe-opts-arg
-          |(do (def c (dtls-stream/connect "127.0.0.1" (string dtls-port)
-                                           {:verify false}))
+          |(do (def c (ev/with-deadline 5
+                        (dtls-stream/connect "127.0.0.1" (string dtls-port)
+                                             {:verify false})))
                (:close c true)
                :connected)))
       (assert (= :accepted (get control 0))
@@ -117,8 +118,9 @@
                (:close s)
                :accepted)]
          ["(dtls-stream/connect host port \"oops\") - jdtls connect opts"
-          |(do (def c (dtls-stream/connect "127.0.0.1" (string dtls-port)
-                                           "oops"))
+          |(do (def c (ev/with-deadline 5
+                        (dtls-stream/connect "127.0.0.1" (string dtls-port)
+                                             "oops")))
                (:close c true)
                :accepted)]
          ["(ca/create-ocsp-response ca req :good \"oops\") - jca opts"

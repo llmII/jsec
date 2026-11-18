@@ -92,3 +92,31 @@
                :coverage "../suites/coverage"
                :regression "../suites/regression"
                :performance "../suites/performance"})
+
+# Default global per-test timeout (60s normal, 180s under sanitizers) so an
+# unbounded operation cannot hang the test runner indefinitely when --timeout
+# is omitted. Explicit CLI --timeout overrides cleanly.
+(def- assay-main main)
+(defn main [& argv]
+  (def has-timeout?
+    (some |(or (= $ "--timeout")
+               (string/has-prefix? "--timeout=" $))
+          argv))
+  (def has-meta-flag?
+    (some |(or (= $ "-h") (= $ "--help")
+               (= $ "-l") (= $ "--list")
+               (= $ "--filter-help")
+               (= $ "--configure-symlink")
+               (= $ "--read-symlink"))
+          argv))
+  (def san?
+    (or (os/getenv "JSEC_SANITIZER")
+        (os/getenv "ASAN_OPTIONS")
+        (os/getenv "LSAN_OPTIONS")
+        (os/getenv "UBSAN_OPTIONS")))
+  (def default-timeout (if san? "180" "60"))
+  (def effective-argv
+    (if (or has-timeout? has-meta-flag?)
+      argv
+      @["--timeout" default-timeout ;argv]))
+  (assay-main ;effective-argv))

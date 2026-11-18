@@ -66,19 +66,20 @@
           (fn []
             (try
               (do
-                (def addr1 (:recv-from server 1024 (buffer/new 1024)))
+                (def addr1 (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (when addr1 (:send-to server addr1 "pong"))
                 (forever
                   (def drain-peer
-                    (:recv-from server 1024 (buffer/new 1024)))
+                    (:recv-from server 1024 (buffer/new 1024) 5.0))
                   (when (nil? drain-peer) (break))))
               ([_] nil))))
 
-        (def conn (tls/connect "127.0.0.1" (string port)
-                               {:datagram true :verify false}))
+        (def conn (ev/with-deadline 5
+                    (tls/connect "127.0.0.1" (string port)
+                                 {:datagram true :verify false})))
         (defer (:close conn true)
           (:write conn "Ping1")
-          (:read conn 1024)
+          (:read conn 1024 nil 5.0)
 
           # (a) corrupt DER must raise like tls/set-session does.
           # Under the defect the call returns false and the assertion
@@ -103,19 +104,20 @@
           (fn []
             (try
               (do
-                (def addr1 (:recv-from server 1024 (buffer/new 1024)))
+                (def addr1 (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (when addr1 (:send-to server addr1 "pong"))
                 (forever
                   (def drain-peer
-                    (:recv-from server 1024 (buffer/new 1024)))
+                    (:recv-from server 1024 (buffer/new 1024) 5.0))
                   (when (nil? drain-peer) (break))))
               ([_] nil))))
 
-        (def conn (tls/connect "127.0.0.1" (string port)
-                               {:datagram true :verify false}))
+        (def conn (ev/with-deadline 5
+                    (tls/connect "127.0.0.1" (string port)
+                                 {:datagram true :verify false})))
         (defer (:close conn true)
           (:write conn "Ping1")
-          (:read conn 1024)
+          (:read conn 1024 nil 5.0)
 
           # (b) a good session blob must set and return nil, matching
           # tls/set-session. Under the defect the call returns true.
@@ -140,7 +142,7 @@
           (fn []
             (try
               (forever
-                (def drain-peer (:recv-from server 1024 (buffer/new 1024)))
+                (def drain-peer (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (when (nil? drain-peer) (break)))
               ([_] nil))))
 
@@ -148,9 +150,10 @@
         # raise before any attach. Under the defect the call silently
         # ignores the corrupt DER and returns a connected client.
         (assert-error
-          (tls/connect "127.0.0.1" (string port)
-                       {:datagram true :verify false
-                        :session "not-a-session"})
+          (ev/with-deadline 5
+            (tls/connect "127.0.0.1" (string port)
+                         {:datagram true :verify false
+                          :session "not-a-session"}))
           (string
             "dtls/connect with a non-nil :session holding corrupt DER "
             "completed normally instead of raising [DTLS:SSL] (an "
@@ -169,7 +172,7 @@
           (fn []
             (try
               (forever
-                (def drain-peer (:recv-from server 1024 (buffer/new 1024)))
+                (def drain-peer (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (when (nil? drain-peer) (break)))
               ([_] nil))))
 
@@ -178,7 +181,8 @@
           # (c2) dtls/upgrade with explicit corrupt :session bytes must
           # raise. Under the defect the corrupt DER is silently ignored.
           (assert-error
-            (dtls/upgrade raw {:verify false :session "not-a-session"})
+            (ev/with-deadline 5
+              (dtls/upgrade raw {:verify false :session "not-a-session"}))
             (string
               "dtls/upgrade with a non-nil :session holding corrupt "
               "DER completed normally instead of raising [DTLS:SSL]"))))))

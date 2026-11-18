@@ -104,14 +104,15 @@
         (fn []
           (try
             (do
-              (while (def addr (:recv-from server 1024 (buffer/new 1024)))
+              (while (def addr (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (:send-to server addr "PONG")))
             ([_] nil))))
-      (def conn (tls/connect "127.0.0.1" (string port)
-                             {:datagram true :verify false}))
+      (def conn (ev/with-deadline 5
+                  (tls/connect "127.0.0.1" (string port)
+                               {:datagram true :verify false})))
       (defer (:close conn true)
         (:write conn "probe")
-        (def pong (:read conn 1024))
+        (def pong (:read conn 1024 nil 5.0))
         (assert pong "priming read should return the PONG payload")
         (body conn server)))))
 
@@ -128,14 +129,15 @@
         (fn []
           (var r :none)
           (try
-            (do (set r (:recv-from server 1024 (buffer/new 1024)))
+            (do (set r (:recv-from server 1024 (buffer/new 1024) 5.0))
                 (ev/give got [:ok r]))
             ([e] (ev/give got [:raised (string e)])))))
-      (def conn (tls/connect "127.0.0.1" (string port)
-                             {:datagram true :verify false}))
+      (def conn (ev/with-deadline 5
+                  (tls/connect "127.0.0.1" (string port)
+                               {:datagram true :verify false})))
       (defer (:close conn true)
         (:write conn "probe")
-        (def [tag _] (ev/take got))
+        (def [tag _] (ev/with-deadline 5 (ev/take got)))
         (assert (= :ok tag)
                 "the priming dtls/recv-from must deliver the probe datagram")
         (body server)))))
@@ -299,7 +301,7 @@
         (ev/sleep 0.3)
         (var eof-outcome :no-call)
         (try
-          (set eof-outcome (:read conn 8))
+          (set eof-outcome (:read conn 8 nil 5.0))
           ([e] (set eof-outcome [:raised (string e)])))
         (assert (= eof-outcome nil)
                 (string/format
