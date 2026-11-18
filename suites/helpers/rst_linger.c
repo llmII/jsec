@@ -7,16 +7,16 @@
  * strictly outside production jsec modules.
  */
 
-#ifdef _WIN32
+#include <janet.h>
+
+#ifdef JANET_WINDOWS
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <janet.h>
 #else
 #include <errno.h>
-#include <janet.h>
 #include <string.h>
 #include <sys/socket.h>
 #endif
@@ -28,7 +28,7 @@ static Janet cfun_arm_abortive_close(int32_t argc, Janet *argv) {
     struct linger lg;
     lg.l_onoff = 1;
     lg.l_linger = 0;
-#ifdef _WIN32
+#ifdef JANET_WINDOWS
     if (setsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_LINGER,
                    (const char *)&lg, (int)sizeof(lg)) != 0) {
         janet_panicf("setsockopt(SO_LINGER) failed: WSA error %d",

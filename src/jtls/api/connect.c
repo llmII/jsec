@@ -9,12 +9,8 @@
  * License: ISC
  */
 
-#ifdef __linux__
-#define _GNU_SOURCE
-#endif
-
 #include "../internal.h"
-#ifndef _WIN32
+#ifndef JANET_WINDOWS
 #include <arpa/inet.h>
 #include <sys/un.h>
 #endif
@@ -814,13 +810,13 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         strncpy(addr.sun_path, unix_path, sizeof(addr.sun_path) - 1);
 
         /* Support Linux abstract namespace sockets (start with @) */
-#ifdef __linux__
+#ifdef JANET_LINUX
         if (unix_path[0] == '@') {
             addr.sun_path[0] = '\0';
         }
 #endif
 
-#ifdef __linux__
+#ifdef JANET_LINUX
         fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 #else
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -836,7 +832,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         }
 
         socklen_t addrlen = sizeof(addr);
-#ifdef __linux__
+#ifdef JANET_LINUX
         if (unix_path[0] == '@') {
             addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
                                   strlen(unix_path));
@@ -894,7 +890,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         }
         /* else EINPROGRESS - fall through to async handling */
     } else
-#endif /* !_WIN32 */
+#endif /* !JANET_WINDOWS */
     {
         /* TCP connection - DNS resolution (blocking, same as Janet's
          * net/connect) */

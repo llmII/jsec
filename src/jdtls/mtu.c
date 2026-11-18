@@ -11,38 +11,41 @@
  * override was supplied.
  */
 
-#if defined(_WIN32) || defined(__CYGWIN__) || defined(__linux__)
-#include "internal.h"
-#ifdef __linux__
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <sys/ioctl.h>
-#endif
-#else
 /*
- * BSD/macOS/illumos headers hide struct ifreq, IFNAMSIZ, IFF_UP, and
- * SIOCGIFMTU when _POSIX_C_SOURCE is defined before <net/if.h> (as
- * compat.h does for glibc). Include the interface/ioctl headers first
- * on non-Linux POSIX targets so native BSD visibility stays intact.
+ * Feature-test macros must be defined before <janet.h> (which includes
+ * <stdlib.h> / <sys/types.h> and locks BSD/Darwin/NetBSD header visibility
+ * under -std=c99) and before "internal.h" (compat.h sets _POSIX_C_SOURCE
+ * 200809L, which otherwise hides SIOCGIFMTU / struct ifreq / IFF_UP on
+ * BSD/macOS/illumos).
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE 1
 #endif
 #ifndef _NETBSD_SOURCE
 #define _NETBSD_SOURCE 1
 #endif
+#ifndef __EXTENSIONS__
+#define __EXTENSIONS__ 1
+#endif
+
+#include <janet.h>
+
+#if !defined(JANET_WINDOWS) && !defined(JANET_CYGWIN)
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <ifaddrs.h>
-#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) ||     \
-    defined(__DragonFly__) || defined(__APPLE__) || defined(__sun) ||          \
-    defined(__illumos__)
+#if defined(JANET_BSD) || defined(JANET_APPLE) || defined(JANET_ILLUMOS) ||  \
+    defined(__sun)
 #include <sys/sockio.h>
 #endif
-#include "internal.h"
 #endif
+
+#include "internal.h"
 
 #include <math.h>
 #include <string.h>
