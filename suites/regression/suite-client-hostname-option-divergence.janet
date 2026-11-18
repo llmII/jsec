@@ -137,7 +137,7 @@
 
 (defn- stop-dtls-echo-server [echo]
   (try (dtls/close-server (echo :server) true) ([_] nil))
-  (try (ev/take (echo :done)) ([_] nil)))
+  (try (ev/with-deadline 5 (ev/take (echo :done))) ([_] nil)))
 
 (def-suite :name "Client Hostname Option Divergence Regression"
   :description "Client SSL name setup diverges across the connection entry points"
@@ -211,12 +211,13 @@
     (var err nil)
     (try
       (do
-        (def c (dtls/connect "127.0.0.1" (echo :port)
-                             {:hostname "server.example"
-                              :verify true
-                              :trusted-cert (:get-cert ca)}))
+        (def c (ev/with-deadline 5
+                 (dtls/connect "127.0.0.1" (echo :port)
+                               {:hostname "server.example"
+                                :verify true
+                                :trusted-cert (:get-cert ca)})))
         (dtls/write c "Ping")
-        (set data (string (dtls/read c 1024)))
+        (set data (string (dtls/read c 1024 nil 5.0)))
         (try (dtls/close c) ([_] nil)))
       ([e] (set err (string e))))
     (stop-dtls-echo-server echo)
@@ -246,11 +247,12 @@
     (try
       (do
         (def sock (net/connect "127.0.0.1" (echo :port) :datagram))
-        (def c (dtls/upgrade sock {:hostname "server.example"
-                                   :verify true
-                                   :trusted-cert (:get-cert ca)}))
+        (def c (ev/with-deadline 5
+                 (dtls/upgrade sock {:hostname "server.example"
+                                     :verify true
+                                     :trusted-cert (:get-cert ca)})))
         (dtls/write c "Ping")
-        (set data (string (dtls/read c 1024)))
+        (set data (string (dtls/read c 1024 nil 5.0)))
         (try (dtls/close c) ([_] nil)))
       ([e] (set err (string e))))
     (stop-dtls-echo-server echo)
@@ -280,13 +282,14 @@
     (var err nil)
     (try
       (do
-        (def c (dtls/connect "127.0.0.1" (echo :port)
-                             {:hostname "server.example"
-                              :sni nil
-                              :verify true
-                              :trusted-cert (:get-cert ca)}))
+        (def c (ev/with-deadline 5
+                 (dtls/connect "127.0.0.1" (echo :port)
+                               {:hostname "server.example"
+                                :sni nil
+                                :verify true
+                                :trusted-cert (:get-cert ca)})))
         (dtls/write c "Ping")
-        (set data (string (dtls/read c 1024)))
+        (set data (string (dtls/read c 1024 nil 5.0)))
         (try (dtls/close c) ([_] nil)))
       ([e] (set err (string e))))
     (stop-dtls-echo-server echo)
@@ -499,12 +502,13 @@
     (try
       (do
         (def sock (net/connect "127.0.0.1" (echo :port) :datagram))
-        (def c (dtls/upgrade sock {:hostname "server.example"
-                                   :sni nil
-                                   :verify true
-                                   :trusted-cert (:get-cert ca)}))
+        (def c (ev/with-deadline 5
+                 (dtls/upgrade sock {:hostname "server.example"
+                                     :sni nil
+                                     :verify true
+                                     :trusted-cert (:get-cert ca)})))
         (dtls/write c "Ping")
-        (set data (string (dtls/read c 1024)))
+        (set data (string (dtls/read c 1024 nil 5.0)))
         (try (dtls/close c) ([_] nil)))
       ([e] (set err (string e))))
     (stop-dtls-echo-server echo)

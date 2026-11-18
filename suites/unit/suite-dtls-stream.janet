@@ -264,6 +264,79 @@
       (ev/take done)
       (:close server)))
 
+  (def-test "DTLS :mtu option validation and wildcard/explicit MTU echo"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})]
+      # Invalid :mtu values must raise [DTLS:PARAM] before socket work on
+      # dtls/listen, dtls/connect, and dtls/upgrade.
+      (each bad [0 -1 255 65536 1400.5 "1400" true (math/sqrt -1) math/inf]
+        (assert-error
+          (tls/listen "127.0.0.1" "0"
+                      {:datagram true :cert (certs :cert) :key (certs :key) :mtu bad})
+          (string/format "dtls/listen must reject invalid :mtu %q" bad))
+        (assert-error
+          (tls/connect "127.0.0.1" "9" {:datagram true :verify false :mtu bad})
+          (string/format "dtls/connect must reject invalid :mtu %q" bad))
+        (let [raw (net/connect "127.0.0.1" "9" :datagram)]
+          (defer (:close raw)
+            (assert-error
+              (dtls-stream/upgrade raw {:verify false :mtu bad})
+              (string/format "dtls/upgrade must reject invalid :mtu %q" bad)))))
+
+      # Wildcard bind (0.0.0.0) + explicit :mtu 1400 on dtls/listen & dtls/connect.
+      (let [server (tls/listen "0.0.0.0" "0"
+                               {:datagram true
+                                :cert (certs :cert)
+                                :key (certs :key)
+                                :mtu 1400})
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+        (defer (:close server)
+          (ev/go
+            (fn []
+              (def buf (buffer/new 1024))
+              (try
+                (ev/with-deadline 5
+                  (when-let [addr (:recv-from server 1024 buf)]
+                    (:send-to server addr "mtu-ok")))
+                ([_] nil))
+              (ev/give done true)))
+          (ev/sleep 0.1)
+          (def client (tls/connect "127.0.0.1" port
+                                   {:datagram true :verify false :mtu 1400}))
+          (defer (:close client true)
+            (:write client "Ping")
+            (def reply (:read client 1024 nil 5))
+            (assert (= (string reply) "mtu-ok") "DTLS explicit :mtu echo succeeds"))
+          (ev/take done)))
+
+      # Auto-resolved wildcard listen (0.0.0.0) + dtls/upgrade explicit :mtu 1400.
+      (let [server (tls/listen "0.0.0.0" "0"
+                               {:datagram true
+                                :cert (certs :cert)
+                                :key (certs :key)})
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+        (defer (:close server)
+          (ev/go
+            (fn []
+              (def buf (buffer/new 1024))
+              (try
+                (ev/with-deadline 5
+                  (when-let [addr (:recv-from server 1024 buf)]
+                    (:send-to server addr "upgrade-mtu-ok")))
+                ([_] nil))
+              (ev/give done true)))
+          (ev/sleep 0.1)
+          (def raw (net/connect "127.0.0.1" (string port) :datagram))
+          (def client (dtls-stream/upgrade raw {:verify false :mtu 1400}))
+          (defer (:close client true)
+            (:write client "Ping")
+            (def reply (:read client 1024 nil 5))
+            (assert (= (string reply) "upgrade-mtu-ok")
+                    "DTLS upgrade explicit :mtu echo succeeds"))
+          (ev/take done)))))
+
   # ===========================================================================
   # Matrix Tests - Comprehensive DTLS Testing
   # ===========================================================================

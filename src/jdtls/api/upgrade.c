@@ -47,9 +47,11 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
     int verify = 1;
     int is_server = 0;
     int track_handshake_time = 0;
+    long explicit_mtu = 0;
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
+        explicit_mtu = jdtls_parse_mtu_opt(opts);
         Janet v = janet_get(opts, janet_ckeywordv("verify"));
         if (!janet_checktype(v, JANET_NIL)) {
             verify = janet_truthy(v);
@@ -243,6 +245,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(client->ssl, client->rbio, client->wbio);
+    BIO *mtu_bio = NULL;
 #else
     /* Unix: Use dgram BIO for direct socket I/O.
      * OpenSSL handles socket I/O directly through the dgram BIO. */
@@ -262,7 +265,11 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
 
     /* Attach to SSL */
     SSL_set_bio(client->ssl, bio, bio);
+    BIO *mtu_bio = bio;
 #endif
+
+    jdtls_configure_connected_mtu(client->ssl, mtu_bio, fd,
+                                  peer_addr.ss_family, explicit_mtu);
 
     /* Set mode */
     if (is_server) {

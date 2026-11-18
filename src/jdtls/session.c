@@ -179,6 +179,8 @@ DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
     DTLSSession *session = dtls_session_new(server->ctx, addr);
     if (!session) return NULL;
 
+    jdtls_configure_session_mtu(session->ssl, server->link_mtu);
+
     /* Add to hash table (prepend to bucket) */
     session->next = server->sessions[bucket];
     server->sessions[bucket] = session;

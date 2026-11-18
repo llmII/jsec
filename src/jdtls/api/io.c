@@ -16,41 +16,26 @@ extern void dtls_client_start_async_write(DTLSClient *client, Janet src,
 
 /*
  * Raise a synchronous operation failure as a [DTLS:IO] error carrying
- * the SSL/socket error detail, mirroring the jtls operation error
- * shape (tls/read and tls/write report "Read error: ..." / "Write
- * error: ..." with the failure detail). The queued OpenSSL error is
- * preferred; a bare syscall failure falls back to the socket errno
- * string.
+ * the SSL/socket error detail via dtls_format_io_error.
  */
-static void dtls_raise_sync_io_error(const char *op_name) {
-    char detail[256];
-    unsigned long err = ERR_get_error();
-    if (err != 0) {
-        ERR_error_string_n(err, detail, sizeof(detail));
-        ERR_clear_error();
-    } else if (errno != 0) {
-        snprintf(detail, sizeof(detail), "%s", jsec_socket_strerror(errno));
-    } else {
-        snprintf(detail, sizeof(detail), "unknown I/O error");
-    }
-    dtls_panic_io("%s error: %s", op_name, detail);
+static void dtls_raise_sync_io_error(const char *op_name, int sock_err,
+                                     JanetStream *stream) {
+    char msg[JSEC_IO_ERROR_BUFSIZE];
+    dtls_format_io_error(msg, sizeof(msg), op_name, sock_err, stream);
+    janet_panic(msg);
 }
 
 /*
- * dtls_do_read - read one datagram into buf, sized from the datagram.
- *
- * SSL_peek runs before any buffer growth: with no decrypted datagram
- * available the buffer grows by nothing. Once one is available,
- * SSL_pending reports its exact size and the buffer grows by exactly
- * what the read consumes, so a datagram of any size is delivered intact
- * and capacity tracks data, not the request.
+ * dtls_do_read_ex / dtls_do_read - read one datagram into buf, sized from the
+ * datagram, optionally capturing jsec_socket_errno before SSL_get_error runs.
  */
-DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
+DTLSResult dtls_do_read_ex(SSL *ssl, JanetBuffer *buf, int32_t n,
+                           int *out_sock_err) {
     uint8_t dummy;
     ERR_clear_error();
     int pk = SSL_peek(ssl, &dummy, 1);
     if (pk <= 0) {
-        return dtls_ssl_result(ssl, pk);
+        return dtls_ssl_result_errno(ssl, pk, out_sock_err);
     }
     int32_t avail = (int32_t)SSL_pending(ssl);
     if (avail < 1) avail = 1;
@@ -59,6 +44,7 @@ DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
     ERR_clear_error();
     int ret = SSL_read(ssl, buf->data + buf->count, to_read);
     if (ret > 0) {
+        if (out_sock_err) *out_sock_err = 0;
         buf->count += ret;
         /* A read capped below the datagram size consumes up to n bytes
          * and discards the rest of THAT record, so the next call
@@ -73,7 +59,11 @@ DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
         }
         return DTLS_RESULT_OK;
     }
-    return dtls_ssl_result(ssl, ret);
+    return dtls_ssl_result_errno(ssl, ret, out_sock_err);
+}
+
+DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
+    return dtls_do_read_ex(ssl, buf, n, NULL);
 }
 
 /*
@@ -122,7 +112,8 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
 
     /* Try initial read */
     int32_t before = buf->count;
-    DTLSResult result = dtls_do_read(client->ssl, buf, n);
+    int sock_err = 0;
+    DTLSResult result = dtls_do_read_ex(client->ssl, buf, n, &sock_err);
 
     if (result == DTLS_RESULT_UNEXPECTED_EOF) {
         /* A peer close without close_notify truncates the stream and
@@ -143,7 +134,7 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
 
     if (result == DTLS_RESULT_ERROR) {
         client->state = DTLS_STATE_ERROR;
-        dtls_raise_sync_io_error("Read");
+        dtls_raise_sync_io_error("Read", sock_err, client->transport);
     }
 
     /* Need to wait */
@@ -205,8 +196,10 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
 
     /* Try initial write */
     int32_t nwritten = 0;
+    int sock_err = 0;
     DTLSResult result =
-        dtls_do_write(client->ssl, data.bytes, data.len, &nwritten);
+        dtls_do_write_ex(client->ssl, data.bytes, data.len, &nwritten,
+                         &sock_err);
 
     if (result == DTLS_RESULT_OK) {
         return janet_wrap_nil();
@@ -225,7 +218,7 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
 
     if (result == DTLS_RESULT_ERROR) {
         client->state = DTLS_STATE_ERROR;
-        dtls_raise_sync_io_error("Write");
+        dtls_raise_sync_io_error("Write", sock_err, client->transport);
     }
 
     /* Need to wait */

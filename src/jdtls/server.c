@@ -449,6 +449,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     }
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
+    long explicit_mtu = jdtls_parse_mtu_opt(opts);
 
     /* Bind */
     char port_str[16];
@@ -468,6 +469,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;
     int bind_err = 0;
+    int bound_family = AF_UNSPEC;
 
     struct addrinfo *rp;
     for (rp = ai; rp != NULL; rp = rp->ai_next) {
@@ -499,7 +501,10 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) {
+            bound_family = rp->ai_family;
+            break;
+        }
 
         bind_err = jsec_socket_errno;
         jsec_close_socket(fd);
@@ -533,6 +538,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     server->transport = transport;
     server->session_timeout = DTLS_SESSION_TIMEOUT;
     server->max_sessions = DTLS_MAX_SESSIONS_DEFAULT;
+    server->link_mtu =
+        jdtls_resolve_server_link_mtu(fd, bound_family, explicit_mtu);
 
     /* Get session timeout from options */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -1115,32 +1122,17 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
 }
 #endif
 
-/*
- * Format the pending socket error under the DTLS IO category. The reason
- * is read with getsockopt SO_ERROR (the pattern in
- * src/jtls/api/connect.c:549-563) and formatted with jsec_socket_strerror
- * (src/compat.h:211, :271), the way janet_ev_lasterr carries the OS
- * reason into a cancellation at core ev.c:2600.
- */
-static void dtls_socket_error_msg(char *buf, size_t buflen,
-                                  JanetStream *stream) {
-    int res = 0;
-    int r = -1;
-    socklen_t size = sizeof(res);
-    if (stream) {
-#ifdef JANET_WINDOWS
-        r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
-                       (char *)&res, (int *)&size);
-#else
-        r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
-#endif
+static int dtls_server_cancel_socket_error(JanetFiber *fiber,
+                                           int only_if_pending) {
+    char msg[JSEC_IO_ERROR_BUFSIZE];
+    int has_err = jutils_format_socket_error(msg, sizeof(msg), "DTLS:IO",
+                                             fiber->ev_stream);
+    if (only_if_pending && !has_err) {
+        return 0;
     }
-    if (r == 0 && res != 0) {
-        snprintf(buf, buflen, "[DTLS:IO] socket error: %s",
-                 jsec_socket_strerror(res));
-    } else {
-        snprintf(buf, buflen, "[DTLS:IO] socket error");
-    }
+    janet_cancel(fiber, janet_cstringv(msg));
+    janet_async_end(fiber);
+    return 1;
 }
 
 static void dtls_recv_from_callback(JanetFiber *fiber,
@@ -1167,21 +1159,21 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
         case JANET_ASYNC_EVENT_CLOSE:
         case JANET_ASYNC_EVENT_HUP:
+            if (event == JANET_ASYNC_EVENT_HUP &&
+                dtls_server_cancel_socket_error(fiber, 1)) {
+                return;
+            }
             /* A parked dtls/recv-from is a reader: a local close schedules
              * nil for it (core ev.c:2473-2476) instead of cancelling it. */
             janet_schedule(fiber, janet_wrap_nil());
             janet_async_end(fiber);
             return;
 
-        case JANET_ASYNC_EVENT_ERR: {
+        case JANET_ASYNC_EVENT_ERR:
             /* A genuine socket error raises under the DTLS category with
              * the OS reason - never nil, never a hardcoded string. */
-            char msg[320];
-            dtls_socket_error_msg(msg, sizeof(msg), fiber->ev_stream);
-            janet_cancel(fiber, janet_cstringv(msg));
-            janet_async_end(fiber);
+            dtls_server_cancel_socket_error(fiber, 0);
             return;
-        }
 
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_INIT:
@@ -1556,7 +1548,8 @@ static const JanetReg server_cfuns[] = {
      "  :verify - Require client certificates (default false)\n"
      "  :ca - CA certificates for client verification\n"
      "  :session-timeout - Session timeout in seconds (default 300)\n"
-     "  :max-sessions - Maximum peer sessions in the table (default 1024)"},
+     "  :max-sessions - Maximum peer sessions in the table (default 1024)\n"
+     "  :mtu - Link MTU in bytes (256-65535; auto-detected by default)"},
     {"recv-from", cfun_dtls_recv_from,
      "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
      "Receive a datagram from any peer.\n"
