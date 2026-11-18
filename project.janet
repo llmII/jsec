@@ -100,6 +100,7 @@
 
 (defn- find-files-by-suffixes [dir suffixes]
   "Recursively find files matching any suffix in suffixes list.
+   Skips hidden dot-directories (e.g. .work, .git), build, and jpm_tree.
    Returns array of paths relative to current directory."
   (def results @[])
   (defn scan [path]
@@ -109,11 +110,39 @@
         (def stat (os/stat full))
         (when stat
           (case (stat :mode)
-            :directory (scan full)
+            :directory
+            (unless (or (string/has-prefix? "." entry)
+                        (= entry "jpm_tree")
+                        (= entry "build"))
+              (scan full))
             :file (when (some |(string/has-suffix? $ entry) suffixes)
                     (array/push results full)))))))
   (scan dir)
   (sort results))
+
+(defn- vcs-tracked-files []
+  "Return set table of VCS-tracked paths in a Fossil or Git checkout,
+   or nil if no VCS manifest can be inspected."
+  (def [cmd args]
+    (cond
+      (or (os/stat ".fslckout") (os/stat "_FOSSIL_")) ["fossil" ["ls"]]
+      (os/stat ".git") ["git" ["ls-files"]]
+      [nil nil]))
+  (when cmd
+    (try
+      (let [proc (os/spawn [cmd ;args] :p {:out :pipe :err :pipe})
+            out (ev/read (proc :out) :all)
+            _ (ev/read (proc :err) :all)
+            rc (os/proc-wait proc)]
+        (try (:close (proc :out)) ([_] nil))
+        (try (:close (proc :err)) ([_] nil))
+        (when (zero? rc)
+          (let [tracked @{}]
+            (each line (string/split "\n" (string/trim (or out "")))
+              (unless (empty? line)
+                (put tracked line true)))
+            tracked)))
+      ([_] nil))))
 
 (defn- rmdir-recursive [path]
   "Recursively remove a directory and its contents"
@@ -349,10 +378,14 @@
        (print "Cleaning build artifacts...")
        (rmdir-recursive (dyn :buildpath "build"))
        (rmdir-recursive "jpm_tree")
-       # Remove generated markdown files
-       (each f (find-files-by-suffixes "." [".md"])
-         (when (not (string/find "jpm_tree" f))
-           (rm-if-exists f)))
+       # Only remove untracked .md files that have a matching .org source;
+       # tracked .md mirrors (README.md, docs/*.md, etc.) must stay intact.
+       (when-let [tracked (vcs-tracked-files)]
+         (each f (find-files-by-suffixes "." [".md"])
+           (def rel (if (string/has-prefix? "./" f) (string/slice f 2) f))
+           (def org-src (string (string/slice f 0 -4) ".org"))
+           (when (and (not (get tracked rel)) (os/stat org-src))
+             (rm-if-exists f))))
        (rm-if-exists "valgrind-output.txt")
        (rm-if-exists "debug.log")
        (print "Clean complete."))
@@ -443,16 +476,17 @@
            (os/exit 1))
          (print "\nclang-tidy: All checks passed!")))
 
-# Release task - generate markdown from org files
-(phony "release" ["clean" "format/all"]
-       (print "Generating markdown documentation from org files...")
-       (def files (find-files-by-suffixes "." [".org"]))
-       (def filtered (filter |(not (or (string/find "jpm_tree" $)
-                                       (string/find "/." $))) files))
-       (each f filtered
-         (os/execute ["emacs" "--batch"
-                      "--eval" "(require 'ox-md)"
-                      f "-f" "org-md-export-to-markdown"] :p))
+# On-demand markdown regeneration from org sources (see RELEASE.org).
+(phony "regen-docs" []
+       (print "Regenerating markdown documentation from org files...")
+       (def janet-bin (dyn :janet (dyn :executable)))
+       (def rc (os/execute [janet-bin "scripts/regen-docs.janet"] :p))
+       (unless (zero? rc)
+         (print "command failed (exit " rc "): regen-docs")
+         (os/exit rc)))
+
+# Release task - format sources and regenerate markdown from org files
+(phony "release" ["clean" "format/all" "regen-docs"]
        (print "Release preparation complete."))
 
 # Leak check with valgrind - placeholder

@@ -85,9 +85,20 @@ SCRATCH_DIR="$WORK_DIR/scratch"
 LAUNCHER_JANET="$SCRIPT_DIR/toolchain-launcher-janet.sh"
 LAUNCHER_JPM="$SCRIPT_DIR/toolchain-launcher-jpm.sh"
 
+detect_native_ev_backend() {
+    case "$(uname -s 2>/dev/null || echo unknown)" in
+        Linux) echo "epoll" ;;
+        FreeBSD|OpenBSD|NetBSD|DragonFly|Darwin) echo "kqueue" ;;
+        SunOS) echo "evport" ;;
+        *) echo "native" ;;
+    esac
+}
+
+NATIVE_EV_BACKEND=$(detect_native_ev_backend)
+
 JANET_REV="$DEFAULT_JANET_REV"
 JPM_REV="$DEFAULT_JPM_REV"
-EV_BACKEND="epoll"
+EV_BACKEND="$NATIVE_EV_BACKEND"
 SANITIZER="none"
 FORCE=0
 CLEAN=0
@@ -138,15 +149,14 @@ Options:
       --toolchain DIR    Output prefix. Default: .work, so the toolchain
                          lives directly in .work/{bin,build,include,lib,
                          libexec,share} (e.g. .work/1.41.1 for a matrix)
-      --ev-backend BACK  Janet event-loop backend: epoll or poll.
-                          Default: epoll - the platform's native backend
-                          (epoll on Linux, kqueue on the BSDs/macOS), today
-                          behaviour unchanged. poll forces the portable
-                          poll(2) fallback (JANET_EV_NO_EPOLL, and
-                          JANET_EV_NO_KQUEUE so the choice also holds on
-                          BSD/macOS). Poll and epoll builds of one rev share
-                          the source cache but not build output; give each
-                          its own --toolchain prefix (e.g. .work/poll)
+      --ev-backend BACK  Janet event-loop backend: native, epoll, kqueue,
+                         evport, or poll. Default: host native backend
+                         (epoll on Linux, kqueue on BSDs/macOS, evport on
+                         Illumos). poll forces the portable poll(2) fallback
+                         (JANET_EV_NO_EPOLL, JANET_EV_NO_KQUEUE). Poll and
+                         native builds of one rev share the source cache but not
+                         build output; give each its own --toolchain prefix
+                         (e.g. .work/poll)
       --sanitizer MODE   Sanitizer instrumentation for Janet: none, asan,
                           lsan, ubsan, or san (address + leak + undefined).
                           Default: none. Compiles and links libexec/janet with
@@ -207,13 +217,25 @@ done
 # Map --ev-backend onto the janet.h gates. JANET_EV_NO_EPOLL suppresses the
 # Linux epoll backend and JANET_EV_NO_KQUEUE the BSD/macOS kqueue backend, so
 # the poll(2) fallback (janet.h: Use poll as last resort) is selected on
-# every POSIX host. epoll passes no defines - the platform's native backend,
-# exactly the previous behaviour. Extra defines ride the make CFLAGS; the
-# build keeps the caller's CFLAGS (or janet's -O2 -g default) and appends.
+# every POSIX host. native/epoll/kqueue/evport pass no defines so the platform's
+# native backend is built; non-Linux callers passing --ev-backend epoll as the
+# historical native spelling normalize to the host's native backend label so
+# stamp and banner match the compiled binary.
 case "$EV_BACKEND" in
-    epoll) EV_DEFINES="" ;;
-    poll)  EV_DEFINES="-DJANET_EV_NO_EPOLL -DJANET_EV_NO_KQUEUE" ;;
-    *) die "--ev-backend must be poll or epoll (got: $EV_BACKEND)" ;;
+    native)
+        EV_BACKEND="$NATIVE_EV_BACKEND"
+        EV_DEFINES=""
+        ;;
+    epoll|kqueue|evport)
+        EV_BACKEND="$NATIVE_EV_BACKEND"
+        EV_DEFINES=""
+        ;;
+    poll)
+        EV_DEFINES="-DJANET_EV_NO_EPOLL -DJANET_EV_NO_KQUEUE"
+        ;;
+    *)
+        die "--ev-backend must be poll, native, epoll, kqueue, or evport (got: $EV_BACKEND)"
+        ;;
 esac
 
 # Map --sanitizer onto compile/link flags for Janet. Because Janet's Makefile
@@ -273,14 +295,42 @@ is_sha() {
 }
 
 check_ssl_dev() {
-    # jsec needs OpenSSL/LibreSSL (or libretls) dev headers + libs (ticket names
-    # these). Compile+link a trivial probe so any layout is detected accurately.
+    # jsec needs OpenSSL/LibreSSL (or libretls) dev headers + libs.
+    # Compile+link a trivial probe across standard prefixes so non-Linux
+    # layouts (/usr/local on BSDs, Homebrew on macOS, /usr/openssl/3 on
+    # Illumos, or caller-specified OPENSSL_PREFIX) are detected accurately.
     _c="$SCRATCH_DIR/.ssl-probe.c"; _o="$SCRATCH_DIR/.ssl-probe"
     mkdir -p "$SCRATCH_DIR"
+
+    _prefixes=""
+    [ -n "${OPENSSL_PREFIX:-}" ] && _prefixes="$_prefixes $OPENSSL_PREFIX"
+    _prefixes="$_prefixes /usr/local /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3 /usr/openssl/3"
+
     printf '#include <openssl/ssl.h>\nint main(void){ SSL_library_init(); return 0; }\n' > "$_c"
-    if "$CC" "$_c" -o "$_o" -lssl -lcrypto >/dev/null 2>&1; then rm -f "$_c" "$_o"; return 0; fi
+    if "$CC" "$_c" -o "$_o" -lssl -lcrypto >/dev/null 2>&1; then
+        rm -f "$_c" "$_o"; return 0
+    fi
+    for _p in $_prefixes; do
+        [ -d "$_p/include" ] || continue
+        for _lib in "$_p/lib" "$_p/lib/amd64"; do
+            [ -d "$_lib" ] || continue
+            if "$CC" "-I$_p/include" "-L$_lib" "$_c" -o "$_o" -lssl -lcrypto >/dev/null 2>&1; then
+                rm -f "$_c" "$_o"; return 0
+            fi
+        done
+    done
+
     printf '#include <tls.h>\nint main(void){ return 0; }\n' > "$_c"
-    if "$CC" "$_c" -o "$_o" -ltls >/dev/null 2>&1; then rm -f "$_c" "$_o"; return 0; fi
+    if "$CC" "$_c" -o "$_o" -ltls >/dev/null 2>&1; then
+        rm -f "$_c" "$_o"; return 0
+    fi
+    for _p in $_prefixes; do
+        [ -d "$_p/include" ] && [ -d "$_p/lib" ] || continue
+        if "$CC" "-I$_p/include" "-L$_p/lib" "$_c" -o "$_o" -ltls >/dev/null 2>&1; then
+            rm -f "$_c" "$_o"; return 0
+        fi
+    done
+
     rm -f "$_c" "$_o"; return 1
 }
 
@@ -430,12 +480,16 @@ extend_default_config() {
 (def cfg-path (os/getenv "PP_CONFIG"))
 (def janet-abs (os/getenv "PP_JANET"))
 (def build-abs (os/getenv "PP_BUILD"))
+(def cc-override (os/getenv "PP_CC"))
 
 (def env (dofile cfg-path))
 (def cfg (get-in env ['config :value]))
 (unless (table? cfg) (error "default-config.janet does not define config"))
 (put cfg :janet janet-abs)
 (put cfg :buildpath build-abs)
+(when (and cc-override (not (empty? cc-override)) (not= cc-override "cc"))
+  (put cfg :cc cc-override)
+  (put cfg :cc-link cc-override))
 (spit cfg-path
       (string/format
         "# Autogenerated by generate-config in jpm/make-config.janet\n(def config %.99m)"
@@ -445,6 +499,7 @@ EOF
            PP_CONFIG="$JANET_MODPATH/jpm/default-config.janet" \
            PP_JANET="$JANET_BIN" \
            PP_BUILD="$BUILD_DIR" \
+           PP_CC="$CC" \
            "$JANET_REAL" "$_pp"; then
         return 1
     fi
@@ -455,15 +510,15 @@ EOF
 run_logged() {
     _log="$SCRATCH_DIR/.last-make.log"
     if "$@" >"$_log" 2>&1; then return 0; fi
-    printf '--- output ---\n' >&2
+    printf '%s\n' '--- output ---' >&2
     cat "$_log" >&2
-    printf '--- end output ---\n' >&2
+    printf '%s\n' '--- end output ---' >&2
     return 1
 }
 
-# Run make in the Janet source tree. With no ev-backend defines (the epoll
-# default) and no sanitizer (none) the invocation is exactly the historical
-# one. With defines (poll) or sanitizer flags they ride CFLAGS.
+# Run make in the Janet source tree. With no ev-backend defines (the native
+# default) and no sanitizer (none) the invocation passes PREFIX/JANET_PATH/CC
+# cleanly to GNU Make. With defines (poll) or sanitizer flags they ride CFLAGS.
 janet_make() {
     _src="$1"; shift
     if [ -n "$SAN_CFLAGS" ]; then
@@ -473,13 +528,13 @@ janet_make() {
             ASAN_OPTIONS="detect_leaks=0:halt_on_error=0" \
             LSAN_OPTIONS="detect_leaks=0" \
             UBSAN_OPTIONS="halt_on_error=0" \
-            make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
+            "$MAKE" -C "$_src" CC="$CC" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
             "CFLAGS=$_cflags" "$@"
     elif [ -n "$EV_DEFINES" ]; then
-        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
+        run_logged "$MAKE" -C "$_src" CC="$CC" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" \
             "CFLAGS=${CFLAGS:--O2 -g} $EV_DEFINES" "$@"
     else
-        run_logged make -C "$_src" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" "$@"
+        run_logged "$MAKE" -C "$_src" CC="$CC" PREFIX="$TOOLCHAIN_DIR" JANET_PATH="$JANET_MODPATH" "$@"
     fi
 }
 
@@ -508,7 +563,8 @@ build_janet() {
     # breaking hermeticity. Command-line make vars override any ambient value.
     janet_make "$1" -j"$(ncpu)" \
         || die "Janet build failed (see output above)."
-    janet_make "$1" install \
+    # Never invoke host ldconfig into a local non-root toolchain prefix.
+    janet_make "$1" install LDCONFIG=true \
         || die "Janet install into $TOOLCHAIN_DIR failed."
     # Janet's `make install` runs `strip -x -S` on $(BINDIR)/janet, which strips
     # the -g3 DWARF debug symbols needed for symbolic sanitizer stack traces.
@@ -627,15 +683,35 @@ have_toolchain() {
 
 # --- Main ---------------------------------------------------------------------
 log "Checking host prerequisites..."
-CC="${CC:-cc}"
+CC="${CC:-}"
+if [ -z "$CC" ]; then
+    if command -v cc >/dev/null 2>&1; then
+        CC="cc"
+    elif command -v gcc >/dev/null 2>&1; then
+        CC="gcc"
+    elif command -v clang >/dev/null 2>&1; then
+        CC="clang"
+    else
+        CC="cc"
+    fi
+fi
+MAKE="${MAKE:-}"
+if [ -z "$MAKE" ]; then
+    if command -v gmake >/dev/null 2>&1; then
+        MAKE="gmake"
+    else
+        MAKE="make"
+    fi
+fi
 require_cmd "$CC" "C compiler"
 require_cmd ar "static archiver"
-require_cmd make "build driver for Janet"
+require_cmd "$MAKE" "GNU Make build driver for Janet"
 require_cmd git "source checkout"
 mkdir -p "$SCRATCH_DIR"
 check_ssl_dev || die "OpenSSL/LibreSSL dev headers and libs not found (need openssl/ssl.h + -lssl/-lcrypto, or libretls tls.h + -ltls). Install openssl (or libretls) development packages and retry."
 check_sanitizer_dev || die "C compiler ($CC) cannot compile/link with --sanitizer $SANITIZER ($SAN_CFLAGS). Install the matching compiler sanitizer runtime (e.g. libasan / liblsan / libubsan) and retry."
 info "C compiler: $(command -v "$CC") ($("$CC" --version 2>/dev/null | head -1))"
+info "Make driver: $(command -v "$MAKE") ($("$MAKE" --version 2>/dev/null | head -1))"
 info "SSL dev: ok (openssl/libretls)"
 info "Janet rev: $JANET_REV"
 info "jpm rev:   $JPM_REV"
@@ -660,8 +736,8 @@ if [ "$FORCE" -eq 0 ] && have_toolchain; then
     stamped=$(grep '^janet-rev:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
     stamped_ev=$(grep '^ev-backend:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
     stamped_san=$(grep '^sanitizer:' "$STAMP_FILE" 2>/dev/null | awk '{print $2}' || echo)
-    # Stamps predating the ev-backend / sanitizer keys were epoll / none builds.
-    [ -n "$stamped_ev" ] || stamped_ev="epoll"
+    # Stamps predating the ev-backend / sanitizer keys were native / none builds.
+    [ -n "$stamped_ev" ] || stamped_ev="$NATIVE_EV_BACKEND"
     [ -n "$stamped_san" ] || stamped_san="none"
     if [ "$stamped" = "$JANET_REV" ] && [ "$stamped_ev" = "$EV_BACKEND" ] && [ "$stamped_san" = "$SANITIZER" ]; then
         log "Toolchain already present (Janet $cur, rev $JANET_REV, ev-backend $EV_BACKEND, sanitizer $SANITIZER) at $TOOLCHAIN_DIR; nothing to do."
