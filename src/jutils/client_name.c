@@ -12,8 +12,9 @@
  */
 
 #include "internal.h"
-#ifndef _WIN32
+#ifndef JANET_WINDOWS
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #endif
 #include <openssl/x509v3.h>
 
