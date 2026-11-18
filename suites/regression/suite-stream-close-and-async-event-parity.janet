@@ -166,12 +166,12 @@
     (body client)))
 
 (defn- with-tls-rst-peer
-  ``Run body with client bound to a live TLS stream and peer bound to its
-   server-side TLS stream. The peer completes the handshake and then
-   never reads, so client writes land unread in the peer's TCP receive
-   queue; closing the peer with those bytes unread makes its kernel send
-   RST rather than FIN. body is a function of client and peer. The
-   helper closes the client and the listening server before returning.``
+  ``Run body with client bound to a live TLS stream, peer bound to its
+   server-side TLS stream, and peer-raw bound to the underlying TCP
+   JanetStream so the caller can arm an abortive SO_LINGER {1, 0} close
+   that sends RST rather than FIN uniformly across POSIX/Windows stacks.
+   body is a function of client, peer, and peer-raw. The helper closes
+   the client and the listening server before returning.``
   [body]
   (def server (net/listen "127.0.0.1" "0"))
   (def [_ port] (net/localname server))
@@ -182,16 +182,17 @@
         (do
           (with [conn (:accept server)]
             (with [tc (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
-              (ev/give ready tc)
+              (ev/give ready [tc conn])
               (ev/sleep 30))))
         ([_] (ev/give ready :no-peer)))))
   (ev/sleep 0.1)
   (def raw (net/connect "127.0.0.1" (string port)))
   (def client (tls/wrap raw {:verify false}))
-  (def peer (ev/take ready))
-  (assert (not= peer :no-peer) "the TLS peer must accept and wrap")
+  (def pair (ev/take ready))
+  (assert (not= pair :no-peer) "the TLS peer must accept and wrap")
+  (def [peer peer-raw] pair)
   (defer (do (:close client true) (:close server))
-    (body client peer)))
+    (body client peer peer-raw)))
 
 (defn- await-outcome
   ``Take one [tag value] outcome from ch within seconds, else report a
@@ -462,20 +463,14 @@
   (def-test "async socket error surfaces the OS reason on the TLS stack"
     :timeout 25
 
-    # A peer that never reads lets the client's bytes pile up unread in
-    # its TCP receive queue; closing the peer then makes its kernel send
-    # RST rather than FIN, so the parked reader sees the socket error
-    # (the JANET_ASYNC_EVENT_ERR this test is about). Nothing closes the
-    # client transport here, so the only event the parked reader can
-    # see is the socket error.
+    # Arm SO_LINGER {1,0} on the raw peer TCP socket and hard-close it so
+    # the kernel sends RST rather than FIN across every POSIX/Windows stack
+    # while the client reader is parked on the socket.
     (with-tls-rst-peer
-      (fn [client peer]
+      (fn [client peer peer-raw]
         (def ch (collect |(:read client 8)))
         (ev/sleep 0.3)
-        # Leave unread bytes in the peer's receive queue so its close
-        # sends RST rather than FIN.
-        (try (:write client "poke") ([_] nil))
-        (ev/sleep 0.2)
+        (arm-abortive-close peer-raw)
         (:close peer true)
         (ev/sleep 0.3)
         (def [tag a] (await-outcome ch 5))

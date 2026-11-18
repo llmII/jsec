@@ -44,6 +44,10 @@
 #define LIBRESSL_PREREQ(M, m, p) (0)
 #endif
 
+/* Buffer capacity for single OS / OpenSSL error description strings
+ * (matches thread-local strerror / FormatMessage buffers). */
+#define JSEC_STRERROR_BUFSIZE 256
+
 /*
  * Backend Detection
  */
@@ -206,7 +210,7 @@ typedef SOCKET jsec_socket_t;
  * Uses strerror_s on Windows to avoid deprecation warnings.
  * Uses thread-local buffer for thread safety. */
 static inline const char *jsec_strerror(int err) {
-    static __declspec(thread) char buf[256];
+    static __declspec(thread) char buf[JSEC_STRERROR_BUFSIZE];
     if (strerror_s(buf, sizeof(buf), err) != 0) {
         buf[0] = '\0';
     }
@@ -215,7 +219,7 @@ static inline const char *jsec_strerror(int err) {
 
 /* Socket-specific error string (thread-local static buffer) */
 static inline const char *jsec_socket_strerror(int err) {
-    static __declspec(thread) char buf[256];
+    static __declspec(thread) char buf[JSEC_STRERROR_BUFSIZE];
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                    NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
                    sizeof(buf), NULL);

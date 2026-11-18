@@ -21,40 +21,29 @@
  */
 #define dtls_client_flush_wbio(client) dtls_client_flush_wbio_to_peer(client)
 
-/*
- * Format the pending socket error under the DTLS IO category. The reason
- * is read with getsockopt SO_ERROR (the pattern in
- * src/jtls/api/connect.c:549-563) and formatted with jsec_socket_strerror
- * (src/compat.h:211, :271), the way janet_ev_lasterr carries the OS
- * reason into a cancellation at core ev.c:2600.
- */
-static void dtls_socket_error_msg(char *buf, size_t buflen,
-                                  JanetStream *stream) {
-    int res = 0;
-    int r = -1;
-    socklen_t size = sizeof(res);
-    if (stream) {
-#ifdef JANET_WINDOWS
-        r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
-                       (char *)&res, (int *)&size);
-#else
-        r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
-#endif
-    }
-    if (r == 0 && res != 0) {
-        snprintf(buf, buflen, "[DTLS:IO] socket error: %s",
-                 jsec_socket_strerror(res));
-    } else {
-        snprintf(buf, buflen, "[DTLS:IO] socket error");
-    }
-}
-
 /* Flight-timer flush: a retransmitted flight in wbio goes out to the
  * peer over the client's transport (no-op on the Unix dgram-BIO path,
  * where DTLSv1_handle_timeout writes the socket directly). */
 static void dtls_client_flight_flush(void *owner, JanetStream *transport) {
     (void)transport;
     dtls_client_flush_wbio_to_peer((DTLSClient *)owner);
+}
+
+static int dtls_client_cancel_socket_error(JanetFiber *fiber,
+                                           DTLSClientAsyncState *state,
+                                           int only_if_pending) {
+    char msg[JSEC_IO_ERROR_BUFSIZE];
+    int has_err = jutils_format_socket_error(msg, sizeof(msg), "DTLS:IO",
+                                             fiber->ev_stream);
+    if (only_if_pending && !has_err) {
+        return 0;
+    }
+    if (state && state->client) {
+        state->client->state = DTLS_STATE_ERROR;
+    }
+    janet_cancel(fiber, janet_cstringv(msg));
+    janet_async_end(fiber);
+    return 1;
 }
 
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
@@ -130,6 +119,13 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
         case JANET_ASYNC_EVENT_CLOSE:
         case JANET_ASYNC_EVENT_HUP:
+            /* On HUP, inspect SO_ERROR first so a transport error (e.g.
+             * ECONNREFUSED/ECONNRESET on kqueue/poll) surfaces under
+             * [DTLS:IO] rather than resolving nil as clean EOF. */
+            if (event == JANET_ASYNC_EVENT_HUP &&
+                dtls_client_cancel_socket_error(fiber, state, 1)) {
+                return;
+            }
             /* A parked dtls/read is a reader: a local close schedules nil
              * for it (core ev.c:2473-2476) instead of cancelling it.
              * Write- and handshake-class operations are cancelled with
@@ -143,18 +139,11 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             janet_async_end(fiber);
             return;
 
-        case JANET_ASYNC_EVENT_ERR: {
+        case JANET_ASYNC_EVENT_ERR:
             /* A genuine socket error raises under the DTLS category with
              * the OS reason - never nil, never a hardcoded string. */
-            char msg[320];
-            if (state && state->client) {
-                state->client->state = DTLS_STATE_ERROR;
-            }
-            dtls_socket_error_msg(msg, sizeof(msg), fiber->ev_stream);
-            janet_cancel(fiber, janet_cstringv(msg));
-            janet_async_end(fiber);
+            dtls_client_cancel_socket_error(fiber, state, 0);
             return;
-        }
 
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_COMPLETE:
@@ -204,11 +193,14 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             DTLSResult result = DTLS_RESULT_ERROR;
             Janet retval = janet_wrap_nil();
             int32_t nwritten = 0;
+            int sock_err = 0;
             int close_transport = 0;
+            const char *op_name = "DTLS";
 
             switch (state->op) {
                 case CLIENT_OP_HANDSHAKE:
-                    result = dtls_do_handshake(client->ssl);
+                    op_name = "Handshake";
+                    result = dtls_do_handshake_ex(client->ssl, &sock_err);
                     if (result == DTLS_RESULT_OK) {
                         client->state = DTLS_STATE_ESTABLISHED;
                         /* Record handshake completion time if tracking
@@ -222,6 +214,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case CLIENT_OP_READ: {
+                    op_name = "Read";
                     int32_t before = state->buffer->count;
                     int32_t remaining =
                         state->nbytes -
@@ -234,8 +227,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         result = DTLS_RESULT_OK;
                         break;
                     }
-                    result = dtls_do_read(client->ssl, state->buffer,
-                                          remaining);
+                    result = dtls_do_read_ex(client->ssl, state->buffer,
+                                             remaining, &sock_err);
                     if (result == DTLS_RESULT_UNEXPECTED_EOF) {
                         /* A truncation raises below - it must never
                          * look like a clean end of data */
@@ -258,6 +251,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 
                 case CLIENT_OP_WRITE: {
+                    op_name = "Write";
                     JanetByteView view =
                         janet_getbytes(&state->write_src, 0);
                     if (view.len != state->write_len) {
@@ -267,8 +261,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         janet_async_end(fiber);
                         return;
                     }
-                    result = dtls_do_write(client->ssl, view.bytes, view.len,
-                                           &nwritten);
+                    result = dtls_do_write_ex(client->ssl, view.bytes,
+                                              view.len, &nwritten, &sock_err);
                     if (result == DTLS_RESULT_OK) {
                         retval = janet_wrap_nil();
                     }
@@ -276,7 +270,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
 
                 case CLIENT_OP_CLOSE:
-                    result = dtls_do_shutdown(client->ssl);
+                    op_name = "Shutdown";
+                    result = dtls_do_shutdown_ex(client->ssl, &sock_err);
                     if (result == DTLS_RESULT_OK ||
                         result == DTLS_RESULT_EOF ||
                         result == DTLS_RESULT_UNEXPECTED_EOF) {
@@ -389,13 +384,9 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     break;
 
                 case DTLS_RESULT_ERROR: {
-                    char buf[256];
-                    unsigned long err = ERR_get_error();
-                    if (err) {
-                        ERR_error_string_n(err, buf, sizeof(buf));
-                    } else {
-                        snprintf(buf, sizeof(buf), "SSL error");
-                    }
+                    char buf[JSEC_IO_ERROR_BUFSIZE];
+                    dtls_format_io_error(buf, sizeof(buf), op_name, sock_err,
+                                         fiber->ev_stream);
                     client->state = DTLS_STATE_ERROR;
                     janet_cancel(fiber, janet_cstringv(buf));
                     janet_async_end(fiber);

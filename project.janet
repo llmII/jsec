@@ -370,6 +370,24 @@
   :main "bin/perf9-analyze.janet"
   :name "perf9-analyze")
 
+# Test-only socket reset helper (built with jsec, never installed by jpm
+# install) so stream parity tests can trigger an abortive RST cleanly across
+# BSDs, macOS, Linux, and Windows.
+(let [rst-src "suites/helpers/rst_linger.c"
+      rst-obj (out-path rst-src ".c" ".o")
+      rst-ext (dyn :modext (if windows? ".dll" ".so"))
+      rst-so (string (find-build-dir) "test-helpers/jsec_test_rst" rst-ext)
+      rst-cflags (if windows?
+                   ["/O2" "/W4" "/MD"]
+                   ["-std=c99" "-O2" "-Wall" "-Wextra" "-Wshadow"
+                    "-Wstrict-prototypes" "-Wsign-compare"
+                    ;sanitizer-cflags])
+      rst-lflags (if windows? ["ws2_32.lib"] sanitizer-lflags)
+      rst-opts @{:cflags rst-cflags :lflags rst-lflags}]
+  (compile-c :cc rst-opts rst-src rst-obj)
+  (link-c false rst-opts rst-so rst-obj)
+  (add-dep "build" rst-so))
+
 # ============================================================================
 # Phony Targets
 # ============================================================================

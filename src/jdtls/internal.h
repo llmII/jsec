@@ -405,21 +405,36 @@ typedef enum {
     DTLS_RESULT_ERROR       /* Error occurred */
 } DTLSResult;
 
+/* Convert SSL_get_error to DTLSResult, optionally capturing jsec_socket_errno
+ * before SSL_get_error() runs. */
+DTLSResult dtls_ssl_result_errno(SSL *ssl, int ret, int *out_sock_err);
+
 /* Convert SSL_get_error to DTLSResult */
 DTLSResult dtls_ssl_result(SSL *ssl, int ret);
 
 /* Process handshake step */
 DTLSResult dtls_do_handshake(SSL *ssl);
+DTLSResult dtls_do_handshake_ex(SSL *ssl, int *out_sock_err);
 
 /* Process read step: datagram-driven sizing into buf (see api/io.c) */
 DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n);
+DTLSResult dtls_do_read_ex(SSL *ssl, JanetBuffer *buf, int32_t n,
+                           int *out_sock_err);
 
 /* Process write step */
 DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
                          int32_t *out_len);
+DTLSResult dtls_do_write_ex(SSL *ssl, const uint8_t *buf, int32_t len,
+                            int32_t *out_len, int *out_sock_err);
 
 /* Process shutdown step */
 DTLSResult dtls_do_shutdown(SSL *ssl);
+DTLSResult dtls_do_shutdown_ex(SSL *ssl, int *out_sock_err);
+
+/* Format a DTLS I/O operation failure under [DTLS:IO], preferring queued
+ * OpenSSL errors and falling back to captured sock_err or SO_ERROR. */
+void dtls_format_io_error(char *buf, size_t buflen, const char *op_name,
+                          int sock_err, JanetStream *stream);
 
 /*
  * =============================================================================

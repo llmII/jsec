@@ -58,7 +58,12 @@
  * =============================================================================
  */
 
-DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
+DTLSResult dtls_ssl_result_errno(SSL *ssl, int ret, int *out_sock_err) {
+    int sock_err = jsec_socket_errno;
+    if (out_sock_err) {
+        *out_sock_err = sock_err;
+    }
+
     if (ret > 0) {
         return DTLS_RESULT_OK;
     }
@@ -79,7 +84,7 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
             return DTLS_RESULT_EOF;
 
         case SSL_ERROR_SYSCALL:
-            if (ret == 0 || errno == 0) {
+            if (ret == 0 || sock_err == 0) {
                 /* EOF without close_notify: the 1.1.1/LibreSSL surface
                  * of a truncation. Not a clean end of data. */
                 return DTLS_RESULT_UNEXPECTED_EOF;
@@ -100,45 +105,84 @@ DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
     }
 }
 
+DTLSResult dtls_ssl_result(SSL *ssl, int ret) {
+    return dtls_ssl_result_errno(ssl, ret, NULL);
+}
+
+void dtls_format_io_error(char *buf, size_t buflen, const char *op_name,
+                          int sock_err, JanetStream *stream) {
+    if (ERR_peek_error() != 0) {
+        snprintf(buf, buflen, "[DTLS:IO] %s error: %s", op_name,
+                 get_ssl_error_string());
+        return;
+    }
+    if (sock_err == 0) {
+        sock_err = jutils_pending_socket_error(stream);
+    }
+    if (sock_err != 0) {
+        snprintf(buf, buflen, "[DTLS:IO] %s syscall error: %s", op_name,
+                 jsec_socket_strerror(sock_err));
+        return;
+    }
+    snprintf(buf, buflen, "[DTLS:IO] %s error: unknown I/O error", op_name);
+}
+
 /*
  * =============================================================================
  * Basic SSL Operations
  * =============================================================================
  */
 
-DTLSResult dtls_do_handshake(SSL *ssl) {
+DTLSResult dtls_do_handshake_ex(SSL *ssl, int *out_sock_err) {
     ERR_clear_error();
     int ret = SSL_do_handshake(ssl);
     if (ret == 1) {
+        if (out_sock_err) *out_sock_err = 0;
         return DTLS_RESULT_OK;
     }
-    return dtls_ssl_result(ssl, ret);
+    return dtls_ssl_result_errno(ssl, ret, out_sock_err);
 }
 
-DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
-                         int32_t *out_len) {
+DTLSResult dtls_do_handshake(SSL *ssl) {
+    return dtls_do_handshake_ex(ssl, NULL);
+}
+
+DTLSResult dtls_do_write_ex(SSL *ssl, const uint8_t *buf, int32_t len,
+                            int32_t *out_len, int *out_sock_err) {
     ERR_clear_error();
     int ret = SSL_write(ssl, buf, len);
     if (ret > 0) {
         *out_len = ret;
+        if (out_sock_err) *out_sock_err = 0;
         return DTLS_RESULT_OK;
     }
     *out_len = 0;
-    return dtls_ssl_result(ssl, ret);
+    return dtls_ssl_result_errno(ssl, ret, out_sock_err);
 }
 
-DTLSResult dtls_do_shutdown(SSL *ssl) {
+DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
+                         int32_t *out_len) {
+    return dtls_do_write_ex(ssl, buf, len, out_len, NULL);
+}
+
+DTLSResult dtls_do_shutdown_ex(SSL *ssl, int *out_sock_err) {
     ERR_clear_error();
     int ret = SSL_shutdown(ssl);
     if (ret == 1) {
+        if (out_sock_err) *out_sock_err = 0;
         /* Bidirectional shutdown complete */
         return DTLS_RESULT_OK;
     }
     if (ret == 0) {
+        if (out_sock_err) *out_sock_err = 0;
         /* Sent close_notify, waiting for peer's */
         return DTLS_RESULT_WANT_READ;
     }
-    return dtls_ssl_result(ssl, ret);
+    return dtls_ssl_result_errno(ssl, ret, out_sock_err);
+}
+
+DTLSResult dtls_do_shutdown(SSL *ssl) {
+    return dtls_do_shutdown_ex(ssl, NULL);
 }
 
 

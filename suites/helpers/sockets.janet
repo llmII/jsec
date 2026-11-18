@@ -53,3 +53,30 @@
     :tcp (net/connect (addr :host) (addr :port))
     :unix (net/connect :unix (addr :path))
     (error (string "Unknown socket type: " socket-type))))
+
+(var- rst-helper-fn nil)
+
+(defn arm-abortive-close
+  ``Configure SO_LINGER {1, 0} on a raw TCP JanetStream so closing it emits
+   an immediate TCP RST rather than FIN across POSIX and Windows stacks.``
+  [stream]
+  (unless rst-helper-fn
+    (def modext (if (= (os/which) :windows) ".dll" ".so"))
+    (def rel (string "build/test-helpers/jsec_test_rst" modext))
+    (def paths @[(string ".work/" rel) rel])
+    (when-let [sp (dyn :syspath)]
+      (def norm (string/replace-all "\\" "/" sp))
+      (when (string/has-suffix? "/lib/janet" norm)
+        (def prefix (string/slice norm 0 (- (length norm) (length "/lib/janet"))))
+        (array/insert paths 0 (string prefix "/" rel))))
+    (var loaded nil)
+    (each p paths
+      (when (os/stat p)
+        (set loaded (native p))
+        (break)))
+    (unless loaded
+      (error (string "test helper jsec_test_rst" modext
+                     " not found; run jpm build first (searched: "
+                     (string/join paths ", ") ")")))
+    (set rst-helper-fn (get-in loaded ['arm-abortive-close :value])))
+  (rst-helper-fn stream))

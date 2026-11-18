@@ -98,6 +98,20 @@ void jutils_cert_load_errorf(const char *fmt, ...);
  */
 int jutils_is_unexpected_eof(void);
 
+/* Stack buffer capacity for formatted "[MOD:CAT] ...: <reason>" strings:
+ * holds an OS or single OpenSSL detail (JSEC_STRERROR_BUFSIZE) plus the
+ * module/category and operation prefix. */
+#define JSEC_IO_ERROR_BUFSIZE (JSEC_STRERROR_BUFSIZE + 64)
+
+/* Query pending SO_ERROR on stream; returns non-zero socket error code when
+ * present, or 0 when absent or unqueryable. */
+int jutils_pending_socket_error(JanetStream *stream);
+
+/* Format "[<category>] socket error: <reason>" (or "[<category>] socket error"
+ * when SO_ERROR is zero) into buf. Returns non-zero if SO_ERROR was non-zero. */
+int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
+                               JanetStream *stream);
+
 /* Helper to convert Janet string or keyword to C string
  * Returns NULL if the value is neither a string nor keyword. */
 const char *janet_to_string_or_keyword(Janet value);

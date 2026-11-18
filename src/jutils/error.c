@@ -54,7 +54,7 @@ const char *get_ssl_error_string(void) {
         return "No SSL error";
     }
     while (err != 0) {
-        char one[256];
+        char one[JSEC_STRERROR_BUFSIZE];
         int n;
         ERR_error_string_n(err, one, sizeof(one));
         n = snprintf(error_buf + used, sizeof(error_buf) - used, "%s%s",
@@ -86,4 +86,32 @@ int jutils_is_unexpected_eof(void) {
 #else
     return 0;
 #endif
+}
+
+int jutils_pending_socket_error(JanetStream *stream) {
+    int res = 0;
+    int r = -1;
+    socklen_t size = sizeof(res);
+    if (!stream) {
+        return 0;
+    }
+#ifdef JANET_WINDOWS
+    r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR, (char *)&res,
+                   (int *)&size);
+#else
+    r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
+#endif
+    return (r == 0 && res != 0) ? res : 0;
+}
+
+int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
+                               JanetStream *stream) {
+    int err = jutils_pending_socket_error(stream);
+    if (err != 0) {
+        snprintf(buf, buflen, "[%s] socket error: %s", category,
+                 jsec_socket_strerror(err));
+        return 1;
+    }
+    snprintf(buf, buflen, "[%s] socket error", category);
+    return 0;
 }
