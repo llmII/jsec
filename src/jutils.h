@@ -72,6 +72,9 @@ void jutils_cert_load_error_clear(void);
 
 /* Record a failure detail (printf-style) for jutils_cert_load_error.
  * The record-and-return helpers use this instead of raising. */
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((format(printf, 1, 2)))
+#endif
 void jutils_cert_load_errorf(const char *fmt, ...);
 
 /*

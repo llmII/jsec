@@ -23,6 +23,25 @@
 #endif
 
 #include <janet.h>
+/*
+ * Appease overzealous Apple Clang -Wcast-align checks on upstream
+ * janet.h header-accessor macros (char * -> Janet*Head * alignment 1 -> 8)
+ * without modifying upstream Janet or disabling -Wcast-align for jsec.
+ */
+#ifdef JANET_APPLE
+#undef janet_tuple_head
+#define janet_tuple_head(t)                                                  \
+    ((JanetTupleHead *)(uintptr_t)((const char *)(t) -                       \
+                                   offsetof(JanetTupleHead, data)))
+#undef janet_string_head
+#define janet_string_head(s)                                                 \
+    ((JanetStringHead *)(uintptr_t)((const char *)(s) -                      \
+                                    offsetof(JanetStringHead, data)))
+#undef janet_abstract_head
+#define janet_abstract_head(u)                                               \
+    ((JanetAbstractHead *)(uintptr_t)((const char *)(u) -                    \
+                                      offsetof(JanetAbstractHead, data)))
+#endif
 #include <openssl/opensslv.h>
 
 /*

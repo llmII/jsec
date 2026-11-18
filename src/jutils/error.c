@@ -18,12 +18,21 @@
  */
 static JANET_THREAD_LOCAL char cert_load_error_buf[2048];
 
-void jutils_cert_load_error_clear(void) { cert_load_error_buf[0] = '\0'; }
+void jutils_cert_load_error_clear(void) {
+    cert_load_error_buf[0] = '\0';
+}
 
 void jutils_cert_load_errorf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
     vsnprintf(cert_load_error_buf, sizeof(cert_load_error_buf), fmt, ap);
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
     va_end(ap);
 }
 
