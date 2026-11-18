@@ -61,10 +61,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
     int verify = 1; /* Default: verify server */
     int track_handshake_time = 0;
+    long explicit_mtu = 0;
     DTLSContext *shared_ctx = NULL; /* Shared context from :context option */
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
+        explicit_mtu = jdtls_parse_mtu_opt(opts);
         Janet sni = janet_get(opts, janet_ckeywordv("sni"));
         if (!janet_checktype(sni, JANET_NIL)) {
             dtls_panic_param(
@@ -325,6 +327,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(client->ssl, client->rbio, client->wbio);
+    BIO *mtu_bio = NULL;
 #else
     /* Unix: Use dgram BIO for direct socket I/O.
      * OpenSSL handles socket I/O directly through the dgram BIO. */
@@ -344,7 +347,11 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach to SSL */
     SSL_set_bio(client->ssl, bio, bio);
+    BIO *mtu_bio = bio;
 #endif
+
+    jdtls_configure_connected_mtu(client->ssl, mtu_bio, fd, addr.ss_family,
+                                  explicit_mtu);
 
     /* Set connect state and start handshake */
     SSL_set_connect_state(client->ssl);

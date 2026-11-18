@@ -449,6 +449,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     }
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
+    long explicit_mtu = jdtls_parse_mtu_opt(opts);
 
     /* Bind */
     char port_str[16];
@@ -468,6 +469,7 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     jsec_socket_t fd = JSEC_INVALID_SOCKET;
     int bind_err = 0;
+    int bound_family = AF_UNSPEC;
 
     struct addrinfo *rp;
     for (rp = ai; rp != NULL; rp = rp->ai_next) {
@@ -499,7 +501,10 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) {
+            bound_family = rp->ai_family;
+            break;
+        }
 
         bind_err = jsec_socket_errno;
         jsec_close_socket(fd);
@@ -533,6 +538,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     server->transport = transport;
     server->session_timeout = DTLS_SESSION_TIMEOUT;
     server->max_sessions = DTLS_MAX_SESSIONS_DEFAULT;
+    server->link_mtu =
+        jdtls_resolve_server_link_mtu(fd, bound_family, explicit_mtu);
 
     /* Get session timeout from options */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -1556,7 +1563,8 @@ static const JanetReg server_cfuns[] = {
      "  :verify - Require client certificates (default false)\n"
      "  :ca - CA certificates for client verification\n"
      "  :session-timeout - Session timeout in seconds (default 300)\n"
-     "  :max-sessions - Maximum peer sessions in the table (default 1024)"},
+     "  :max-sessions - Maximum peer sessions in the table (default 1024)\n"
+     "  :mtu - Link MTU in bytes (256-65535; auto-detected by default)"},
     {"recv-from", cfun_dtls_recv_from,
      "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
      "Receive a datagram from any peer.\n"
