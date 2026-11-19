@@ -27,7 +27,8 @@ static const char *cfun_ca_parse_ocsp_request_docstring =
     "Returns a table:\n"
     "  :issuer-name-hash <buffer>  - Hash of issuer's distinguished name\n"
     "  :issuer-key-hash <buffer>   - Hash of issuer's public key\n"
-    "  :serial <string>            - Certificate serial number (canonical decimal string)\n"
+    "  :serial <string>            - Certificate serial number (canonical "
+    "decimal string)\n"
     "  :digest <string>            - CertID digest name the request named "
     "(e.g. \"sha256\")\n"
     "  :nonce <buffer|nil>         - Nonce extension's content bytes (if "
@@ -218,8 +219,8 @@ enum {
  * ASN.1 form YYYYMMDDHHMMSSZ. Returns 1 when the input matched the
  * extended form (normalized copy written to out), 0 otherwise. */
 static int ca_ocsp_iso_to_asn1(const char *s, char *out, size_t out_len) {
-    static const size_t dst[] = {0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15,
-                                 17, 18};
+    static const size_t dst[] = {0, 1,  2,  3,  5,  6,  8,
+                                 9, 11, 12, 14, 15, 17, 18};
     size_t i;
     if (strlen(s) != 20 || out_len < 16) {
         return 0;
@@ -269,14 +270,14 @@ static int ca_ocsp_set_time(ASN1_TIME *t, Janet v) {
     return CA_OCSP_TIME_BAD_SHAPE;
 }
 
-/* Convert a Janet integer, s64, or canonical decimal string/buffer to ASN1_INTEGER.
- * Accepts strings with optional leading '-' for non-conforming serials.
- * Returns NULL on failure or invalid syntax. */
+/* Convert a Janet integer, s64, or canonical decimal string/buffer to
+ * ASN1_INTEGER. Accepts strings with optional leading '-' for non-conforming
+ * serials. Returns NULL on failure or invalid syntax. */
 static ASN1_INTEGER *ca_serial_to_asn1(Janet serial_v) {
     if (janet_checktype(serial_v, JANET_STRING) ||
         janet_checktype(serial_v, JANET_BUFFER)) {
         JanetByteView bv = janet_getbytes(&serial_v, 0);
-        if (bv.len == 0) return NULL;
+        if (bv.len <= 0) return NULL;
         int32_t start = 0;
         if (bv.bytes[0] == '-') {
             if (bv.len == 1) return NULL;
@@ -323,6 +324,114 @@ static ASN1_INTEGER *ca_serial_to_asn1(Janet serial_v) {
         return ai;
     }
     return NULL;
+}
+
+typedef struct {
+    OCSP_BASICRESP *basic;
+    OCSP_CERTID *certid;
+    ASN1_TIME *revtime;
+    ASN1_GENERALIZEDTIME *revtime_gen;
+    ASN1_TIME *this_update;
+    ASN1_TIME *next_update;
+    ASN1_GENERALIZEDTIME *this_update_gen;
+    ASN1_GENERALIZEDTIME *next_update_gen;
+    OCSP_RESPONSE *resp;
+} OcspRespCleanup;
+
+static void ocsp_resp_cleanup_free(OcspRespCleanup *c) {
+    if (c->revtime) ASN1_TIME_free(c->revtime);
+    if (c->revtime_gen) ASN1_GENERALIZEDTIME_free(c->revtime_gen);
+    if (c->this_update) ASN1_TIME_free(c->this_update);
+    if (c->next_update) ASN1_TIME_free(c->next_update);
+    if (c->this_update_gen) ASN1_GENERALIZEDTIME_free(c->this_update_gen);
+    if (c->next_update_gen) ASN1_GENERALIZEDTIME_free(c->next_update_gen);
+    if (c->certid) OCSP_CERTID_free(c->certid);
+    if (c->basic) OCSP_BASICRESP_free(c->basic);
+    if (c->resp) OCSP_RESPONSE_free(c->resp);
+}
+
+static void ocsp_set_time_or_panic(OcspRespCleanup *c, ASN1_TIME *dst,
+                                   Janet val, const char *name) {
+    int ok = ca_ocsp_set_time(dst, val);
+    if (ok == CA_OCSP_TIME_OK) return;
+    ocsp_resp_cleanup_free(c);
+    if (ok == CA_OCSP_TIME_BAD_FORMAT) {
+        ca_panic_param("invalid %s format: %s", name,
+                       (const char *)janet_unwrap_string(val));
+    }
+    if (ok == CA_OCSP_TIME_BAD_SHAPE) {
+        ca_panic_param(
+            "%s must be a number (unix timestamp) or string (ISO 8601)",
+            name);
+    }
+    ca_panic_resource("failed to set %s time", name);
+}
+
+static void ocsp_add_nonce_or_panic(OcspRespCleanup *c, JanetTable *req_table,
+                                    JanetStruct req_struct, int include_nonce,
+                                    Janet gen_nonce_v) {
+    /* Nonce: echo the request's extension content bytes verbatim when
+     * present (the byte-identical echo OCSP_check_nonce compares). A
+     * caller-supplied :nonce is generated instead via
+     * OCSP_basic_add1_nonce, which wraps it in an OCTET STRING - echo and
+     * generate differ by design. */
+    int nonce_added = 0;
+    if (include_nonce) {
+        Janet nonce_v =
+            req_table
+                ? janet_table_get(req_table, janet_ckeywordv("nonce"))
+                : janet_struct_get(req_struct, janet_ckeywordv("nonce"));
+        if (!janet_checktype(nonce_v, JANET_NIL)) {
+            if (!janet_checktype(nonce_v, JANET_BUFFER) &&
+                !janet_checktype(nonce_v, JANET_STRING)) {
+                ocsp_resp_cleanup_free(c);
+                ca_panic_param(
+                    "request-info :nonce must be a buffer or string");
+            }
+            Janet nonce_arg = nonce_v;
+            JanetByteView nonce_bytes = janet_getbytes(&nonce_arg, 0);
+            ASN1_OCTET_STRING *nonce_oct = ASN1_OCTET_STRING_new();
+            if (!nonce_oct) {
+                ocsp_resp_cleanup_free(c);
+                ca_panic_resource(
+                    "failed to allocate the nonce extension value");
+            }
+            if (!ASN1_OCTET_STRING_set(nonce_oct, nonce_bytes.bytes,
+                                       (int)nonce_bytes.len)) {
+                ASN1_OCTET_STRING_free(nonce_oct);
+                ocsp_resp_cleanup_free(c);
+                ca_panic_resource("failed to set the nonce extension value");
+            }
+            X509_EXTENSION *nonce_ext = X509_EXTENSION_create_by_NID(
+                NULL, NID_id_pkix_OCSP_Nonce, 0, nonce_oct);
+            ASN1_OCTET_STRING_free(nonce_oct);
+            if (!nonce_ext) {
+                ocsp_resp_cleanup_free(c);
+                ca_panic_ssl("failed to create the nonce extension");
+            }
+            if (!OCSP_BASICRESP_add_ext(c->basic, nonce_ext, -1)) {
+                X509_EXTENSION_free(nonce_ext);
+                ocsp_resp_cleanup_free(c);
+                ca_panic_ssl("failed to add the nonce extension");
+            }
+            X509_EXTENSION_free(nonce_ext);
+            nonce_added = 1;
+        }
+    }
+    if (!nonce_added && !janet_checktype(gen_nonce_v, JANET_NIL)) {
+        if (!janet_checktype(gen_nonce_v, JANET_BUFFER) &&
+            !janet_checktype(gen_nonce_v, JANET_STRING)) {
+            ocsp_resp_cleanup_free(c);
+            ca_panic_param(":nonce must be a buffer or string");
+        }
+        Janet gen_arg = gen_nonce_v;
+        JanetByteView gen_bytes = janet_getbytes(&gen_arg, 0);
+        if (!OCSP_basic_add1_nonce(c->basic, (unsigned char *)gen_bytes.bytes,
+                                   (int)gen_bytes.len)) {
+            ocsp_resp_cleanup_free(c);
+            ca_panic_ssl("failed to add a generated nonce");
+        }
+    }
 }
 
 Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
@@ -398,31 +507,31 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     }
 
     /* Get serial from request info */
-    Janet serial_v = req_table
-                         ? janet_table_get(req_table, janet_ckeywordv("serial"))
-                         : janet_struct_get(req_struct,
-                                            janet_ckeywordv("serial"));
+    Janet serial_v =
+        req_table ? janet_table_get(req_table, janet_ckeywordv("serial"))
+                  : janet_struct_get(req_struct, janet_ckeywordv("serial"));
     if (janet_checktype(serial_v, JANET_NIL)) {
         ca_panic_param("request-info missing :serial");
     }
     ASN1_INTEGER *asn_serial = ca_serial_to_asn1(serial_v);
     if (!asn_serial) {
-        ca_panic_param("request-info :serial must be an integer or canonical decimal string");
+        ca_panic_param("request-info :serial must be an integer or canonical "
+                       "decimal string");
     }
 
     /* Resolve the CertID digest the request named. Hand-built request-info
      * tables without a :digest key keep the SHA-1 default; an unsupported
      * digest is a parameter error, never a silent SHA-1 fallback. */
     const EVP_MD *digest_md = EVP_sha1();
-    Janet digest_v = req_table
-                         ? janet_table_get(req_table, janet_ckeywordv("digest"))
-                         : janet_struct_get(req_struct,
-                                            janet_ckeywordv("digest"));
+    Janet digest_v =
+        req_table ? janet_table_get(req_table, janet_ckeywordv("digest"))
+                  : janet_struct_get(req_struct, janet_ckeywordv("digest"));
     if (!janet_checktype(digest_v, JANET_NIL)) {
         const char *digest_name = janet_to_string_or_keyword(digest_v);
         if (!digest_name) {
             ASN1_INTEGER_free(asn_serial);
-            ca_panic_param("request-info :digest must be a string or keyword");
+            ca_panic_param(
+                "request-info :digest must be a string or keyword");
         }
         digest_md = EVP_get_digestbyname(digest_name);
         if (!digest_md) {
@@ -431,67 +540,48 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
         }
     }
 
+    OcspRespCleanup c;
+    memset(&c, 0, sizeof(c));
+
     /* Create OCSP basic response */
-    OCSP_BASICRESP *basic = OCSP_BASICRESP_new();
-    if (!basic) {
+    c.basic = OCSP_BASICRESP_new();
+    if (!c.basic) {
         ASN1_INTEGER_free(asn_serial);
         ca_panic_ssl("failed to create OCSP basic response");
     }
 
     /* Build cert ID from the CA cert, the request serial and the
      * resolved digest */
-    OCSP_CERTID *certid =
+    c.certid =
         OCSP_cert_id_new(digest_md, X509_get_subject_name(ca->cert),
                          X509_get0_pubkey_bitstr(ca->cert), asn_serial);
     ASN1_INTEGER_free(asn_serial);
 
-    if (!certid) {
-        OCSP_BASICRESP_free(basic);
+    if (!c.certid) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to create OCSP certificate ID");
     }
 
     /* Set up revocation info if revoked */
-    ASN1_TIME *revtime = NULL;
-    ASN1_GENERALIZEDTIME *revtime_gen = NULL;
     if (status == V_OCSP_CERTSTATUS_REVOKED) {
-        revtime = ASN1_TIME_new();
-        if (!revtime) {
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
+        c.revtime = ASN1_TIME_new();
+        if (!c.revtime) {
+            ocsp_resp_cleanup_free(&c);
             ca_panic_resource(
                 "failed to allocate ASN1_TIME for revocation time");
         }
-        X509_gmtime_adj(revtime, 0); /* Default: now */
+        X509_gmtime_adj(c.revtime, 0); /* Default: now */
 
         if (ca_opts_valid(opts)) {
             Janet v = ca_opts_get(opts, "revocation-time");
             if (!janet_checktype(v, JANET_NIL)) {
-                /* Parse time from Janet value - accepts Unix timestamp
-                 * (number) or ISO 8601 string like "2025-01-15T10:30:00Z" */
-                int ok = ca_ocsp_set_time(revtime, v);
-                if (ok != CA_OCSP_TIME_OK) {
-                    ASN1_TIME_free(revtime);
-                    OCSP_CERTID_free(certid);
-                    OCSP_BASICRESP_free(basic);
-                    if (ok == CA_OCSP_TIME_BAD_FORMAT) {
-                        ca_panic_param(
-                            "invalid revocation-time format: %s",
-                            (const char *)janet_unwrap_string(v));
-                    }
-                    if (ok == CA_OCSP_TIME_BAD_SHAPE) {
-                        ca_panic_param("revocation-time must be a number (unix "
-                                       "timestamp) or string (ISO 8601)");
-                    }
-                    ca_panic_resource("failed to set revocation time");
-                }
+                ocsp_set_time_or_panic(&c, c.revtime, v, "revocation-time");
             }
         }
 
-        revtime_gen = ASN1_TIME_to_generalizedtime(revtime, NULL);
-        if (!revtime_gen) {
-            ASN1_TIME_free(revtime);
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
+        c.revtime_gen = ASN1_TIME_to_generalizedtime(c.revtime, NULL);
+        if (!c.revtime_gen) {
+            ocsp_resp_cleanup_free(&c);
             ca_panic_resource(
                 "failed to convert revocation time to GeneralizedTime");
         }
@@ -500,287 +590,79 @@ Janet cfun_ca_create_ocsp_response(int32_t argc, Janet *argv) {
     /* Set up update times: honour :this-update and :next-update when
      * supplied (same value shapes as :revocation-time), otherwise now and
      * now plus one day */
-    ASN1_TIME *this_update = ASN1_TIME_new();
-    ASN1_TIME *next_update = ASN1_TIME_new();
-    if (!this_update || !next_update) {
-        if (this_update) ASN1_TIME_free(this_update);
-        if (next_update) ASN1_TIME_free(next_update);
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    c.this_update = ASN1_TIME_new();
+    c.next_update = ASN1_TIME_new();
+    if (!c.this_update || !c.next_update) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_resource("failed to allocate ASN1_TIME for update times");
     }
 
     if (!janet_checktype(this_update_v, JANET_NIL)) {
-        int ok = ca_ocsp_set_time(this_update, this_update_v);
-        if (ok != CA_OCSP_TIME_OK) {
-            ASN1_TIME_free(this_update);
-            ASN1_TIME_free(next_update);
-            if (revtime) ASN1_TIME_free(revtime);
-            if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
-            if (ok == CA_OCSP_TIME_BAD_FORMAT) {
-                ca_panic_param("invalid this-update format: %s",
-                               (const char *)janet_unwrap_string(this_update_v));
-            }
-            if (ok == CA_OCSP_TIME_BAD_SHAPE) {
-                ca_panic_param("this-update must be a number (unix timestamp) "
-                               "or string (ISO 8601)");
-            }
-            ca_panic_resource("failed to set this-update time");
-        }
+        ocsp_set_time_or_panic(&c, c.this_update, this_update_v,
+                               "this-update");
     } else {
-        X509_gmtime_adj(this_update, 0);
+        X509_gmtime_adj(c.this_update, 0);
     }
 
     if (!janet_checktype(next_update_v, JANET_NIL)) {
-        int ok = ca_ocsp_set_time(next_update, next_update_v);
-        if (ok != CA_OCSP_TIME_OK) {
-            ASN1_TIME_free(this_update);
-            ASN1_TIME_free(next_update);
-            if (revtime) ASN1_TIME_free(revtime);
-            if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
-            if (ok == CA_OCSP_TIME_BAD_FORMAT) {
-                ca_panic_param("invalid next-update format: %s",
-                               (const char *)janet_unwrap_string(next_update_v));
-            }
-            if (ok == CA_OCSP_TIME_BAD_SHAPE) {
-                ca_panic_param("next-update must be a number (unix timestamp) "
-                               "or string (ISO 8601)");
-            }
-            ca_panic_resource("failed to set next-update time");
-        }
+        ocsp_set_time_or_panic(&c, c.next_update, next_update_v,
+                               "next-update");
     } else {
-        X509_gmtime_adj(next_update, 24L * 60L * 60L); /* +1 day */
+        X509_gmtime_adj(c.next_update, 24L * 60L * 60L); /* +1 day */
     }
 
-    ASN1_GENERALIZEDTIME *this_update_gen =
-        ASN1_TIME_to_generalizedtime(this_update, NULL);
-    if (!this_update_gen) {
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    c.this_update_gen = ASN1_TIME_to_generalizedtime(c.this_update, NULL);
+    if (!c.this_update_gen) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_resource("failed to convert this-update to GeneralizedTime");
     }
-    ASN1_GENERALIZEDTIME *next_update_gen =
-        ASN1_TIME_to_generalizedtime(next_update, NULL);
-    if (!next_update_gen) {
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    c.next_update_gen = ASN1_TIME_to_generalizedtime(c.next_update, NULL);
+    if (!c.next_update_gen) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_resource("failed to convert next-update to GeneralizedTime");
     }
 
     /* Add single response */
-    if (!OCSP_basic_add1_status(basic, certid, status, (int)revoke_reason,
-                                revtime_gen, this_update_gen,
-                                next_update_gen)) {
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_GENERALIZEDTIME_free(next_update_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    if (!OCSP_basic_add1_status(c.basic, c.certid, status, (int)revoke_reason,
+                                c.revtime_gen, c.this_update_gen,
+                                c.next_update_gen)) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to add OCSP status");
     }
 
-    /* Nonce: echo the request's extension content bytes verbatim when
-     * present (the byte-identical echo OCSP_check_nonce compares). A
-     * caller-supplied :nonce is generated instead via
-     * OCSP_basic_add1_nonce, which wraps it in an OCTET STRING - echo and
-     * generate differ by design. */
-    int nonce_added = 0;
-    if (include_nonce) {
-        Janet nonce_v = req_table
-                            ? janet_table_get(req_table,
-                                              janet_ckeywordv("nonce"))
-                            : janet_struct_get(req_struct,
-                                               janet_ckeywordv("nonce"));
-        if (!janet_checktype(nonce_v, JANET_NIL)) {
-            if (!janet_checktype(nonce_v, JANET_BUFFER) &&
-                !janet_checktype(nonce_v, JANET_STRING)) {
-                if (revtime) ASN1_TIME_free(revtime);
-                if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-                ASN1_TIME_free(this_update);
-                ASN1_TIME_free(next_update);
-                ASN1_GENERALIZEDTIME_free(this_update_gen);
-                ASN1_GENERALIZEDTIME_free(next_update_gen);
-                OCSP_CERTID_free(certid);
-                OCSP_BASICRESP_free(basic);
-                ca_panic_param(
-                    "request-info :nonce must be a buffer or string");
-            }
-            Janet nonce_arg = nonce_v;
-            JanetByteView nonce_bytes = janet_getbytes(&nonce_arg, 0);
-            ASN1_OCTET_STRING *nonce_oct = ASN1_OCTET_STRING_new();
-            if (!nonce_oct) {
-                if (revtime) ASN1_TIME_free(revtime);
-                if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-                ASN1_TIME_free(this_update);
-                ASN1_TIME_free(next_update);
-                ASN1_GENERALIZEDTIME_free(this_update_gen);
-                ASN1_GENERALIZEDTIME_free(next_update_gen);
-                OCSP_CERTID_free(certid);
-                OCSP_BASICRESP_free(basic);
-                ca_panic_resource(
-                    "failed to allocate the nonce extension value");
-            }
-            if (!ASN1_OCTET_STRING_set(nonce_oct, nonce_bytes.bytes,
-                                       (int)nonce_bytes.len)) {
-                ASN1_OCTET_STRING_free(nonce_oct);
-                if (revtime) ASN1_TIME_free(revtime);
-                if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-                ASN1_TIME_free(this_update);
-                ASN1_TIME_free(next_update);
-                ASN1_GENERALIZEDTIME_free(this_update_gen);
-                ASN1_GENERALIZEDTIME_free(next_update_gen);
-                OCSP_CERTID_free(certid);
-                OCSP_BASICRESP_free(basic);
-                ca_panic_resource("failed to set the nonce extension value");
-            }
-            X509_EXTENSION *nonce_ext = X509_EXTENSION_create_by_NID(
-                NULL, NID_id_pkix_OCSP_Nonce, 0, nonce_oct);
-            ASN1_OCTET_STRING_free(nonce_oct);
-            if (!nonce_ext) {
-                if (revtime) ASN1_TIME_free(revtime);
-                if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-                ASN1_TIME_free(this_update);
-                ASN1_TIME_free(next_update);
-                ASN1_GENERALIZEDTIME_free(this_update_gen);
-                ASN1_GENERALIZEDTIME_free(next_update_gen);
-                OCSP_CERTID_free(certid);
-                OCSP_BASICRESP_free(basic);
-                ca_panic_ssl("failed to create the nonce extension");
-            }
-            if (!OCSP_BASICRESP_add_ext(basic, nonce_ext, -1)) {
-                X509_EXTENSION_free(nonce_ext);
-                if (revtime) ASN1_TIME_free(revtime);
-                if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-                ASN1_TIME_free(this_update);
-                ASN1_TIME_free(next_update);
-                ASN1_GENERALIZEDTIME_free(this_update_gen);
-                ASN1_GENERALIZEDTIME_free(next_update_gen);
-                OCSP_CERTID_free(certid);
-                OCSP_BASICRESP_free(basic);
-                ca_panic_ssl("failed to add the nonce extension");
-            }
-            X509_EXTENSION_free(nonce_ext);
-            nonce_added = 1;
-        }
-    }
-    if (!nonce_added && !janet_checktype(gen_nonce_v, JANET_NIL)) {
-        if (!janet_checktype(gen_nonce_v, JANET_BUFFER) &&
-            !janet_checktype(gen_nonce_v, JANET_STRING)) {
-            if (revtime) ASN1_TIME_free(revtime);
-            if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-            ASN1_TIME_free(this_update);
-            ASN1_TIME_free(next_update);
-            ASN1_GENERALIZEDTIME_free(this_update_gen);
-            ASN1_GENERALIZEDTIME_free(next_update_gen);
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
-            ca_panic_param(":nonce must be a buffer or string");
-        }
-        Janet gen_arg = gen_nonce_v;
-        JanetByteView gen_bytes = janet_getbytes(&gen_arg, 0);
-        if (!OCSP_basic_add1_nonce(basic, (unsigned char *)gen_bytes.bytes,
-                                   (int)gen_bytes.len)) {
-            if (revtime) ASN1_TIME_free(revtime);
-            if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-            ASN1_TIME_free(this_update);
-            ASN1_TIME_free(next_update);
-            ASN1_GENERALIZEDTIME_free(this_update_gen);
-            ASN1_GENERALIZEDTIME_free(next_update_gen);
-            OCSP_CERTID_free(certid);
-            OCSP_BASICRESP_free(basic);
-            ca_panic_ssl("failed to add a generated nonce");
-        }
-    }
+    ocsp_add_nonce_or_panic(&c, req_table, req_struct, include_nonce,
+                            gen_nonce_v);
 
     /* Sign the basic response */
-    if (!OCSP_basic_sign(basic, ca->cert, ca->key, EVP_sha256(), NULL, 0)) {
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_GENERALIZEDTIME_free(next_update_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    if (!OCSP_basic_sign(c.basic, ca->cert, ca->key, EVP_sha256(), NULL, 0)) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to sign OCSP response");
     }
 
     /* Create OCSP response wrapper */
-    OCSP_RESPONSE *resp =
-        OCSP_response_create(OCSP_RESPONSE_STATUS_SUCCESSFUL, basic);
-    if (!resp) {
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_GENERALIZEDTIME_free(next_update_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
+    c.resp = OCSP_response_create(OCSP_RESPONSE_STATUS_SUCCESSFUL, c.basic);
+    if (!c.resp) {
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to create OCSP response");
     }
 
     /* Encode to DER */
-    int len = i2d_OCSP_RESPONSE(resp, NULL);
+    int len = i2d_OCSP_RESPONSE(c.resp, NULL);
     if (len <= 0) {
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_GENERALIZEDTIME_free(next_update_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
-        OCSP_RESPONSE_free(resp);
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to encode OCSP response");
     }
 
     uint8_t *str = janet_string_begin(len);
     unsigned char *p = str;
-    int encoded = i2d_OCSP_RESPONSE(resp, &p);
+    int encoded = i2d_OCSP_RESPONSE(c.resp, &p);
     if (encoded != len) {
-        if (revtime) ASN1_TIME_free(revtime);
-        if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-        ASN1_TIME_free(this_update);
-        ASN1_TIME_free(next_update);
-        ASN1_GENERALIZEDTIME_free(this_update_gen);
-        ASN1_GENERALIZEDTIME_free(next_update_gen);
-        OCSP_CERTID_free(certid);
-        OCSP_BASICRESP_free(basic);
-        OCSP_RESPONSE_free(resp);
+        ocsp_resp_cleanup_free(&c);
         ca_panic_ssl("failed to encode OCSP response");
     }
     Janet result = janet_wrap_string(janet_string_end(str));
 
-    /* Cleanup */
-    if (revtime) ASN1_TIME_free(revtime);
-    if (revtime_gen) ASN1_GENERALIZEDTIME_free(revtime_gen);
-    ASN1_TIME_free(this_update);
-    ASN1_TIME_free(next_update);
-    ASN1_GENERALIZEDTIME_free(this_update_gen);
-    ASN1_GENERALIZEDTIME_free(next_update_gen);
-    OCSP_CERTID_free(certid);
-    OCSP_BASICRESP_free(basic);
-    OCSP_RESPONSE_free(resp);
-
+    ocsp_resp_cleanup_free(&c);
     return result;
 }
 

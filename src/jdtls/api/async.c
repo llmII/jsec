@@ -14,7 +14,6 @@
  */
 
 
-
 /*
  * Helper: Flush wbio - use shared helper from internal.h
  * This wrapper maintains the local function name for minimal diff in callers.
@@ -127,8 +126,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     int err = WSAGetLastError();
                     char msg[JSEC_IO_ERROR_BUFSIZE];
                     client->state = DTLS_STATE_ERROR;
-                    snprintf(msg, sizeof(msg),
-                             "[DTLS:IO] WSARecv failed: %s",
+                    snprintf(msg, sizeof(msg), "[DTLS:IO] WSARecv failed: %s",
                              jsec_socket_strerror(err));
                     janet_cancel(fiber, janet_cstringv(msg));
                     janet_async_end(fiber);
@@ -314,7 +312,7 @@ static void dtls_client_async_step(JanetFiber *fiber,
     int32_t nwritten = 0;
     int sock_err = 0;
     int close_transport = 0;
-    const char *op_name = "DTLS";
+    const char *op_name;
 
     switch (JDTLS_CAS_OP(state)) {
         case CLIENT_OP_HANDSHAKE:
@@ -400,6 +398,10 @@ static void dtls_client_async_step(JanetFiber *fiber,
                 result = DTLS_RESULT_OK;
             }
             break;
+
+        default:
+            op_name = "DTLS";
+            break;
     }
 
     /* Flush any data SSL wrote to wbio - handshake responses, etc */
@@ -416,7 +418,8 @@ static void dtls_client_async_step(JanetFiber *fiber,
     }
     if (flush_rc == -2) {
 #ifdef JANET_WINDOWS
-        if (result == DTLS_RESULT_OK && JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
+        if (result == DTLS_RESULT_OK &&
+            JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
             jsec_set_u8_flag(state->flags, JDTLS_CAS_FLUSH_ONLY);
         }
 #endif
@@ -558,8 +561,7 @@ int dtls_client_start_handshake(DTLSClient *client) {
         return 1; /* Completed synchronously */
     }
 
-    if (result == DTLS_RESULT_ERROR ||
-        result == DTLS_RESULT_UNEXPECTED_EOF) {
+    if (result == DTLS_RESULT_ERROR || result == DTLS_RESULT_UNEXPECTED_EOF) {
         client->state = DTLS_STATE_ERROR;
         dtls_panic_ssl("DTLS handshake failed");
     }
@@ -591,8 +593,8 @@ int dtls_client_start_handshake(DTLSClient *client) {
 
 /* Helper to create and start async read */
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int32_t buf_start,
-                                  int mode, double timeout) {
+                                  int32_t nbytes, int32_t buf_start, int mode,
+                                  double timeout) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     if (!state) {
         dtls_panic_io("out of memory");

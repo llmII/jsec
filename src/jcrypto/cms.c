@@ -120,16 +120,16 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
             }
             Janet dval = janet_get(trust_arg, janet_ckeywordv("detached"));
             if (janet_checktype(dval, JANET_NIL))
-                dval = janet_get(trust_arg,
-                                 janet_ckeywordv("detached-content"));
+                dval =
+                    janet_get(trust_arg, janet_ckeywordv("detached-content"));
             if (!janet_checktype(dval, JANET_NIL)) {
                 X509_STORE_free(store);
                 crypto_panic_param("detached content is not accepted in "
                                    "the options dictionary; pass detached "
                                    "data as the third positional argument");
             }
-            Janet vval = janet_get(trust_arg,
-                                   janet_ckeywordv("verify-certs"));
+            Janet vval =
+                janet_get(trust_arg, janet_ckeywordv("verify-certs"));
             if (!janet_checktype(vval, JANET_NIL)) {
                 if (!janet_checktype(vval, JANET_BOOLEAN)) {
                     X509_STORE_free(store);
@@ -157,8 +157,7 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
                     janet_indexed_view(tval, &items, &items_len);
                     for (int32_t i = 0; i < items_len; i++) {
                         JanetByteView pem = janet_getbytes(items, i);
-                        int n =
-                            cms_store_load_pem(store, pem.bytes, pem.len);
+                        int n = cms_store_load_pem(store, pem.bytes, pem.len);
                         if (n < 0) {
                             X509_STORE_free(store);
                             crypto_panic_ssl("failed to load trusted "
@@ -247,7 +246,8 @@ Janet cfun_cms_verify(int32_t argc, Janet *argv) {
     unsigned int sig_flags =
         CMS_BINARY | (unsigned int)CMS_NO_SIGNER_CERT_VERIFY;
     if (dcont) sig_flags |= (unsigned int)CMS_DETACHED;
-    int sig_ok = (CMS_verify(cms, NULL, NULL, dcont, content, sig_flags) == 1);
+    int sig_ok =
+        (CMS_verify(cms, NULL, NULL, dcont, content, sig_flags) == 1);
     unsigned long sig_err = 0;
     const char *sig_reason = NULL;
     if (!sig_ok) {

@@ -196,7 +196,8 @@ DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
 DTLSSession *dtls_server_create_session(DTLSServer *server,
                                         const DTLSAddress *addr) {
     int bucket = 0;
-    DTLSSession *existing = dtls_server_get_session_bucket(server, addr, &bucket);
+    DTLSSession *existing =
+        dtls_server_get_session_bucket(server, addr, &bucket);
     if (existing) {
         existing->last_activity = get_current_time();
         return existing;

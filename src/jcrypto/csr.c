@@ -207,7 +207,8 @@ static void csr_add_san(X509_REQ *req, EVP_PKEY *pkey, Janet san) {
         sk_X509_EXTENSION_free(exts);
         X509_REQ_free(req);
         EVP_PKEY_free(pkey);
-        crypto_panic_resource("failed to collect the SubjectAltName extension");
+        crypto_panic_resource(
+            "failed to collect the SubjectAltName extension");
     }
     if (!X509_REQ_add_extensions(req, exts)) {
         sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
@@ -279,8 +280,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("common-name"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add common-name entry");
@@ -290,8 +291,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("country"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add country entry");
@@ -301,8 +302,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("state"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "ST", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add state entry");
@@ -312,8 +313,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("locality"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "L", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add locality entry");
@@ -323,8 +324,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("organization"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add organization entry");
@@ -334,8 +335,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("organizational-unit"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add organizational-unit entry");
@@ -345,8 +346,8 @@ Janet cfun_generate_csr(int32_t argc, Janet *argv) {
     val = janet_get(opts, janet_ckeywordv("email"));
     if (janet_checktype(val, JANET_STRING)) {
         if (!X509_NAME_add_entry_by_txt(name, "emailAddress", MBSTRING_ASC,
-                                        OSSL_STR(janet_unwrap_string(val)), -1,
-                                        -1, 0)) {
+                                        OSSL_STR(janet_unwrap_string(val)),
+                                        -1, -1, 0)) {
             X509_REQ_free(req);
             EVP_PKEY_free(pkey);
             crypto_panic_param("failed to add email entry");

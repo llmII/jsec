@@ -50,10 +50,10 @@ static void tls_accept_backoff(void) {
  */
 
 /* Accept state boolean flags (packed into uint8_t flags) */
-#define JTLS_ACCEPT_OWNS_CTX (1u << 0)
-#define JTLS_ACCEPT_TCP_NODELAY (1u << 1)
-#define JTLS_ACCEPT_TRACK_HANDSHAKE (1u << 2)
-#define JTLS_ACCEPT_IO_IN_FLIGHT (1u << 3)
+#define JTLS_ACCEPT_OWNS_CTX (1U << 0)
+#define JTLS_ACCEPT_TCP_NODELAY (1U << 1)
+#define JTLS_ACCEPT_TRACK_HANDSHAKE (1U << 2)
+#define JTLS_ACCEPT_IO_IN_FLIGHT (1U << 3)
 
 /* State for TLS accept loop - level triggered to handle multiple connections
  */
@@ -156,15 +156,14 @@ static void tls_accept_loop_spawn_client(JanetFiber *fiber,
                                          TLSAcceptLoopState *state,
                                          JanetStream *client_stream) {
     SSL_CTX_up_ref(state->ctx);
-    TLSStream *tls = jtls_setup_stream(
-        client_stream, state->ctx, 1, 1, state->read_buffer_size,
-        state->write_buffer_size,
-        (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
-        (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
+    TLSStream *tls =
+        jtls_setup_stream(client_stream, state->ctx, 1, 1,
+                          state->read_buffer_size, state->write_buffer_size,
+                          (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                          (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
     Janet tls_val = janet_wrap_abstract(tls);
-    JanetFiber *handler_fiber =
-        janet_fiber(state->handler, 64, 1, &tls_val);
+    JanetFiber *handler_fiber = janet_fiber(state->handler, 64, 1, &tls_val);
     handler_fiber->supervisor_channel = fiber->supervisor_channel;
     janet_schedule(handler_fiber, janet_wrap_nil());
 }
@@ -193,9 +192,9 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                     jsec_clear_u8_flag(state->flags, JTLS_ACCEPT_OWNS_CTX);
                 }
 #ifdef JANET_WINDOWS
-                jutils_win_cancel_overlapped(fiber, listener,
-                                             &state->overlapped, &state->flags,
-                                             JTLS_ACCEPT_IO_IN_FLIGHT);
+                jutils_win_cancel_overlapped(
+                    fiber, listener, &state->overlapped, &state->flags,
+                    JTLS_ACCEPT_IO_IN_FLIGHT);
                 if (state->accept_socket != INVALID_SOCKET) {
                     closesocket(state->accept_socket);
                     state->accept_socket = INVALID_SOCKET;
@@ -215,8 +214,8 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
             /* Windows: Start AcceptEx operation */
             if (jtls_win_start_acceptex((SOCKET)listener->handle,
                                         &state->overlapped, state->accept_buf,
-                                        &state->accept_socket,
-                                        &state->flags, fiber) < 0) {
+                                        &state->accept_socket, &state->flags,
+                                        fiber) < 0) {
                 char errbuf[JSEC_IO_ERROR_BUFSIZE];
                 snprintf(errbuf, sizeof(errbuf),
                          "[TLS:IO] Failed to start AcceptEx: %s",
@@ -273,8 +272,7 @@ static void tls_accept_loop_callback(JanetFiber *fiber,
                 /* Try again */
                 if (jtls_win_start_acceptex(
                         lsock, &state->overlapped, state->accept_buf,
-                        &state->accept_socket, &state->flags,
-                        fiber) < 0) {
+                        &state->accept_socket, &state->flags, fiber) < 0) {
                     janet_cancel(
                         fiber, janet_cstringv("Failed to restart AcceptEx"));
                     janet_async_end(fiber);
@@ -488,10 +486,10 @@ static Janet jtls_listener_stream_write(int32_t argc, Janet *argv) {
 #endif
 
 static const JanetMethod tls_listener_methods[] = {
-    {"close", JTLS_STREAM_CLOSE_FN}, {"localname", cfun_localname},
-    {"read", JTLS_STREAM_READ_FN},   {"chunk", JTLS_STREAM_CHUNK_FN},
-    {"write", JTLS_STREAM_WRITE_FN}, {"accept", cfun_accept},
-    {"accept-loop", cfun_accept_loop},  {NULL, NULL}};
+    {"close", JTLS_STREAM_CLOSE_FN},   {"localname", cfun_localname},
+    {"read", JTLS_STREAM_READ_FN},     {"chunk", JTLS_STREAM_CHUNK_FN},
+    {"write", JTLS_STREAM_WRITE_FN},   {"accept", cfun_accept},
+    {"accept-loop", cfun_accept_loop}, {NULL, NULL}};
 
 /*============================================================================
  * LISTEN - Create a TCP/Unix listener for TLS server
@@ -676,12 +674,12 @@ typedef struct {
 
 static void tls_accept_finish_client(JanetFiber *fiber, TLSAcceptState *state,
                                      JanetStream *client_stream) {
-    TLSStream *tls = jtls_setup_stream(
-        client_stream, state->ctx, 1,
-        (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0, state->read_buffer_size,
-        state->write_buffer_size,
-        (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
-        (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
+    TLSStream *tls =
+        jtls_setup_stream(client_stream, state->ctx, 1,
+                          (state->flags & JTLS_ACCEPT_OWNS_CTX) != 0,
+                          state->read_buffer_size, state->write_buffer_size,
+                          (state->flags & JTLS_ACCEPT_TCP_NODELAY) != 0,
+                          (state->flags & JTLS_ACCEPT_TRACK_HANDSHAKE) != 0);
 
     jsec_clear_u8_flag(state->flags, JTLS_ACCEPT_OWNS_CTX);
     janet_schedule(fiber, janet_wrap_abstract(tls));
@@ -715,9 +713,9 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             }
 #ifdef JANET_WINDOWS
             if (state) {
-                jutils_win_cancel_overlapped(fiber, listener,
-                                             &state->overlapped, &state->flags,
-                                             JTLS_ACCEPT_IO_IN_FLIGHT);
+                jutils_win_cancel_overlapped(
+                    fiber, listener, &state->overlapped, &state->flags,
+                    JTLS_ACCEPT_IO_IN_FLIGHT);
                 if (state->accept_socket != INVALID_SOCKET) {
                     closesocket(state->accept_socket);
                     state->accept_socket = INVALID_SOCKET;
@@ -736,8 +734,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Windows: Start AcceptEx operation */
             if (jtls_win_start_acceptex((SOCKET)listener->handle,
                                         &state->overlapped, state->accept_buf,
-                                        &state->accept_socket,
-                                        &state->flags, fiber) < 0) {
+                                        &state->accept_socket, &state->flags,
+                                        fiber) < 0) {
                 char errbuf[JSEC_IO_ERROR_BUFSIZE];
                 snprintf(errbuf, sizeof(errbuf),
                          "[TLS:IO] Failed to start AcceptEx: %s",
@@ -804,7 +802,8 @@ static void tls_accept_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             } else {
                 int sock_err = jsec_socket_errno;
                 if (sock_err == JSEC_EINTR || sock_err == JSEC_ECONNABORTED) {
-                    /* Transient event - keep waiting for a valid connection */
+                    /* Transient event - keep waiting for a valid connection
+                     */
                     break;
                 }
                 if (sock_err != JSEC_EAGAIN && sock_err != JSEC_EWOULDBLOCK) {

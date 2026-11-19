@@ -72,9 +72,8 @@ static int dtls_address_identity_cmp(const DTLSAddress *a,
         if (sin6_a->sin6_port != sin6_b->sin6_port) {
             return sin6_a->sin6_port < sin6_b->sin6_port ? -1 : 1;
         }
-        int addr_order =
-            memcmp(&sin6_a->sin6_addr, &sin6_b->sin6_addr,
-                   sizeof(sin6_a->sin6_addr));
+        int addr_order = memcmp(&sin6_a->sin6_addr, &sin6_b->sin6_addr,
+                                sizeof(sin6_a->sin6_addr));
         if (addr_order != 0) {
             return addr_order < 0 ? -1 : 1;
         }
@@ -89,7 +88,9 @@ static int dtls_address_identity_cmp(const DTLSAddress *a,
         return a->addrlen < b->addrlen ? -1 : 1;
     }
     int raw_order = memcmp(&a->addr, &b->addr, a->addrlen);
-    return raw_order < 0 ? -1 : (raw_order > 0 ? 1 : 0);
+    if (raw_order < 0) return -1;
+    if (raw_order > 0) return 1;
+    return 0;
 }
 
 static int dtls_address_compare(void *a, void *b) {

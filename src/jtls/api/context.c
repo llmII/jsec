@@ -99,8 +99,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             int32_t resp_len = 0;
             if (!extract_ocsp_response(ocsp_resp, &resp_data, &resp_len)) {
                 SSL_CTX_free(ctx);
-                tls_panic_config(
-                    ":ocsp-response must be a string or buffer");
+                tls_panic_config(":ocsp-response must be a string or buffer");
             }
             if (!jtls_store_ocsp_response(ctx, resp_data, resp_len)) {
                 SSL_CTX_free(ctx);
@@ -173,9 +172,9 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                     int32_t resp_len = 0;
                     int has_ocsp_resp =
                         !janet_checktype(sub_ocsp_resp, JANET_NIL);
-                    if (has_ocsp_resp && !extract_ocsp_response(
-                                             sub_ocsp_resp, &resp_data,
-                                             &resp_len)) {
+                    if (has_ocsp_resp &&
+                        !extract_ocsp_response(sub_ocsp_resp, &resp_data,
+                                               &resp_len)) {
                         for (int j = 0; j < idx; j++) {
                             free(data->hostnames[j]);
                             SSL_CTX_free(data->contexts[j]);
@@ -203,13 +202,12 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                         free(data);
                         SSL_CTX_free(ctx);
                         tls_panic_config(
-                            "failed to create SNI context for %s: %s", hostname,
-                            jutils_cert_load_error());
+                            "failed to create SNI context for %s: %s",
+                            hostname, jutils_cert_load_error());
                     }
 
-                    if (has_ocsp_resp &&
-                        !jtls_store_ocsp_response(sub_ctx, resp_data,
-                                                  resp_len)) {
+                    if (has_ocsp_resp && !jtls_store_ocsp_response(
+                                             sub_ctx, resp_data, resp_len)) {
                         SSL_CTX_free(sub_ctx);
                         for (int j = 0; j < idx; j++) {
                             free(data->hostnames[j]);
@@ -227,8 +225,8 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                      * the status arg carries the initial context; a name
                      * without its own :ocsp-stapling setting inherits the
                      * status callback from the parent options */
-                    Janet sub_ocsp_stapling = janet_get(
-                        sub_sec, janet_ckeywordv("ocsp-stapling"));
+                    Janet sub_ocsp_stapling =
+                        janet_get(sub_sec, janet_ckeywordv("ocsp-stapling"));
                     if (janet_checktype(sub_ocsp_stapling, JANET_NIL) &&
                         parent_ocsp_stapling) {
                         SSL_CTX_set_tlsext_status_cb(sub_ctx,
@@ -274,8 +272,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         }
 
         /* Trust specific certificate (:trusted-cert) */
-        Janet trusted_cert =
-            janet_get(opts, janet_ckeywordv("trusted-cert"));
+        Janet trusted_cert = janet_get(opts, janet_ckeywordv("trusted-cert"));
         if (!janet_checktype(trusted_cert, JANET_NIL)) {
             if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
                 SSL_CTX_free(ctx);

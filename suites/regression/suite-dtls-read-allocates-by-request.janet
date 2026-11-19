@@ -109,112 +109,23 @@
 # 4096 - the truncation the 2026-10-10 ruling rejects. It pins the
 # deliverable: an 8000-byte datagram arrives intact on both paths.
 (use assay)
+(import assay/memory :as memory)
 (import jsec/tls :as tls)
 (import ../helpers :prefix "")
 
 # =============================================================================
-# Portable virtual-memory probe (every path reports kB)
+# Portable virtual-memory probe (reports kB via assay/memory)
 # =============================================================================
 
-(defn clean-output
-  "Normalize captured tool output for parsing: drop UTF-16 NUL bytes and
-  any UTF-16/UTF-8 BOM so redirected cmd/PowerShell text (often UTF-16LE)
-  parses like plain ASCII."
-  [text]
-  (var s (string/replace-all "\x00" "" text))
-  (set s (string/replace-all "\xFF\xFE" "" s))
-  (set s (string/replace-all "\xFE\xFF" "" s))
-  (string/replace-all "\xEF\xBB\xBF" "" s))
-
-(defn parse-int
-  "Value of the first run of decimal digits in text, or nil if none."
-  [text]
-  (def n (length text))
-  (var i 0)
-  (while (and (< i n) (not (<= 48 (text i) 57)))
-    (++ i))
-  (def start i)
-  (while (and (< i n) (<= 48 (text i) 57))
-    (++ i))
-  (when (> i start)
-    (scan-number (string/slice text start i))))
-
-(defn read-vm-kb
-  "Read a Vm* value in kB from /proc/self/status. nil if unavailable."
-  [key]
-  (when-let [status (try (slurp "/proc/self/status") ([_] nil))]
-    (var result nil)
-    (each line (string/split "\n" status)
-      (when (and (nil? result) (string/has-prefix? key line))
-        (def cleaned (string/replace-all "\t" " " line))
-        (def parts (filter |(not (empty? $)) (string/split " " cleaned)))
-        (when (>= (length parts) 2)
-          (set result (scan-number (parts 1))))))
-    result))
-
-(defn capture
-  "Run argv directly (no shell), return captured stdout text, or nil on
-  any failure. Mirrors the subprocess capture in
-  suites/performance/lib/metrics.janet."
-  [argv]
-  (try
-    (do
-      (def proc (os/spawn argv :p {:out :pipe}))
-      (def out (get proc :out))
-      (def output (:read out :all))
-      (:close out)
-      (os/proc-wait proc)
-      output)
-    ([_] nil)))
-
-(defn ps-vsz-kb
-  "Virtual size in kB via `ps -o vsz= -p <pid>`, run without a shell.
-  vsz is reported in kB on macOS, the BSDs, and Solaris/Illumos.
-  nil on any failure."
-  []
-  (when-let [output (capture ["ps" "-o" "vsz=" "-p" (string (os/getpid))])]
-    (scan-number (string/trim output))))
-
-(defn windows-vsize-kb
-  "Windows virtual size in kB. PowerShell Get-Process reports
-  VirtualMemorySize64 in BYTES; wmic reports VirtualSize in BYTES; both
-  are divided by 1024 here so the result is kB like the other probes.
-  nil when neither tool yields a parseable value."
-  []
-  (def pid (os/getpid))
-  (def ps-out (capture ["powershell" "-NoProfile" "-NonInteractive" "-Command"
-                        (string "Get-Process -Id " pid
-                                " | Select-Object -ExpandProperty "
-                                "VirtualMemorySize64")]))
-  (def from-powershell
-    (when ps-out
-      (when-let [bytes (scan-number (string/trim (clean-output ps-out)))]
-        (div bytes 1024))))
-  (or from-powershell
-      (when-let [wmic-out
-                 (capture ["wmic" "process" "where" (string "processid=" pid)
-                           "get" "VirtualSize" "/value"])]
-        (def cleaned (clean-output wmic-out))
-        (when-let [idx (string/find "VirtualSize=" cleaned)]
-          (when-let [bytes (parse-int (string/slice cleaned
-                                                   (+ idx (length "VirtualSize="))))]
-            (div bytes 1024))))))
-
 (defn get-vmsize-kb
-  "Best-effort process virtual size in kB, or nil when unavailable.
-  Never throws."
+  "Best-effort process virtual size in kB via assay/memory, or nil when
+  unavailable. Never throws and never spawns a subprocess inside the
+  measurement window."
   []
   (try
-    (do
-      (def hostos (os/which))
-      (cond
-        (= hostos :linux) (read-vm-kb "VmSize:")
-        (or (= hostos :windows) (= hostos :mingw)) (windows-vsize-kb)
-        (or (= hostos :macos) (= hostos :freebsd) (= hostos :openbsd)
-            (= hostos :netbsd) (= hostos :dragonfly) (= hostos :bsd)
-            (= hostos :illumos) (= hostos :posix))
-        (ps-vsz-kb)
-        nil))
+    (when-let [info (memory/info)
+               vsize (get info :vsize)]
+      (div vsize 1024))
     ([_] nil)))
 
 (defn skip-no-memory-probe?
@@ -231,10 +142,15 @@
 # is a fresh mapping and the virtual-size delta is deterministic. A 1 MiB
 # request is absorbed into already-mapped heap and the delta flakes to 0
 # (see the header).
+#
+# Ceiling: 12288 kB (12 MiB) is strictly below even a 1x request-size
+# allocation (16384 kB) and well below the 2x defect (32768 kB per call,
+# 262144 kB across 8 loop rounds), while tolerating a single 8192 kB
+# macOS libmalloc virtual magazine step under parallel worker execution.
 (def request-bytes 16777216)
-(def max-growth-kb 1024)
+(def max-growth-kb 12288)
 (def payload (string/repeat "A" 100))
-(def loop-rounds 4)
+(def loop-rounds 8)
 # 8000-byte datagram for the non-truncation guard: larger than the
 # 4096-byte JSEC_READ_CHUNK a truncating fix shape caps at.
 (def big-payload (string/repeat "B" 8000))
@@ -384,7 +300,7 @@
                 (def addr1 (:recv-from server 1024 (buffer/new 1024)))
                 (when addr1 (:send-to server addr1 "pong"))
                 (ev/give primed true)
-                (for i 0 loop-rounds
+                (for i 0 (+ loop-rounds 1)
                   (def addr (:recv-from server 1024 (buffer/new 1024)))
                   (when addr (:send-to server addr payload)))
                 (ev/give rounds-done true))
@@ -415,6 +331,13 @@
           # be visible, and the allocator hands large regions straight
           # back to the OS on free, so released buffers would hide the
           # per-iteration total.
+          # Warm-up round with request-bytes into a fresh buffer, then discard
+          # and GC so any one-time allocator magazine reservation is settled
+          # before sampling vm1.
+          (:write conn payload)
+          (def warmup (:read conn request-bytes (buffer/new 0)))
+          (assert (and (buffer? warmup) (= 100 (length warmup)))
+                  "warm-up read should deliver 100 bytes")
           (gccollect)
           (def vm1 (get-vmsize-kb))
           (def bufs @[])

@@ -93,8 +93,8 @@ void jutils_cert_load_errorf(const char *fmt, ...);
  * SSL_ERROR_SYSCALL ret-0 surface of OpenSSL 1.1.1 and LibreSSL, and the
  * SSL_ERROR_SSL surface of OpenSSL 3.x.
  */
-#define JSEC_UNEXPECTED_EOF_ERROR                                              \
-    "unexpected EOF without close_notify: the peer closed the connection "     \
+#define JSEC_UNEXPECTED_EOF_ERROR                                            \
+    "unexpected EOF without close_notify: the peer closed the connection "   \
     "without completing the TLS shutdown"
 
 /*
@@ -116,8 +116,9 @@ int jutils_is_unexpected_eof(void);
  * present, or 0 when absent or unqueryable. */
 int jutils_pending_socket_error(JanetStream *stream);
 
-/* Format "[<category>] socket error: <reason>" (or "[<category>] socket error"
- * when SO_ERROR is zero) into buf. Returns non-zero if SO_ERROR was non-zero. */
+/* Format "[<category>] socket error: <reason>" (or "[<category>] socket
+ * error" when SO_ERROR is zero) into buf. Returns non-zero if SO_ERROR was
+ * non-zero. */
 int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
                                JanetStream *stream);
 

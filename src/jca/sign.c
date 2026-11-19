@@ -52,7 +52,7 @@ static int add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
         }
         const char *entry = janet_to_string_or_keyword(san_arr->data[i]);
         if (!entry) {
-            ca_panic_param(":san entry must be a string or keyword");
+            return -1;
         }
         janet_buffer_push_cstring(san_buf, entry);
     }
@@ -323,7 +323,7 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
             ca_panic_ssl("failed to set notBefore");
         }
         if (!X509_gmtime_adj(X509_getm_notAfter(cert),
-                            (long)days_valid * 24 * 60 * 60)) {
+                             (long)days_valid * 24 * 60 * 60)) {
             X509_free(cert);
             EVP_PKEY_free(csr_key);
             X509_REQ_free(csr);
@@ -408,10 +408,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     } else {
         /* Default for end-entity cert: keyEncipherment is meaningless for
          * EC keys (RFC 5480) */
-        const char *default_ku =
-            (EVP_PKEY_base_id(csr_key) == EVP_PKEY_EC)
-                ? "digitalSignature"
-                : "digitalSignature,keyEncipherment";
+        const char *default_ku = (EVP_PKEY_base_id(csr_key) == EVP_PKEY_EC)
+                                     ? "digitalSignature"
+                                     : "digitalSignature,keyEncipherment";
         if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
             X509_free(cert);
             EVP_PKEY_free(csr_key);
@@ -435,10 +434,14 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     /* Add SAN if specified */
     if (san_arr && san_arr->count > 0) {
         strip_extension(cert, NID_subject_alt_name);
-        if (!add_san_entries(cert, ca->cert, san_arr)) {
+        int san_rc = add_san_entries(cert, ca->cert, san_arr);
+        if (san_rc <= 0) {
             X509_free(cert);
             EVP_PKEY_free(csr_key);
             X509_REQ_free(csr);
+            if (san_rc < 0) {
+                ca_panic_param(":san entry must be a string or keyword");
+            }
             ca_panic_ssl("failed to add subjectAltName extension");
         }
     }
@@ -627,7 +630,7 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
             ca_panic_ssl("failed to set notBefore");
         }
         if (!X509_gmtime_adj(X509_getm_notAfter(cert),
-                            (long)days_valid * 24 * 60 * 60)) {
+                             (long)days_valid * 24 * 60 * 60)) {
             X509_free(cert);
             EVP_PKEY_free(key);
             ca_panic_ssl("failed to set notAfter");
@@ -674,7 +677,8 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     }
 
     /* Add extensions */
-    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE")) {
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                          "CA:FALSE")) {
         X509_free(cert);
         EVP_PKEY_free(key);
         ca_panic_ssl("failed to add basicConstraints extension");
@@ -700,10 +704,9 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
             ca_panic_ssl("failed to add keyUsage extension");
         }
     } else {
-        const char *default_ku =
-            (EVP_PKEY_base_id(key) == EVP_PKEY_EC)
-                ? "digitalSignature"
-                : "digitalSignature,keyEncipherment";
+        const char *default_ku = (EVP_PKEY_base_id(key) == EVP_PKEY_EC)
+                                     ? "digitalSignature"
+                                     : "digitalSignature,keyEncipherment";
         if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
             X509_free(cert);
             EVP_PKEY_free(key);
@@ -723,9 +726,13 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
 
     /* SAN - default to the CN when :san is not supplied */
     if (san_arr && san_arr->count > 0) {
-        if (!add_san_entries(cert, ca->cert, san_arr)) {
+        int san_rc = add_san_entries(cert, ca->cert, san_arr);
+        if (san_rc <= 0) {
             X509_free(cert);
             EVP_PKEY_free(key);
+            if (san_rc < 0) {
+                ca_panic_param(":san entry must be a string or keyword");
+            }
             ca_panic_ssl("failed to add subjectAltName extension");
         }
     } else if (common_name) {

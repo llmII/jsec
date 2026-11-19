@@ -26,7 +26,8 @@ static const JanetReg client_cfuns[] = {
      "  :sni - Server name for SNI (defaults to host)\n"
      "  :session - Session data for resumption (byte string or buffer)\n"
      "  :trusted-cert - Trust specific certificate (for self-signed)\n"
-     "  :mtu - Link MTU in bytes (256-65535; preserves kernel PMTU when unset)"},
+     "  :mtu - Link MTU in bytes (256-65535; preserves kernel PMTU when "
+     "unset)"},
     {"upgrade", cfun_dtls_upgrade,
      "(dtls/upgrade transport &opt opts)\n\n"
      "Upgrade an existing connected UDP socket to DTLS.\n"
@@ -41,7 +42,8 @@ static const JanetReg client_cfuns[] = {
      "  :session - Session data for resumption (byte string or buffer)\n"
      "  :server - Act as server (default: client)\n"
      "  :trusted-cert - Trust specific certificate\n"
-     "  :mtu - Link MTU in bytes (256-65535; preserves kernel PMTU when unset)"},
+     "  :mtu - Link MTU in bytes (256-65535; preserves kernel PMTU when "
+     "unset)"},
     {"read", cfun_dtls_read,
      "(dtls/read client n &opt buf timeout)\n\n"
      "Read up to n bytes from DTLS client.\n"

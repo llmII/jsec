@@ -248,8 +248,8 @@ static int server_cookie_secret_ready = 0;
 
 static int server_cookie_init_secret(void) {
     if (!server_cookie_secret_ready) {
-        if (RAND_bytes(server_cookie_secret,
-                       sizeof(server_cookie_secret)) != 1) {
+        if (RAND_bytes(server_cookie_secret, sizeof(server_cookie_secret)) !=
+            1) {
             return 0;
         }
         server_cookie_secret_ready = 1;
@@ -561,12 +561,14 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         if (!janet_checktype(t, JANET_NIL)) {
             if (!janet_checktype(t, JANET_NUMBER)) {
                 dtls_panic_param("invalid :session-timeout %v: expected a "
-                                 "finite non-negative number of seconds", t);
+                                 "finite non-negative number of seconds",
+                                 t);
             }
             double timeout = janet_unwrap_number(t);
             if (!isfinite(timeout) || timeout < 0.0) {
                 dtls_panic_param("invalid :session-timeout %v: expected a "
-                                 "finite non-negative number of seconds", t);
+                                 "finite non-negative number of seconds",
+                                 t);
             }
             server->session_timeout = timeout;
         }
@@ -574,13 +576,15 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         if (!janet_checktype(m, JANET_NIL)) {
             if (!janet_checktype(m, JANET_NUMBER)) {
                 dtls_panic_param("invalid :max-sessions %v: expected a "
-                                 "positive integer", m);
+                                 "positive integer",
+                                 m);
             }
             double limit = janet_unwrap_number(m);
             if (!isfinite(limit) || limit < 1.0 || limit > floor(limit) ||
                 limit > (double)INT_MAX) {
                 dtls_panic_param("invalid :max-sessions %v: expected a "
-                                 "positive integer", m);
+                                 "positive integer",
+                                 m);
             }
             server->max_sessions = (int)limit;
         }
@@ -616,7 +620,8 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
                                 1)) { /* is_dtls, is_server */
         SSL_CTX_free(server->ctx);
         server->ctx = NULL;
-        jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to apply security options: %s",
+        jsec_panic(JSEC_MOD_DTLS, "SSL",
+                   "failed to apply security options: %s",
                    jutils_cert_load_error());
     }
 
@@ -697,7 +702,6 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
  * Async State for recv-from
  * =============================================================================
  */
-
 
 
 /*
@@ -784,9 +788,9 @@ static void server_send_hello_verify(DTLSServer *server,
     out[27] = (uint8_t)cookie_len;
     memcpy(out + 28, cookie, cookie_len);
 
-    sent = sendto((jsec_socket_t)server->transport->handle,
-                  (const char *)out, 28 + cookie_len, 0,
-                  (struct sockaddr *)&peer->addr, peer->addrlen);
+    sent = sendto((jsec_socket_t)server->transport->handle, (const char *)out,
+                  28 + cookie_len, 0, (struct sockaddr *)&peer->addr,
+                  peer->addrlen);
     (void)sent;
     (void)datalen;
 }
@@ -819,14 +823,15 @@ static int server_synth_client_hello(const uint8_t *data, int datalen,
     unsigned int rec_len, msg_len, frag_len;
     int cookie_off, cookie_len, drop;
 
-    if (!server_client_hello_cookie(data, datalen, &cookie_off, &cookie_len)) {
+    if (!server_client_hello_cookie(data, datalen, &cookie_off,
+                                    &cookie_len)) {
         return 0;
     }
     rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
     msg_len = ((unsigned int)data[14] << 16) | ((unsigned int)data[15] << 8) |
               (unsigned int)data[16];
-    frag_len = ((unsigned int)data[22] << 16) | ((unsigned int)data[23] << 8) |
-               (unsigned int)data[24];
+    frag_len = ((unsigned int)data[22] << 16) |
+               ((unsigned int)data[23] << 8) | (unsigned int)data[24];
     if ((int)rec_len + 13 != datalen || msg_len != frag_len ||
         frag_len != rec_len - 12) {
         return 0;
@@ -852,8 +857,7 @@ static int server_synth_client_hello(const uint8_t *data, int datalen,
 
 static void server_drain_wbio(DTLSSession *session) {
     uint8_t sink[512];
-    while (BIO_read(session->wbio, sink, (int)sizeof(sink)) > 0) {
-    }
+    while (BIO_read(session->wbio, sink, (int)sizeof(sink)) > 0) {}
 }
 
 static int dtls_server_admit_resend(DTLSSession *session, const uint8_t *data,
@@ -951,7 +955,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
                               int32_t nbytes) {
     /* Look up or create session for this peer */
     int bucket = 0;
-    DTLSSession *session = dtls_server_get_session_bucket(server, peer_addr, &bucket);
+    DTLSSession *session =
+        dtls_server_get_session_bucket(server, peer_addr, &bucket);
 
     int fresh = 0;
 
@@ -961,7 +966,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         if (!dtls_server_cookie_gate(server, data, datalen, peer_addr)) {
             return janet_wrap_nil();
         }
-        session = dtls_server_create_session_in_bucket(server, peer_addr, bucket);
+        session =
+            dtls_server_create_session_in_bucket(server, peer_addr, bucket);
         if (!session) {
             ERR_clear_error();
             return janet_wrap_nil(); /* Out of memory or other error */
@@ -1054,7 +1060,8 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
             /* Discard the unconsumed remainder of this record */
             while (SSL_pending(session->ssl) > 0) {
                 uint8_t discard[512];
-                int drop = SSL_read(session->ssl, discard, (int)sizeof(discard));
+                int drop =
+                    SSL_read(session->ssl, discard, (int)sizeof(discard));
                 if (drop <= 0) {
                     break;
                 }
@@ -1289,10 +1296,9 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                    sizeof(peer_addr.addr));
             peer_addr.addrlen = state->peer_addrlen;
 
-            Janet result = process_datagram(server, state->recv_buf,
-                                            (int)bytes_transferred,
-                                            &peer_addr, state->buffer,
-                                            state->nbytes);
+            Janet result = process_datagram(
+                server, state->recv_buf, (int)bytes_transferred, &peer_addr,
+                state->buffer, state->nbytes);
 
             if (janet_checktype(result, JANET_ABSTRACT)) {
                 /* Got application data - return to caller */
@@ -1350,9 +1356,9 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                 dtls_server_cleanup_expired(server, get_current_time());
 
                 /* Process datagram - may be handshake or app data */
-                Janet result = process_datagram(server, recv_buf, (int)n,
-                                                &peer_addr, state->buffer,
-                                                state->nbytes);
+                Janet result =
+                    process_datagram(server, recv_buf, (int)n, &peer_addr,
+                                     state->buffer, state->nbytes);
 
                 if (janet_checktype(result, JANET_ABSTRACT)) {
                     /* Got application data - return to caller */
@@ -1398,7 +1404,8 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
 
     double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
 
-    /* Try non-blocking receive directly before suspending to the event loop */
+    /* Try non-blocking receive directly before suspending to the event loop
+     */
 #ifndef JANET_WINDOWS
     while (1) {
         uint8_t recv_buf[65536];
@@ -1406,10 +1413,10 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
         memset(&peer_addr, 0, sizeof(peer_addr));
         peer_addr.addrlen = sizeof(peer_addr.addr);
 
-        ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
-                             recv_buf, sizeof(recv_buf), MSG_DONTWAIT,
-                             (struct sockaddr *)&peer_addr.addr,
-                             &peer_addr.addrlen);
+        ssize_t n =
+            recvfrom((jsec_socket_t)server->transport->handle, recv_buf,
+                     sizeof(recv_buf), MSG_DONTWAIT,
+                     (struct sockaddr *)&peer_addr.addr, &peer_addr.addrlen);
         if (n < 0) {
             int sock_err = jsec_socket_errno;
             if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
@@ -1420,8 +1427,8 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
 
         dtls_server_cleanup_expired(server, get_current_time());
 
-        Janet result = process_datagram(server, recv_buf, (int)n,
-                                        &peer_addr, buf, nbytes);
+        Janet result = process_datagram(server, recv_buf, (int)n, &peer_addr,
+                                        buf, nbytes);
         if (janet_checktype(result, JANET_ABSTRACT)) {
             return result;
         }

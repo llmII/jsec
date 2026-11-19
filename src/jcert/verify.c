@@ -658,13 +658,15 @@ Janet cfun_cert_build_chain(int32_t argc, Janet *argv) {
         char subject[256];
         X509_NAME_oneline(X509_get_subject_name(cert), subject,
                           sizeof(subject));
-        const char *reason =
-            (depth >= max_depth)
-                ? "depth bound exhausted before a trusted root"
-                : (X509_check_issued(current, current) == X509_V_OK
-                       ? "chain ends at a self-signed certificate outside "
-                         "the trust set"
-                       : "no issuer found for the last certificate");
+        const char *reason;
+        if (depth >= max_depth) {
+            reason = "depth bound exhausted before a trusted root";
+        } else if (X509_check_issued(current, current) == X509_V_OK) {
+            reason = "chain ends at a self-signed certificate outside "
+                     "the trust set";
+        } else {
+            reason = "no issuer found for the last certificate";
+        }
         sk_X509_pop_free(intermediates, X509_free);
         sk_X509_pop_free(trusted, X509_free);
         X509_free(cert);

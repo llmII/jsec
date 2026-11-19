@@ -93,7 +93,7 @@ static Janet cfun_bio_read(int32_t argc, Janet *argv) {
                 return janet_stringv(chunk, n);
             buf = janet_buffer(n);
         }
-        janet_buffer_push_bytes(buf, chunk, (size_t)n);
+        janet_buffer_push_bytes(buf, chunk, n);
         remaining -= n;
     }
 
@@ -157,7 +157,8 @@ static const JanetReg cfuns[] = {
      "Read up to len bytes from BIO in bounded chunks. A large len never "
      "allocates a request-sized buffer.\n"
      "Returns string, or nil if no data is available. A zero-length request "
-     "returns the empty buffer; a failed read raises with its OpenSSL cause."},
+     "returns the empty buffer; a failed read raises with its OpenSSL "
+     "cause."},
 
     {"close", cfun_bio_close,
      "(jsec/bio/close bio)\n\n"

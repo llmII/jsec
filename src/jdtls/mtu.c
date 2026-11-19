@@ -75,8 +75,8 @@ long jdtls_parse_mtu_opt(Janet opts) {
 
     if (!janet_checktype(mtu_val, JANET_NUMBER)) {
         dtls_panic_param(
-            "invalid :mtu %v: expected an integer between %d and %d",
-            mtu_val, JDTLS_MIN_EXPLICIT_MTU, JDTLS_MAX_LINK_MTU);
+            "invalid :mtu %v: expected an integer between %d and %d", mtu_val,
+            JDTLS_MIN_EXPLICIT_MTU, JDTLS_MAX_LINK_MTU);
     }
 
     double d = janet_unwrap_number(mtu_val);
@@ -84,8 +84,8 @@ long jdtls_parse_mtu_opt(Janet opts) {
         d < (double)JDTLS_MIN_EXPLICIT_MTU ||
         d > (double)JDTLS_MAX_LINK_MTU) {
         dtls_panic_param(
-            "invalid :mtu %v: expected an integer between %d and %d",
-            mtu_val, JDTLS_MIN_EXPLICIT_MTU, JDTLS_MAX_LINK_MTU);
+            "invalid :mtu %v: expected an integer between %d and %d", mtu_val,
+            JDTLS_MIN_EXPLICIT_MTU, JDTLS_MAX_LINK_MTU);
     }
 
     return (long)d;
@@ -170,18 +170,19 @@ static int sockaddr_ip_equal(const struct sockaddr *a,
         struct sockaddr_in6 sb6;
         memcpy(&sa6, a, sizeof(sa6));
         memcpy(&sb6, b, sizeof(sb6));
-        if (memcmp(&sa6.sin6_addr, &sb6.sin6_addr,
-                   sizeof(struct in6_addr)) != 0) {
+        if (memcmp(&sa6.sin6_addr, &sb6.sin6_addr, sizeof(struct in6_addr)) !=
+            0) {
             return 0;
         }
-        if (IN6_IS_ADDR_LINKLOCAL(&sa6.sin6_addr) &&
-            sa6.sin6_scope_id != 0 && sb6.sin6_scope_id != 0) {
+        if (IN6_IS_ADDR_LINKLOCAL(&sa6.sin6_addr) && sa6.sin6_scope_id != 0 &&
+            sb6.sin6_scope_id != 0) {
             return sa6.sin6_scope_id == sb6.sin6_scope_id;
         }
         return 1;
     }
 
-    /* Handle IPv4-mapped IPv6 socket bound/connected addresses vs AF_INET ifa */
+    /* Handle IPv4-mapped IPv6 socket bound/connected addresses vs AF_INET ifa
+     */
     if (a->sa_family == AF_INET6 && b->sa_family == AF_INET) {
         struct sockaddr_in6 sa6;
         struct sockaddr_in sb;
@@ -261,8 +262,9 @@ static long resolve_fd_link_mtu_posix(jsec_socket_t fd) {
 
     const struct sockaddr *local_sa = (const struct sockaddr *)&local;
     int is_wildcard = sockaddr_is_wildcard(local_sa);
-    int allow_v4_on_v6 =
-        (is_wildcard && family == AF_INET6) ? socket_allows_ipv4_on_v6(fd) : 0;
+    int allow_v4_on_v6 = (is_wildcard && family == AF_INET6)
+                             ? socket_allows_ipv4_on_v6(fd)
+                             : 0;
 
     long best_mtu = 0;
 
@@ -322,8 +324,7 @@ static void apply_link_mtu(SSL *ssl, BIO *bio, long link_mtu) {
 
     long overhead = JDTLS_DEFAULT_MTU_OVERHEAD;
     if (bio) {
-        long bio_oh =
-            BIO_ctrl(bio, BIO_CTRL_DGRAM_GET_MTU_OVERHEAD, 0, NULL);
+        long bio_oh = BIO_ctrl(bio, BIO_CTRL_DGRAM_GET_MTU_OVERHEAD, 0, NULL);
         if (bio_oh > 0 && bio_oh < link_mtu) {
             overhead = bio_oh;
         }

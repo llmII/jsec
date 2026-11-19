@@ -35,7 +35,8 @@ Janet cfun_generate_key(int32_t argc, Janet *argv) {
             if (bits_val <= 0 || bits_num > (double)bits_val ||
                 (bits_val & 7) != 0) {
                 crypto_panic_param("bits must be a positive multiple of 8, "
-                                   "got %v", argv[1]);
+                                   "got %v",
+                                   argv[1]);
             }
             bits = bits_val;
         }
