@@ -176,6 +176,30 @@ typedef struct ServerCTXCache ServerCTXCache;
  * 2. Updated as operation progresses
  * 3. Reset when operation completes
  */
+/* TLSState flags, op (bits 2-4), and io_state (bits 5-7) packed into uint8_t
+ * flags (HAS_TIMEOUT=bit0, IO_IN_FLIGHT=bit1, op=3b, io_state=3b). */
+#define JTLS_STATE_HAS_TIMEOUT (1u << 0)
+#define JTLS_STATE_IO_IN_FLIGHT (1u << 1)
+#define JTLS_STATE_OP_SHIFT 2u
+#define JTLS_STATE_OP_MASK (0x07u << JTLS_STATE_OP_SHIFT)
+#define JTLS_STATE_IO_SHIFT 5u
+#define JTLS_STATE_IO_MASK (0x07u << JTLS_STATE_IO_SHIFT)
+
+#define JTLS_STATE_OP_BITS(v)                                                \
+    ((uint8_t)(((unsigned)(v) & 0x07u) << JTLS_STATE_OP_SHIFT))
+#define JTLS_STATE_OP(s)                                                     \
+    ((TLSOpType)(((s)->flags & JTLS_STATE_OP_MASK) >> JTLS_STATE_OP_SHIFT))
+#define JTLS_STATE_SET_OP(s, v)                                              \
+    ((s)->flags =                                                            \
+         (uint8_t)(((s)->flags & (0xFFu ^ JTLS_STATE_OP_MASK)) |             \
+                   (((unsigned)(v) & 0x07u) << JTLS_STATE_OP_SHIFT)))
+#define JTLS_STATE_IO(s)                                                     \
+    ((TLSIOState)(((s)->flags & JTLS_STATE_IO_MASK) >> JTLS_STATE_IO_SHIFT))
+#define JTLS_STATE_SET_IO(s, v)                                              \
+    ((s)->flags =                                                            \
+         (uint8_t)(((s)->flags & (0xFFu ^ JTLS_STATE_IO_MASK)) |             \
+                   (((unsigned)(v) & 0x07u) << JTLS_STATE_IO_SHIFT)))
+
 struct TLSState {
 #ifdef JANET_WINDOWS
     /* Windows IOCP requires overlapped I/O to trigger completions.
@@ -191,7 +215,6 @@ struct TLSState {
     WSABUF wsa_buf;   /* Zero-byte buffer descriptor */
     DWORD wsa_flags;      /* Flags for WSARecv */
     void *win_write_wait; /* Active WSAPoll wait handle for WANT_WRITE */
-    uint8_t io_in_flight; /* 1 while WSARecv overlapped op is queued */
 #endif
     TLSStream *tls;          /* The TLS stream */
     JanetBuffer *user_buf;   /* Buffer for read operations */
@@ -203,17 +226,13 @@ struct TLSState {
     double timeout;          /* Operation deadline in seconds; armed by
                               * jtls_schedule_async only when the fiber
                               * actually suspends */
-    TLSOpType op;            /* Operation type */
-    TLSIOState io_state;     /* Current I/O state */
     int32_t write_len;       /* Total bytes to write */
     int32_t write_offset;    /* Bytes already written */
     int32_t bytes_requested; /* Bytes requested for read (-1 for any) */
     int32_t buf_start;       /* user_buf->count when read op began; n is
                               * relative to this, matching ev/read append
                               * semantics (never treat n as buffer total) */
-    uint8_t has_timeout;     /* 1 if timeout is a finite deadline to arm at
-                              * first suspension, 0 otherwise; narrow type,
-                              * and 0 from memset safely means "no deadline" */
+    uint8_t flags;           /* Packed JTLS_STATE_* flags, op, and io_state */
     char error_msg[256];     /* Error message buffer */
 };
 

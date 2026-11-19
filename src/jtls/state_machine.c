@@ -164,14 +164,14 @@ static inline void check_record_handshake_time(TLSStream *tls) {
  * state->error_msg and returns TLS_IO_ERROR.
  */
 static TLSIOState handle_eof_close(TLSState *state, const char *op_name) {
-    if (state->op == TLS_OP_WRITE && state->write_offset < state->write_len) {
+    if (JTLS_STATE_OP(state) == TLS_OP_WRITE && state->write_offset < state->write_len) {
         snprintf(state->error_msg, sizeof(state->error_msg),
                  "%s error: connection closed with %d of %d bytes unwritten",
                  op_name, state->write_len - state->write_offset,
                  state->write_len);
         return TLS_IO_ERROR;
     }
-    if (state->op == TLS_OP_HANDSHAKE &&
+    if (JTLS_STATE_OP(state) == TLS_OP_HANDSHAKE &&
         state->tls->conn_state != TLS_CONN_READY) {
         snprintf(state->error_msg, sizeof(state->error_msg),
                  "%s error: connection closed before the handshake completed",
@@ -296,7 +296,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
 
     ERR_clear_error();
 
-    switch (state->op) {
+    switch (JTLS_STATE_OP(state)) {
         /*====================================================================
          * HANDSHAKE OPERATION
          *====================================================================
@@ -609,7 +609,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
                  * For TLS_OP_CLOSE: don't wait - just complete.
                  * For TLS_OP_SHUTDOWN: wait for peer's close_notify. */
                 tls->conn_state = TLS_CONN_SHUTDOWN_SENT;
-                if (state->op == TLS_OP_CLOSE) {
+                if (JTLS_STATE_OP(state) == TLS_OP_CLOSE) {
                     tls->conn_state = TLS_CONN_CLOSED;
                     return TLS_IO_COMPLETE;
                 }
@@ -620,7 +620,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
                 if (ssl_err == SSL_ERROR_WANT_READ) {
                     /* Need to read for shutdown protocol.
                      * For CLOSE, try once more but don't block. */
-                    if (state->op == TLS_OP_CLOSE) {
+                    if (JTLS_STATE_OP(state) == TLS_OP_CLOSE) {
                         tls->conn_state = TLS_CONN_CLOSED;
                         return TLS_IO_COMPLETE;
                     }
@@ -635,7 +635,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
                     int sock_err = jsec_socket_errno;
                     if (sock_err == JSEC_EAGAIN ||
                         sock_err == JSEC_EWOULDBLOCK) {
-                        if (state->op == TLS_OP_CLOSE) {
+                        if (JTLS_STATE_OP(state) == TLS_OP_CLOSE) {
                             tls->conn_state = TLS_CONN_CLOSED;
                             return TLS_IO_COMPLETE;
                         }
@@ -654,7 +654,7 @@ TLSIOState jtls_process_operation(TLSState *state) {
 
         default:
             snprintf(state->error_msg, sizeof(state->error_msg),
-                     "Unknown operation type: %d", state->op);
+                     "Unknown operation type: %d", JTLS_STATE_OP(state));
             return TLS_IO_ERROR;
     }
 }
@@ -698,7 +698,7 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
 #ifdef JANET_WINDOWS
         jutils_win_poll_cancel(&state->win_write_wait);
         jutils_win_cancel_overlapped(NULL, tls->transport, &state->overlapped,
-                                     &state->io_in_flight);
+                                     &state->flags, JTLS_STATE_IO_IN_FLIGHT);
 #endif
         janet_async_end(fiber);
         janet_async_start_fiber(fiber, tls->transport, mode,
@@ -725,7 +725,8 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          * above must not re-arm - the fiber is already suspended with its
          * original deadline still live.
          */
-        if (state->has_timeout && !is_infinite_timeout(state->timeout)) {
+        if ((state->flags & JTLS_STATE_HAS_TIMEOUT) &&
+            !is_infinite_timeout(state->timeout)) {
             janet_addtimeout(state->timeout);
         }
         TLSState *async_state = janet_malloc(sizeof(TLSState));
@@ -734,7 +735,7 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
         }
         *async_state = *state;
 #ifdef JANET_WINDOWS
-        async_state->io_in_flight = 0;
+        jsec_clear_u8_flag(async_state->flags, JTLS_STATE_IO_IN_FLIGHT);
         async_state->win_write_wait = NULL;
 #endif
         janet_async_start(tls->transport, mode, jtls_async_callback,
@@ -779,9 +780,9 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
     TLSStream *tls = state->tls;
 
     /* Track this fiber as pending for its operation type */
-    if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
+    if (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK) {
         tls->pending_read = fiber;
-    } else if (state->op == TLS_OP_WRITE) {
+    } else if (JTLS_STATE_OP(state) == TLS_OP_WRITE) {
         tls->pending_write = fiber;
     }
 
@@ -822,16 +823,16 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * Operation completed successfully.
              * Clear pending tracking and schedule result.
              */
-            if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
+            if (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK) {
                 tls->pending_read = NULL;
-            } else if (state->op == TLS_OP_WRITE) {
+            } else if (JTLS_STATE_OP(state) == TLS_OP_WRITE) {
                 tls->pending_write = NULL;
             }
 
             if (is_async) {
                 Janet result;
 
-                switch (state->op) {
+                switch (JTLS_STATE_OP(state)) {
                     case TLS_OP_HANDSHAKE:
                         result = janet_wrap_abstract(tls);
                         break;
@@ -878,7 +879,7 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * schedule runs. janet_async_end has detached the fiber, so
              * the CLOSE now reaches only fibers still legitimately bound
              * to the transport. */
-            if (state->op == TLS_OP_CLOSE) {
+            if (JTLS_STATE_OP(state) == TLS_OP_CLOSE) {
                 if (tls->transport &&
                     !(tls->transport->flags & JANET_STREAM_CLOSED)) {
 #ifdef JANET_WINDOWS
@@ -917,8 +918,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * The read operation will handle receiving the protocol messages,
              * and when it completes, our SSL_write will succeed.
              */
-            state->io_state = io_state; /* Store for Windows IOCP probe */
-            if (state->op == TLS_OP_WRITE && tls->pending_read != NULL) {
+            JTLS_STATE_SET_IO(state, io_state); /* Store for Windows IOCP probe */
+            if (JTLS_STATE_OP(state) == TLS_OP_WRITE && tls->pending_read != NULL) {
                 /* Let the read fiber handle reading, we stay on write */
                 jtls_schedule_async(fiber, tls, state,
                                     JANET_ASYNC_LISTEN_WRITE, is_async);
@@ -938,8 +939,8 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
              * events. The write operation will handle sending the protocol
              * messages, and when it completes, our SSL_read will succeed.
              */
-            state->io_state = io_state; /* Store for Windows IOCP probe */
-            if ((state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) &&
+            JTLS_STATE_SET_IO(state, io_state); /* Store for Windows IOCP probe */
+            if ((JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK) &&
                 tls->pending_write != NULL) {
                 /* Let the write fiber handle writing, we stay on read */
                 jtls_schedule_async(fiber, tls, state,
@@ -952,16 +953,16 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
 
         case TLS_IO_WANT_BOTH:
             /* Need to wait for either (rare case) */
-            state->io_state = io_state; /* Store for Windows IOCP probe */
+            JTLS_STATE_SET_IO(state, io_state); /* Store for Windows IOCP probe */
             jtls_schedule_async(fiber, tls, state, JANET_ASYNC_LISTEN_BOTH,
                                 is_async);
             return 0;
 
         case TLS_IO_ERROR:
             /* Operation failed - clear pending tracking */
-            if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
+            if (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK) {
                 tls->pending_read = NULL;
-            } else if (state->op == TLS_OP_WRITE) {
+            } else if (JTLS_STATE_OP(state) == TLS_OP_WRITE) {
                 tls->pending_write = NULL;
             }
 
@@ -1021,10 +1022,10 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
  */
 void clear_pending_for(TLSState *state) {
     TLSStream *tls = state->tls;
-    if (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK) {
+    if (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK) {
         tls->pending_read = NULL;
     }
-    if (state->op == TLS_OP_WRITE) {
+    if (JTLS_STATE_OP(state) == TLS_OP_WRITE) {
         tls->pending_write = NULL;
     }
 }
@@ -1094,7 +1095,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (state->user_buf) {
                     janet_mark(janet_wrap_buffer(state->user_buf));
                 }
-                if (state->op == TLS_OP_WRITE) {
+                if (JTLS_STATE_OP(state) == TLS_OP_WRITE) {
                     /* Keep the write source alive while the write is
                      * parked. Guarded on the operation because
                      * write_state also carries close/shutdown/handshake
@@ -1123,7 +1124,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     janet_async_end(fiber);
                     return;
                 }
-                if (state->io_state == TLS_IO_WANT_READ) {
+                if (JTLS_STATE_IO(state) == TLS_IO_WANT_READ) {
                     memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
                     state->wsa_buf.len = 0;
                     state->wsa_buf.buf = NULL;
@@ -1140,9 +1141,9 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                         return;
                     }
                     janet_async_in_flight(fiber);
-                    state->io_in_flight = 1;
+                    jsec_set_u8_flag(state->flags, JTLS_STATE_IO_IN_FLIGHT);
                 } else {
-                    short evs = (state->io_state == TLS_IO_WANT_BOTH)
+                    short evs = (JTLS_STATE_IO(state) == TLS_IO_WANT_BOTH)
                                     ? (POLLIN | POLLOUT)
                                     : POLLOUT;
                     if (jutils_win_poll_start(stream, fiber, evs, state,
@@ -1173,7 +1174,8 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 jutils_win_poll_cancel(&state->win_write_wait);
                 jutils_win_cancel_overlapped(
                     fiber, state->tls ? state->tls->transport : NULL,
-                    &state->overlapped, &state->io_in_flight);
+                    &state->overlapped, &state->flags,
+                    JTLS_STATE_IO_IN_FLIGHT);
 #endif
                 clear_pending_for(state);
             }
@@ -1182,7 +1184,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_FAILED: {
             if (state) {
-                state->io_in_flight = 0;
+                jsec_clear_u8_flag(state->flags, JTLS_STATE_IO_IN_FLIGHT);
                 int err = jutils_overlapped_error(fiber->ev_stream,
                                                   &state->overlapped);
                 if (err == WSA_OPERATION_ABORTED ||
@@ -1200,7 +1202,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * Retry the SSL operation - BIO's non-blocking recv/send will
              * succeed. */
             if (state) {
-                state->io_in_flight = 0;
+                jsec_clear_u8_flag(state->flags, JTLS_STATE_IO_IN_FLIGHT);
                 jtls_attempt_io(fiber, state, 1);
             }
             break;
@@ -1215,7 +1217,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * Do a direct SSL_read without going through the full state
              * machine to avoid rescheduling loops. */
             if (state &&
-                (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
+                (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK)) {
                 TLSStream *tls = state->tls;
                 int32_t step_cap = tls->read_buffer_size > 0
                                        ? tls->read_buffer_size
@@ -1226,7 +1228,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     state->bytes_requested -
                     (state->user_buf->count - state->buf_start);
                 if (state->bytes_requested >= 0 && read_size <= 0) {
-                    if (state->op == TLS_OP_CHUNK) {
+                    if (JTLS_STATE_OP(state) == TLS_OP_CHUNK) {
                         /* Already have enough data */
                         janet_schedule(fiber,
                                        janet_wrap_buffer(state->user_buf));
@@ -1242,7 +1244,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
                 if (state->bytes_requested < 0) {
                     read_size = step_cap;
-                } else if (state->op != TLS_OP_CHUNK &&
+                } else if (JTLS_STATE_OP(state) != TLS_OP_CHUNK &&
                            read_size > step_cap) {
                     read_size = step_cap;
                 }
@@ -1300,7 +1302,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                          * the TLS IO category - never a clean nil */
                         jtls_cancel_socket_error(
                             fiber, state,
-                            state->op == TLS_OP_CHUNK
+                            JTLS_STATE_OP(state) == TLS_OP_CHUNK
                                 ? "[TLS:IO] Chunk read syscall error"
                                 : "[TLS:IO] Read syscall error",
                             sock_err);
@@ -1352,7 +1354,7 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 }
                 clear_pending_for(state);
                 if (event == JANET_ASYNC_EVENT_CLOSE &&
-                    (state->op == TLS_OP_READ || state->op == TLS_OP_CHUNK)) {
+                    (JTLS_STATE_OP(state) == TLS_OP_READ || JTLS_STATE_OP(state) == TLS_OP_CHUNK)) {
                     janet_schedule(fiber, janet_wrap_nil());
                 } else {
                     janet_cancel(fiber,

@@ -63,7 +63,7 @@ Janet cfun_read(int32_t argc, Janet *argv) {
      * Only set fields actually used by read operations. */
     TLSState *state = &tls->read_state;
     state->tls = tls;
-    state->op = read_all ? TLS_OP_CHUNK : TLS_OP_READ;
+    state->flags = JTLS_STATE_OP_BITS(read_all ? TLS_OP_CHUNK : TLS_OP_READ);
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
@@ -71,9 +71,9 @@ Janet cfun_read(int32_t argc, Janet *argv) {
         double timeout =
             parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
         state->timeout = timeout;
-        state->has_timeout = !is_infinite_timeout(timeout);
-    } else {
-        state->has_timeout = 0;
+        if (!is_infinite_timeout(timeout)) {
+            jsec_set_u8_flag(state->flags, JTLS_STATE_HAS_TIMEOUT);
+        }
     }
     /* write_src, write_len, write_offset unused for reads - not zeroed */
     /* error_msg only written on error via snprintf - not pre-zeroed */
@@ -123,7 +123,7 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
      * Selective initialization instead of memset(0) for performance. */
     TLSState *state = &tls->read_state;
     state->tls = tls;
-    state->op = TLS_OP_CHUNK;
+    state->flags = JTLS_STATE_OP_BITS(TLS_OP_CHUNK);
     state->user_buf = buffer;
     state->bytes_requested = bytes_to_read;
     state->buf_start = buffer->count;
@@ -131,9 +131,9 @@ Janet cfun_chunk(int32_t argc, Janet *argv) {
         double timeout =
             parse_timeout_opt(argc, argv, 3, JSEC_MOD_TLS, INFINITY);
         state->timeout = timeout;
-        state->has_timeout = !is_infinite_timeout(timeout);
-    } else {
-        state->has_timeout = 0;
+        if (!is_infinite_timeout(timeout)) {
+            jsec_set_u8_flag(state->flags, JTLS_STATE_HAS_TIMEOUT);
+        }
     }
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
@@ -177,7 +177,7 @@ Janet cfun_write(int32_t argc, Janet *argv) {
      * Selective initialization instead of memset(0) for performance. */
     TLSState *state = &tls->write_state;
     state->tls = tls;
-    state->op = TLS_OP_WRITE;
+    state->flags = JTLS_STATE_OP_BITS(TLS_OP_WRITE);
     /* Store the source object itself, never its raw bytes pointer: the
      * operation can suspend across WANT_WRITE and the caller's buffer may
      * be reallocated or truncated while the fiber is parked. The byte
@@ -193,9 +193,9 @@ Janet cfun_write(int32_t argc, Janet *argv) {
         double timeout =
             parse_timeout_opt(argc, argv, 2, JSEC_MOD_TLS, INFINITY);
         state->timeout = timeout;
-        state->has_timeout = !is_infinite_timeout(timeout);
-    } else {
-        state->has_timeout = 0;
+        if (!is_infinite_timeout(timeout)) {
+            jsec_set_u8_flag(state->flags, JTLS_STATE_HAS_TIMEOUT);
+        }
     }
     /* user_buf, bytes_requested unused for writes - not zeroed */
 
@@ -258,10 +258,9 @@ Janet cfun_close(int32_t argc, Janet *argv) {
      * Selective initialization - close uses no data fields. */
     TLSState *state = &tls->write_state;
     state->tls = tls;
-    state->op = TLS_OP_CLOSE;
+    state->flags = JTLS_STATE_OP_BITS(TLS_OP_CLOSE);
     /* No deadline - must not inherit one from a prior timed write */
     state->timeout = 0;
-    state->has_timeout = 0;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_nil();
@@ -325,10 +324,9 @@ Janet cfun_shutdown(int32_t argc, Janet *argv) {
      * Selective initialization - shutdown uses no data fields. */
     TLSState *state = &tls->write_state;
     state->tls = tls;
-    state->op = TLS_OP_SHUTDOWN;
+    state->flags = JTLS_STATE_OP_BITS(TLS_OP_SHUTDOWN);
     /* No deadline - must not inherit one from a prior timed write */
     state->timeout = 0;
-    state->has_timeout = 0;
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_nil();

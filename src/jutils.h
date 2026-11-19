@@ -47,8 +47,9 @@
  */
 #define OSSL_STR(s) ((unsigned char *)(uintptr_t)(s))
 
-/* Clear bit(s) in a uint8_t flags field without constant ~ truncation (MSVC
- * C4310). */
+/* Set/clear bit(s) in a uint8_t flags field without constant ~ truncation
+ * (MSVC C4310). */
+#define jsec_set_u8_flag(field, bit) ((field) |= (uint8_t)(bit))
 #define jsec_clear_u8_flag(field, bit)                                       \
     ((field) &= (uint8_t)(0xFFu ^ (unsigned)(bit)))
 
@@ -136,7 +137,8 @@ void jutils_format_overlapped_error(char *buf, size_t buflen,
  * Also detaches fiber->ev_state on the JANET_FIBER_EV_FLAG_IN_FLIGHT path
  * where janet_async_end defers janet_free(overlapped) to IOCP completion. */
 void jutils_win_cancel_overlapped(JanetFiber *fiber, JanetStream *stream,
-                                  WSAOVERLAPPED *ov, uint8_t *io_in_flight);
+                                  WSAOVERLAPPED *ov, uint8_t *flags,
+                                  uint8_t in_flight_bit);
 
 /* Resume callback invoked on the Janet event loop when WSAPoll reports
  * readiness on a socket wait started by jutils_win_poll_start. */

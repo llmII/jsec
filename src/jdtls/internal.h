@@ -222,6 +222,28 @@ typedef struct DTLSSession {
 typedef struct DTLSClient DTLSClient;
 typedef struct DTLSServer DTLSServer;
 
+/* DTLSClientAsyncState flags (bits 0-2) and DTLSClientOp (bits 3-4) packed into
+ * uint8_t flags. */
+#define JDTLS_CAS_WANT_WRITE (1u << 0)
+#define JDTLS_CAS_IO_IN_FLIGHT (1u << 1)
+#define JDTLS_CAS_FLUSH_ONLY (1u << 2)
+#define JDTLS_CAS_OP_SHIFT 3u
+#define JDTLS_CAS_OP_MASK (0x03u << JDTLS_CAS_OP_SHIFT)
+
+#define JDTLS_CAS_OP(s)                                                      \
+    ((DTLSClientOp)(((s)->flags & JDTLS_CAS_OP_MASK) >> JDTLS_CAS_OP_SHIFT))
+#define JDTLS_CAS_SET_OP(s, v)                                               \
+    ((s)->flags =                                                            \
+         (uint8_t)(((s)->flags & (0xFFu ^ JDTLS_CAS_OP_MASK)) |              \
+                   (((unsigned)(v) & 0x03u) << JDTLS_CAS_OP_SHIFT)))
+
+typedef enum {
+    CLIENT_OP_HANDSHAKE,
+    CLIENT_OP_READ,
+    CLIENT_OP_WRITE,
+    CLIENT_OP_CLOSE
+} DTLSClientOp;
+
 /* Embedded async state for DTLSClient operations */
 typedef struct {
 #ifdef JANET_WINDOWS
@@ -230,25 +252,19 @@ typedef struct {
     uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
     WSABUF wsa_buf;
     DWORD wsa_flags;
-    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
     DWORD bytes_received;
     void *win_write_wait; /* Active WSAPoll wait handle for WANT_WRITE */
-    uint8_t io_in_flight; /* 1 while WSARecv overlapped op is queued */
-    uint8_t flush_only;   /* 1 when flushing pre-encrypted wbio record */
 #endif
     DTLSClient *client;
-    JanetBuffer *buffer;      /* For read */
-    Janet write_src;          /* For write */
-    int32_t write_len;        /* For write length at entry */
-    int32_t nbytes;           /* For read */
-    int32_t buf_start;        /* buffer->count when read op began */
-    enum {
-        CLIENT_OP_HANDSHAKE,
-        CLIENT_OP_READ,
-        CLIENT_OP_WRITE,
-        CLIENT_OP_CLOSE
-    } op;
-    uint8_t want_write; /* Track if we're waiting for write vs read */
+    JanetBuffer *buffer; /* For read */
+    Janet write_src;     /* For write */
+    int32_t write_len;   /* For write length at entry */
+    int32_t nbytes;      /* For read */
+    int32_t buf_start;   /* buffer->count when read op began */
+    uint8_t flags;       /* Packed JDTLS_CAS_* flags and DTLSClientOp */
+#ifdef JANET_WINDOWS
+    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
+#endif
 } DTLSClientAsyncState;
 
 /* Embedded async state for DTLSServer recv-from operations */
@@ -259,16 +275,18 @@ typedef struct {
     uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
     WSABUF wsa_buf;
     DWORD wsa_flags;
-    uint8_t recv_buf[65536];           /* Buffer for received datagram */
-    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
     int peer_addrlen;
     DWORD bytes_received;
-    uint8_t io_in_flight; /* 1 while WSARecvFrom overlapped op is queued */
 #endif
     DTLSServer *server;
     JanetBuffer *buffer;
     double timeout;
     int32_t nbytes;
+#ifdef JANET_WINDOWS
+    uint8_t io_in_flight;              /* 1 while WSARecvFrom overlapped op is queued */
+    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
+    uint8_t recv_buf[65536];           /* Buffer for received datagram */
+#endif
 } DTLSRecvFromState;
 
 struct DTLSClient {

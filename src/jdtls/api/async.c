@@ -73,7 +73,7 @@ static int dtls_client_start_wsarecv(DTLSClient *client,
     /* IOCP posts a completion packet for both synchronous 0 and
      * WSA_IO_PENDING. */
     janet_async_in_flight(fiber);
-    state->io_in_flight = 1;
+    jsec_set_u8_flag(state->flags, JDTLS_CAS_IO_IN_FLIGHT);
     return 0;
 }
 
@@ -110,8 +110,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                     janet_async_end(fiber);
                     return;
                 }
-                if (fr == -2 || state->want_write) {
-                    state->want_write = 1;
+                if (fr == -2 || (state->flags & JDTLS_CAS_WANT_WRITE)) {
+                    jsec_set_u8_flag(state->flags, JDTLS_CAS_WANT_WRITE);
                     if (jutils_win_poll_start(
                             client->transport, fiber, POLLOUT, state,
                             &state->win_write_wait,
@@ -152,7 +152,8 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 jutils_win_poll_cancel(&state->win_write_wait);
                 jutils_win_cancel_overlapped(
                     fiber, state->client ? state->client->transport : NULL,
-                    &state->overlapped, &state->io_in_flight);
+                    &state->overlapped, &state->flags,
+                    JDTLS_CAS_IO_IN_FLIGHT);
 #endif
                 dtls_flight_timer_disarm(&state->client->flight_timer, 0);
             }
@@ -164,7 +165,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 if (state->buffer) {
                     janet_mark(janet_wrap_buffer(state->buffer));
                 }
-                if (state->op == CLIENT_OP_WRITE) {
+                if (JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
                     janet_mark(state->write_src);
                 }
             }
@@ -183,7 +184,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * for it (core ev.c:2473-2476) instead of cancelling it.
              * Write- and handshake-class operations are cancelled with
              * the handle-specialized message. */
-            if (state && state->op == CLIENT_OP_READ) {
+            if (state && JDTLS_CAS_OP(state) == CLIENT_OP_READ) {
                 janet_schedule(fiber, janet_wrap_nil());
             } else {
                 janet_cancel(
@@ -200,7 +201,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_FAILED: {
-            state->io_in_flight = 0;
+            jsec_clear_u8_flag(state->flags, JDTLS_CAS_IO_IN_FLIGHT);
             DTLSClient *client = state->client;
             int err = jutils_overlapped_error(client->transport,
                                               &state->overlapped);
@@ -219,7 +220,7 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         }
 
         case JANET_ASYNC_EVENT_COMPLETE: {
-            state->io_in_flight = 0;
+            jsec_clear_u8_flag(state->flags, JDTLS_CAS_IO_IN_FLIGHT);
             /* Windows IOCP: Receive completed with actual data - write to
              * rbio */
             DTLSClient *client = state->client;
@@ -276,7 +277,7 @@ static void dtls_client_async_step(JanetFiber *fiber,
     DTLSClient *client = state->client;
 
 #ifdef JANET_WINDOWS
-    if (state->want_write) {
+    if (state->flags & JDTLS_CAS_WANT_WRITE) {
         ssize_t fr = dtls_client_flush_wbio(client);
         if (fr == -1) {
             int err = WSAGetLastError();
@@ -298,8 +299,9 @@ static void dtls_client_async_step(JanetFiber *fiber,
             }
             return;
         }
-        if (state->op == CLIENT_OP_WRITE && state->flush_only) {
-            state->flush_only = 0;
+        if (JDTLS_CAS_OP(state) == CLIENT_OP_WRITE &&
+            (state->flags & JDTLS_CAS_FLUSH_ONLY)) {
+            jsec_clear_u8_flag(state->flags, JDTLS_CAS_FLUSH_ONLY);
             janet_schedule(fiber, janet_wrap_nil());
             janet_async_end(fiber);
             return;
@@ -314,7 +316,7 @@ static void dtls_client_async_step(JanetFiber *fiber,
     int close_transport = 0;
     const char *op_name = "DTLS";
 
-    switch (state->op) {
+    switch (JDTLS_CAS_OP(state)) {
         case CLIENT_OP_HANDSHAKE:
             op_name = "Handshake";
             result = dtls_do_handshake_ex(client->ssl, &sock_err);
@@ -414,8 +416,8 @@ static void dtls_client_async_step(JanetFiber *fiber,
     }
     if (flush_rc == -2) {
 #ifdef JANET_WINDOWS
-        if (result == DTLS_RESULT_OK && state->op == CLIENT_OP_WRITE) {
-            state->flush_only = 1;
+        if (result == DTLS_RESULT_OK && JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
+            jsec_set_u8_flag(state->flags, JDTLS_CAS_FLUSH_ONLY);
         }
 #endif
         if (result != DTLS_RESULT_ERROR &&
@@ -439,14 +441,14 @@ static void dtls_client_async_step(JanetFiber *fiber,
         case DTLS_RESULT_WANT_READ: {
             /* Need to switch async modes - end current, start new */
             DTLSClientAsyncState *saved = state;
-            int is_handshake = (saved->op == CLIENT_OP_HANDSHAKE);
-            saved->want_write = 0; /* Update for next INIT */
+            int is_handshake = (JDTLS_CAS_OP(saved) == CLIENT_OP_HANDSHAKE);
+            jsec_clear_u8_flag(saved->flags, JDTLS_CAS_WANT_WRITE);
             fiber->ev_state = NULL;
 #ifdef JANET_WINDOWS
             jutils_win_poll_cancel(&saved->win_write_wait);
             jutils_win_cancel_overlapped(
                 NULL, saved->client ? saved->client->transport : NULL,
-                &saved->overlapped, &saved->io_in_flight);
+                &saved->overlapped, &saved->flags, JDTLS_CAS_IO_IN_FLIGHT);
 #endif
             janet_async_end(fiber);
             janet_async_start_fiber(fiber, client->transport,
@@ -464,13 +466,13 @@ static void dtls_client_async_step(JanetFiber *fiber,
 
         case DTLS_RESULT_WANT_WRITE: {
             DTLSClientAsyncState *saved = state;
-            saved->want_write = 1; /* Update for next INIT */
+            jsec_set_u8_flag(saved->flags, JDTLS_CAS_WANT_WRITE);
             fiber->ev_state = NULL;
 #ifdef JANET_WINDOWS
             jutils_win_poll_cancel(&saved->win_write_wait);
             jutils_win_cancel_overlapped(
                 NULL, saved->client ? saved->client->transport : NULL,
-                &saved->overlapped, &saved->io_in_flight);
+                &saved->overlapped, &saved->flags, JDTLS_CAS_IO_IN_FLIGHT);
 #endif
             janet_async_end(fiber);
             janet_async_start_fiber(fiber, client->transport,
@@ -481,7 +483,7 @@ static void dtls_client_async_step(JanetFiber *fiber,
 
         case DTLS_RESULT_EOF:
             client->state = DTLS_STATE_CLOSED;
-            if (state->op == CLIENT_OP_WRITE) {
+            if (JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
                 /* Peer closed with the write's bytes unwritten:
                  * fail the write like tls/write and Janet's
                  * ev/write / net/write instead of completing
@@ -501,7 +503,7 @@ static void dtls_client_async_step(JanetFiber *fiber,
             break;
 
         case DTLS_RESULT_UNEXPECTED_EOF:
-            if (state->op == CLIENT_OP_WRITE) {
+            if (JDTLS_CAS_OP(state) == CLIENT_OP_WRITE) {
                 /* Peer closed without close_notify and the
                  * write's bytes are unwritten: the write fails
                  * like tls/write and Janet's ev/write /
@@ -569,8 +571,10 @@ int dtls_client_start_handshake(DTLSClient *client) {
     }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
-    state->op = CLIENT_OP_HANDSHAKE;
-    state->want_write = (result == DTLS_RESULT_WANT_WRITE) ? 1 : 0;
+    JDTLS_CAS_SET_OP(state, CLIENT_OP_HANDSHAKE);
+    if (result == DTLS_RESULT_WANT_WRITE) {
+        jsec_set_u8_flag(state->flags, JDTLS_CAS_WANT_WRITE);
+    }
 
     int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
                                                   : JANET_ASYNC_LISTEN_READ;
@@ -598,8 +602,10 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
     state->buffer = buf;
     state->nbytes = nbytes;
     state->buf_start = buf_start;
-    state->op = CLIENT_OP_READ;
-    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    JDTLS_CAS_SET_OP(state, CLIENT_OP_READ);
+    if (mode == JANET_ASYNC_LISTEN_WRITE) {
+        jsec_set_u8_flag(state->flags, JDTLS_CAS_WANT_WRITE);
+    }
     /* Arm once here, at initial suspension: the deadline is absolute
      * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
      * callback must not re-arm it. */
@@ -622,10 +628,14 @@ void dtls_client_start_async_write_flush(DTLSClient *client, Janet src,
     state->client = client;
     state->write_src = src;
     state->write_len = janet_getbytes(&state->write_src, 0).len;
-    state->op = CLIENT_OP_WRITE;
-    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    JDTLS_CAS_SET_OP(state, CLIENT_OP_WRITE);
+    if (mode == JANET_ASYNC_LISTEN_WRITE) {
+        jsec_set_u8_flag(state->flags, JDTLS_CAS_WANT_WRITE);
+    }
 #ifdef JANET_WINDOWS
-    state->flush_only = flush_only ? 1 : 0;
+    if (flush_only) {
+        jsec_set_u8_flag(state->flags, JDTLS_CAS_FLUSH_ONLY);
+    }
 #else
     (void)flush_only;
 #endif
@@ -652,8 +662,10 @@ void dtls_client_start_async_close(DTLSClient *client, int mode) {
     }
     memset(state, 0, sizeof(DTLSClientAsyncState));
     state->client = client;
-    state->op = CLIENT_OP_CLOSE;
-    state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+    JDTLS_CAS_SET_OP(state, CLIENT_OP_CLOSE);
+    if (mode == JANET_ASYNC_LISTEN_WRITE) {
+        jsec_set_u8_flag(state->flags, JDTLS_CAS_WANT_WRITE);
+    }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
 }

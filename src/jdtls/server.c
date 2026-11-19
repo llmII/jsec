@@ -1167,7 +1167,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             if (state) {
                 jutils_win_cancel_overlapped(
                     fiber, state->server ? state->server->transport : NULL,
-                    &state->overlapped, &state->io_in_flight);
+                    &state->overlapped, &state->io_in_flight, 1u);
             }
 #endif
             break;

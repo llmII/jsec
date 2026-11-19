@@ -421,7 +421,7 @@ common_setup:
     TLSState *state = &tls->write_state;
     memset(state, 0, sizeof(TLSState));
     state->tls = tls;
-    state->op = TLS_OP_HANDSHAKE;
+    state->flags = JTLS_STATE_OP_BITS(TLS_OP_HANDSHAKE);
 
     if (jtls_attempt_io(janet_current_fiber(), state, 0)) {
         return janet_wrap_abstract(tls);
@@ -465,13 +465,15 @@ typedef struct {
     /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
     WSAOVERLAPPED overlapped;
     uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
-    struct sockaddr_storage target_addr;
-    int target_addrlen;
     LPFN_CONNECTEX connectex;
-    uint8_t io_in_flight;
 #endif
     char *hostname; /* Hostname for SNI (owned, must free) */
     Janet opts;     /* TLS options (must mark for GC) */
+#ifdef JANET_WINDOWS
+    int target_addrlen;
+    uint8_t io_in_flight;
+    struct sockaddr_storage target_addr;
+#endif
 } TLSConnectState;
 
 /* Async callback for TCP connect phase */
@@ -492,7 +494,7 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             if (state) {
                 jutils_win_cancel_overlapped(fiber, stream,
                                              &state->overlapped,
-                                             &state->io_in_flight);
+                                             &state->io_in_flight, 1u);
             }
 #endif
             /* Janet will free fiber->ev_state (the state struct)
@@ -768,7 +770,7 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 SSL_set_tlsext_status_type(tls->ssl, TLSEXT_STATUSTYPE_ocsp);
                 memset(&kick, 0, sizeof(TLSState));
                 kick.tls = tls;
-                kick.op = TLS_OP_HANDSHAKE;
+                kick.flags = JTLS_STATE_OP_BITS(TLS_OP_HANDSHAKE);
                 jtls_process_operation(&kick);
             }
 

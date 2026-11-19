@@ -150,12 +150,13 @@ void jutils_format_overlapped_error(char *buf, size_t buflen,
 }
 
 void jutils_win_cancel_overlapped(JanetFiber *fiber, JanetStream *stream,
-                                  WSAOVERLAPPED *ov, uint8_t *io_in_flight) {
-    if (io_in_flight && *io_in_flight) {
+                                  WSAOVERLAPPED *ov, uint8_t *flags,
+                                  uint8_t in_flight_bit) {
+    if (flags && (*flags & in_flight_bit)) {
         if (stream && stream->handle != JANET_HANDLE_NONE && ov) {
             CancelIoEx((HANDLE)stream->handle, ov);
         }
-        *io_in_flight = 0;
+        jsec_clear_u8_flag(*flags, in_flight_bit);
     }
     if (fiber && (fiber->flags & 1) && fiber->ev_state == (void *)ov) {
         fiber->ev_state = NULL;

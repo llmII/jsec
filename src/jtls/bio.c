@@ -205,7 +205,7 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
     /* Unbuffered mode and non-write operations (handshake, shutdown, close):
      * direct socket write without record coalescing */
     if (!tls->write_buffer.data || tls->write_buffer.capacity == 0 ||
-        tls->write_state.op != TLS_OP_WRITE) {
+        JTLS_STATE_OP(&tls->write_state) != TLS_OP_WRITE) {
         /* If write buffer still holds pending ciphertext from an earlier
          * write, drain it before writing fresh data directly to socket */
         if (tls->write_buffer.head < tls->write_buffer.tail) {
