@@ -222,6 +222,7 @@
 
   (def-test "tls-wrap-session-option-raises-on-corrupt-der"
     :timeout 20
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (let [[server socket-path] (make-server :unix)
           addr (get-server-addr server :unix socket-path)]

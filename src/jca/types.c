@@ -339,7 +339,7 @@ Janet cfun_ca_create(int32_t argc, Janet *argv) {
     ca->cert = cert;
     ca->key = key;
     ca->serial = serial;
-    ca->track_issued = track_issued;
+    ca->track_issued = (uint8_t)(track_issued ? 1 : 0);
     ca->issued = track_issued ? sk_X509_new_null() : NULL;
     ca->revoked = sk_X509_REVOKED_new_null();
 
@@ -548,7 +548,7 @@ Janet cfun_ca_generate(int32_t argc, Janet *argv) {
     ca->cert = cert;
     ca->key = key;
     ca->serial = serial;
-    ca->track_issued = track_issued;
+    ca->track_issued = (uint8_t)(track_issued ? 1 : 0);
     ca->issued = track_issued ? sk_X509_new_null() : NULL;
     ca->revoked = sk_X509_REVOKED_new_null();
 
@@ -775,7 +775,7 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
     ca->cert = cert;
     ca->key = key;
     ca->serial = serial;
-    ca->track_issued = track_issued;
+    ca->track_issued = (uint8_t)(track_issued ? 1 : 0);
     ca->issued = track_issued ? sk_X509_new_null() : NULL;
     ca->revoked = sk_X509_REVOKED_new_null();
 

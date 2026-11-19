@@ -184,8 +184,8 @@
 
 # Standard flags - comprehensive warnings for defensive builds
 # These catch issues that may only manifest on stricter platforms
-# (e.g., ARM Mac). Note: Some flags omitted because janet.h macros
-# trigger unavoidable warnings.
+# (e.g., ARM Mac). Note: Some flags (including -Wcast-align under Clang)
+# are omitted because janet.h macros trigger unavoidable warnings.
 (def- standard-cflags
   (if windows?
     ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
@@ -197,7 +197,7 @@
      # Integer/pointer conversion warnings (critical for cross-platform)
      "-Wint-conversion" "-Wpointer-to-int-cast" "-Wint-to-pointer-cast"
      # Null pointer and type safety
-     "-Wnull-dereference" "-Wcast-align"
+     "-Wnull-dereference"
      # Sign conversion (can catch subtle bugs)
      "-Wsign-compare"]))
 
@@ -532,8 +532,8 @@
     (print "command failed (exit " code "): " (string/join args " "))
     (os/exit code)))
 
-(def- toolchain-janet ".work/bin/janet")
-(def- toolchain-jpm ".work/bin/jpm")
+(def- toolchain-janet (if windows? ".work/bin/janet.exe" ".work/bin/janet"))
+(def- toolchain-jpm (if windows? ".work/bin/jpm.bat" ".work/bin/jpm"))
 
 # Poll-backend toolchain: Janet built with JANET_EV_NO_EPOLL + JANET_EV_NO_KQUEUE
 # so the poll(2) fallback is active. Lives beside the default .work/ toolchain
@@ -590,6 +590,11 @@
           (array/push logs full)))))
   logs)
 
+(defn- jpm-run-args [jpm-bin & args]
+  (if windows?
+    ["cmd" "/c" (string/replace-all "/" "\\" jpm-bin) ;args]
+    [jpm-bin ;args]))
+
 # Ensure a toolchain's module tree holds the test dependencies (assay, spork).
 # jpm build/install do NOT install dependencies, and without them
 # test/runner.janet cannot import assay and its workers cannot run - so the run
@@ -602,29 +607,47 @@
     (print "Installing test dependencies ("
            (string/join missing ", ") ")...")
     (flush)
-    (run-or-fail [jpm-bin "deps"] build-env)))
+    (run-or-fail (jpm-run-args jpm-bin "deps") build-env)))
 
 # Build jsec and run the unit/regression/coverage suite (perf excluded) under a
 # toolchain's janet/jpm with the project's default concurrency and suite
 # selection (builds and tests itself). Shared by self-test (epoll),
 # self-test-poll (poll), and self-test-{asan,lsan,ubsan,san} so all profiles
 # stay directly comparable: same flags, same output shape, same exit semantics.
+(defn- windows-runtime-env []
+  (when (and windows? openssl-prefix)
+    (def bin-dir (string/replace-all "/" "\\" (string openssl-prefix "/bin")))
+    (def cur-env (os/environ))
+    (def path-key (if (has-key? cur-env "Path") "Path" "PATH"))
+    (def cur-path (or (get cur-env path-key) ""))
+    (if (string/find bin-dir cur-path)
+      nil
+      {path-key (string bin-dir ";" cur-path)})))
+
+(defn- merge-run-envs [& envs]
+  (var merged nil)
+  (each e envs
+    (when e
+      (set merged (merge (or merged @{}) e))))
+  merged)
+
 (defn- run-self-test-suite [janet-bin jpm-bin modpath &opt sanitizer prefix]
-  (def build-env (san-build-env sanitizer))
+  (def build-env (merge-run-envs (san-build-env sanitizer)
+                                 (windows-runtime-env)))
   (ensure-test-deps jpm-bin modpath build-env)
   (print "Building jsec under the in-tree toolchain...")
   (flush)
-  (run-or-fail [jpm-bin "build"] build-env)
+  (run-or-fail (jpm-run-args jpm-bin "build") build-env)
   (print "Installing jsec under the in-tree toolchain...")
   (flush)
-  (run-or-fail [jpm-bin "install"] build-env)
+  (run-or-fail (jpm-run-args jpm-bin "install") build-env)
   (print "Running unit/regression/coverage under the in-tree toolchain...")
   (flush)
   (def runner-args [janet-bin "test/runner.janet"
                     "-f" "{unit,regression,coverage}"
                     "-j" "fiber:16,thread:6,subprocess:6"])
   (if (nil? sanitizer)
-    (run-or-fail runner-args)
+    (run-or-fail runner-args (windows-runtime-env))
     (let [tc-prefix (or prefix (string ".work/" sanitizer))
           log-dir (string (os/cwd) "/" tc-prefix "/scratch/san-logs")
           log-prefix (string log-dir "/san.log")]
@@ -659,7 +682,9 @@
 
 # Build the hermetic toolchain into .work/ (idempotent).
 (phony "toolchain" []
-       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"]))
+       (if windows?
+         (run-or-fail ["cmd" "/c" "scripts\\bootstrap-toolchain.bat"])
+         (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"])))
 
 # Build the poll-backend hermetic toolchain into .work/poll/ (idempotent).
 (phony "toolchain-poll" []

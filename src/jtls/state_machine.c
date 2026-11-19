@@ -228,15 +228,9 @@ static TLSIOState handle_ssl_error(int ssl_err, int ret, TLSState *state,
                          JSEC_UNEXPECTED_EOF_ERROR);
                 return TLS_IO_ERROR;
             }
-#ifdef JANET_WINDOWS
-            /* Windows: format socket error code */
-            snprintf(state->error_msg, sizeof(state->error_msg),
-                     "%s syscall error: WSA error %d", op_name, sock_err);
-#else
             snprintf(state->error_msg, sizeof(state->error_msg),
                      "%s syscall error: %s", op_name,
                      jsec_socket_strerror(sock_err));
-#endif
             return TLS_IO_ERROR;
         }
 
@@ -701,6 +695,11 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
          * the copy is reused across mode switches, never re-allocated.
          */
         fiber->ev_state = NULL;
+#ifdef JANET_WINDOWS
+        jutils_win_poll_cancel(&state->win_write_wait);
+        jutils_win_cancel_overlapped(NULL, tls->transport, &state->overlapped,
+                                     &state->io_in_flight);
+#endif
         janet_async_end(fiber);
         janet_async_start_fiber(fiber, tls->transport, mode,
                                 jtls_async_callback, state);
@@ -734,6 +733,10 @@ void jtls_schedule_async(JanetFiber *fiber, TLSStream *tls, TLSState *state,
             JANET_OUT_OF_MEMORY;
         }
         *async_state = *state;
+#ifdef JANET_WINDOWS
+        async_state->io_in_flight = 0;
+        async_state->win_write_wait = NULL;
+#endif
         janet_async_start(tls->transport, mode, jtls_async_callback,
                           async_state);
     }
@@ -878,6 +881,25 @@ int jtls_attempt_io(JanetFiber *fiber, TLSState *state, int is_async) {
             if (state->op == TLS_OP_CLOSE) {
                 if (tls->transport &&
                     !(tls->transport->flags & JANET_STREAM_CLOSED)) {
+#ifdef JANET_WINDOWS
+                    /* Winsock transmits TCP RST if closesocket() runs while
+                     * unread bytes (e.g., TLS NewSessionTicket) remain in the
+                     * kernel receive buffer. Drain buffered unread bytes
+                     * non-blockingly so peer still reads our final flight. */
+                    if ((tls->transport->flags & JANET_STREAM_SOCKET) &&
+                        tls->transport->handle != JANET_HANDLE_NONE) {
+                        char drain[4096];
+                        size_t drained = 0;
+                        while (drained < 65536) {
+                            int r = recv((SOCKET)tls->transport->handle,
+                                         drain, (int)sizeof(drain), 0);
+                            if (r <= 0) {
+                                break;
+                            }
+                            drained += (size_t)r;
+                        }
+                    }
+#endif
                     janet_stream_close(tls->transport);
                 }
                 tls->stream.flags |= JANET_STREAM_CLOSED;
@@ -1034,6 +1056,12 @@ static int jtls_cancel_if_pending_socket_error(JanetFiber *fiber,
     return 1;
 }
 
+#ifdef JANET_WINDOWS
+static void jtls_win_poll_resume(JanetFiber *fiber, void *ctx) {
+    jtls_attempt_io(fiber, (TLSState *)ctx, 1);
+}
+#endif
+
 /*============================================================================
  * ASYNC CALLBACK
  *============================================================================
@@ -1079,34 +1107,53 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 
         case JANET_ASYNC_EVENT_INIT:
 #ifdef JANET_WINDOWS
-            /* Windows IOCP: Start zero-byte WSARecv/WSASend as readiness
-             * probe. These complete when socket is readable/writable, then
-             * our BIO's non-blocking recv/send will succeed. */
+            /* Windows IOCP: Zero-byte WSARecv blocks until TCP read/FIN/RST
+             * readiness, whereas zero-byte WSASend completes immediately even
+             * when the send buffer is full. Wait on POLLOUT via WSAPoll on
+             * Janet's worker pool for WANT_WRITE/WANT_BOTH to avoid
+             * busy-spin.
+             */
             if (state) {
                 JanetStream *stream = fiber->ev_stream;
-                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
-                state->wsa_buf.len = 0;
-                state->wsa_buf.buf = NULL;
-                state->wsa_flags = 0;
-
-                int status;
-                if (state->io_state == TLS_IO_WANT_READ) {
-                    status = WSARecv((SOCKET)stream->handle, &state->wsa_buf,
-                                     1, NULL, &state->wsa_flags,
-                                     &state->overlapped, NULL);
-                } else {
-                    status = WSASend((SOCKET)stream->handle, &state->wsa_buf,
-                                     1, NULL, 0, &state->overlapped, NULL);
-                }
-                if (status == SOCKET_ERROR &&
-                    WSAGetLastError() != WSA_IO_PENDING) {
-                    janet_cancel(fiber, janet_cstringv("Socket I/O error"));
-                    /* Leave ev_state set so janet_async_end frees the heap
-                     * copy made at first suspension */
+                if (stream->handle == JANET_HANDLE_NONE ||
+                    (stream->flags & JANET_STREAM_CLOSED)) {
+                    clear_pending_for(state);
+                    janet_cancel(fiber,
+                                 janet_cstringv("[TLS:IO] stream closed"));
                     janet_async_end(fiber);
                     return;
                 }
-                janet_async_in_flight(fiber);
+                if (state->io_state == TLS_IO_WANT_READ) {
+                    memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+                    state->wsa_buf.len = 0;
+                    state->wsa_buf.buf = NULL;
+                    state->wsa_flags = 0;
+
+                    int status = WSARecv(
+                        (SOCKET)stream->handle, &state->wsa_buf, 1, NULL,
+                        &state->wsa_flags, &state->overlapped, NULL);
+                    if (status == SOCKET_ERROR &&
+                        WSAGetLastError() != WSA_IO_PENDING) {
+                        int err = WSAGetLastError();
+                        jtls_cancel_socket_error(
+                            fiber, state, "[TLS:IO] Socket I/O error", err);
+                        return;
+                    }
+                    janet_async_in_flight(fiber);
+                    state->io_in_flight = 1;
+                } else {
+                    short evs = (state->io_state == TLS_IO_WANT_BOTH)
+                                    ? (POLLIN | POLLOUT)
+                                    : POLLOUT;
+                    if (jutils_win_poll_start(stream, fiber, evs, state,
+                                              &state->win_write_wait,
+                                              jtls_win_poll_resume) < 0) {
+                        clear_pending_for(state);
+                        janet_cancel(fiber, janet_cstringv("out of memory"));
+                        janet_async_end(fiber);
+                        return;
+                    }
+                }
             }
             break;
 #else
@@ -1122,17 +1169,38 @@ void jtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
              * from first suspension and janet_async_end frees it right after
              * this event returns, completing the registration teardown. */
             if (state) {
+#ifdef JANET_WINDOWS
+                jutils_win_poll_cancel(&state->win_write_wait);
+                jutils_win_cancel_overlapped(
+                    fiber, state->tls ? state->tls->transport : NULL,
+                    &state->overlapped, &state->io_in_flight);
+#endif
                 clear_pending_for(state);
             }
             break;
 
 #ifdef JANET_WINDOWS
+        case JANET_ASYNC_EVENT_FAILED: {
+            if (state) {
+                state->io_in_flight = 0;
+                int err = jutils_overlapped_error(fiber->ev_stream,
+                                                  &state->overlapped);
+                if (err == WSA_OPERATION_ABORTED ||
+                    err == ERROR_OPERATION_ABORTED) {
+                    return;
+                }
+                jtls_cancel_socket_error(fiber, state,
+                                         "[TLS:IO] socket error", err);
+            }
+            break;
+        }
+
         case JANET_ASYNC_EVENT_COMPLETE:
-        case JANET_ASYNC_EVENT_FAILED:
             /* Windows IOCP: Zero-byte probe completed, socket is now ready.
              * Retry the SSL operation - BIO's non-blocking recv/send will
              * succeed. */
             if (state) {
+                state->io_in_flight = 0;
                 jtls_attempt_io(fiber, state, 1);
             }
             break;

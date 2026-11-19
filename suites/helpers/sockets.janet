@@ -10,6 +10,13 @@
         rand-hex (string/join (map |(string/format "%02x" $) rand-bytes) "")]
     (string "/tmp/jsec-test-" rand-hex ".sock")))
 
+(defn skip-unix-socket-on-windows?
+  ``Skip predicate for tests that require Unix domain sockets.``
+  [&opt _]
+  (if (= (os/which) :windows)
+    "Unix sockets not supported on Windows"
+    false))
+
 (defn cleanup-socket
   ``Remove socket file if it exists.``
   [path]

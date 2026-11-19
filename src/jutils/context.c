@@ -156,7 +156,7 @@ SSLContext *jutils_create_context(Janet opts, int is_dtls) {
     SSLContext *ssl_ctx =
         janet_abstract(jutils_get_context_type(), sizeof(SSLContext));
     memset(ssl_ctx, 0, sizeof(SSLContext));
-    ssl_ctx->is_dtls = is_dtls;
+    ssl_ctx->is_dtls = (uint8_t)(is_dtls ? 1 : 0);
 
     /* Create SSL_CTX with appropriate method */
     if (is_dtls) {

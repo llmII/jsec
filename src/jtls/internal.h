@@ -186,9 +186,12 @@ struct TLSState {
      * when the socket is readable/writable. After completion, our BIO's
      * non-blocking recv/send will succeed (data is in kernel buffer). */
     WSAOVERLAPPED
-    overlapped;      /* Overlapped structure for IOCP - MUST BE FIRST */
-    WSABUF wsa_buf;  /* Zero-byte buffer descriptor */
-    DWORD wsa_flags; /* Flags for WSARecv */
+    overlapped;       /* Overlapped structure for IOCP - MUST BE FIRST */
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
+    WSABUF wsa_buf;   /* Zero-byte buffer descriptor */
+    DWORD wsa_flags;      /* Flags for WSARecv */
+    void *win_write_wait; /* Active WSAPoll wait handle for WANT_WRITE */
+    uint8_t io_in_flight; /* 1 while WSARecv overlapped op is queued */
 #endif
     TLSStream *tls;          /* The TLS stream */
     JanetBuffer *user_buf;   /* Buffer for read operations */

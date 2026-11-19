@@ -70,6 +70,7 @@
 
   (def-test "unix listen on a pre-existing regular file must fail"
     :timeout 10
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (def path (make-preexisting-file))
     (defer (cleanup-file path)
@@ -92,6 +93,7 @@
 
   (def-test "unix listen must leave a pre-existing regular file untouched"
     :timeout 10
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (def path (make-preexisting-file))
     (defer (cleanup-file path)

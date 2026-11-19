@@ -73,6 +73,7 @@
 
   (def-test "chunk and async read-all return nil at clean EOF with zero bytes"
     :timeout 30
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (defn session-data-consumed []
       # Clean close scenario: the application data is sent and

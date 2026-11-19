@@ -18,8 +18,6 @@
 #include "../internal.h"
 #ifndef JANET_WINDOWS
 #include <arpa/inet.h>
-#endif
-#ifndef JANET_WINDOWS
 #include <sys/un.h>
 #endif
 

@@ -443,8 +443,9 @@
     # jsec cannot parse CRL extensions, so inspect the generated CRL with
     # the OpenSSL CLI (as sanctioned by the ticket for this part).
     (def tag (string/join (map |(string/format "%02x" $) (os/cryptorand 8)) ""))
-    (def crl-path (string "/tmp/jsec-crl-" tag ".pem"))
-    (def out-path (string "/tmp/jsec-crl-" tag ".txt"))
+    (def sdir (scratch-dir))
+    (def crl-path (string sdir "/jsec-crl-" tag ".pem"))
+    (def out-path (string sdir "/jsec-crl-" tag ".txt"))
     (defer (do (try (os/rm crl-path) ([_]))
                (try (os/rm out-path) ([_])))
       (spit crl-path crl-pem)

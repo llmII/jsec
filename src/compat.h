@@ -224,6 +224,21 @@ typedef SOCKET jsec_socket_t;
 /* Socket operations */
 #define jsec_close_socket(s) closesocket(s)
 #define jsec_socket_errno WSAGetLastError()
+#define jsec_socket_set_errno(e) WSASetLastError(e)
+#define jsec_socket_read(s, dst, len) recv((s), (char *)(dst), (int)(len), 0)
+#define jsec_socket_send(s, src, len)                                        \
+    send((s), (const char *)(src), (int)(len), 0)
+#define jsec_socket_sendto(s, src, len, flags, addr, addrlen)                \
+    sendto((s), (const char *)(src), (int)(len), (flags), (addr),            \
+           (int)(addrlen))
+#define jsec_socket_getsockopt(s, level, optname, optval, optlen)            \
+    getsockopt((SOCKET)(s), (level), (optname), (char *)(optval),            \
+               (int *)(optlen))
+
+static inline int jsec_socket_set_nonblock(jsec_socket_t s) {
+    u_long mode = 1;
+    return ioctlsocket(s, FIONBIO, &mode);
+}
 
 /* Cross-platform strerror - returns error message for errno
  * Uses strerror_s on Windows to avoid deprecation warnings.
@@ -239,9 +254,15 @@ static inline const char *jsec_strerror(int err) {
 /* Socket-specific error string (thread-local static buffer) */
 static inline const char *jsec_socket_strerror(int err) {
     static __declspec(thread) char buf[JSEC_STRERROR_BUFSIZE];
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
-                   sizeof(buf), NULL);
+    buf[0] = '\0';
+    DWORD n = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+        (DWORD)err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
+        (DWORD)sizeof(buf), NULL);
+    if (n == 0) {
+        snprintf(buf, sizeof(buf), "WSA error %d", err);
+        return buf;
+    }
     /* Remove trailing newline */
     size_t len = strlen(buf);
     while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
@@ -280,6 +301,24 @@ static inline int jsec_winsock_init(void) {
 static inline void jsec_winsock_cleanup(void) {
     WSACleanup();
 }
+
+static inline jsec_socket_t jsec_win_overlapped_socket(int family, int type,
+                                                       int proto) {
+    SOCKET s = WSASocketW(family, type, proto, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (!SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0)) {
+        int err = WSAGetLastError();
+        closesocket(s);
+        WSASetLastError(err);
+        return INVALID_SOCKET;
+    }
+    return s;
+}
+
+#define jsec_socket_create(family, type, proto)                              \
+    jsec_win_overlapped_socket((family), (type), (proto))
 
 /* Socket flags for jsec_accept4 (fallback bitmask for Windows) */
 #define JSEC_SOCK_CLOEXEC 0x01
@@ -344,6 +383,21 @@ typedef int jsec_socket_t;
 
 #define jsec_close_socket(s) close(s)
 #define jsec_socket_errno errno
+#define jsec_socket_set_errno(e) (errno = (e))
+#define jsec_socket_create(family, type, proto)                              \
+    socket((family), (type), (proto))
+#define jsec_socket_read(s, dst, len) read((s), (dst), (size_t)(len))
+#define jsec_socket_send(s, src, len)                                        \
+    send((s), (src), (size_t)(len), MSG_NOSIGNAL)
+#define jsec_socket_sendto(s, src, len, flags, addr, addrlen)                \
+    sendto((s), (src), (size_t)(len), (flags), (addr), (socklen_t)(addrlen))
+#define jsec_socket_getsockopt(s, level, optname, optval, optlen)            \
+    getsockopt((s), (level), (optname), (optval), (optlen))
+
+static inline int jsec_socket_set_nonblock(jsec_socket_t s) {
+    int fl = fcntl(s, F_GETFL, 0);
+    return (fl == -1) ? -1 : fcntl(s, F_SETFL, fl | O_NONBLOCK);
+}
 
 /* Cross-platform strerror - same on Unix */
 #define jsec_strerror(err) strerror(err)
