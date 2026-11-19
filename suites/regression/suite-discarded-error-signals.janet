@@ -360,5 +360,4 @@
                       "server-context build must still succeed - the "
                       "cleanup-safety contract pin that the raise never "
                       "leaves ctx_cache_lock held - but it %s")
-              (short-q after-outcome))))
-)
+              (short-q after-outcome)))))

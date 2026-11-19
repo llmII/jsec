@@ -169,10 +169,10 @@
     (def req-zero (ocsp-request-with-serial (string/from-bytes 0)))
     (def big
       (try {:returned (ca/parse-ocsp-request req-big)}
-           ([err] {:raised err})))
+        ([err] {:raised err})))
     (def zero
       (try {:returned (ca/parse-ocsp-request req-zero)}
-           ([err] {:raised err})))
+        ([err] {:raised err})))
     (def big-serial (if (big :returned) (get (big :returned) :serial)))
     (def zero-serial (if (zero :returned) (get (zero :returned) :serial)))
     (def reported-zero
@@ -196,11 +196,11 @@
     (def root (ca/generate {:common-name "Discard Root"}))
     (def gen
       (try {:returned (ca/generate {:common-name (string/repeat "A" 200)})}
-           ([err] {:raised err})))
+        ([err] {:raised err})))
     (def iss
       (try {:returned (ca/issue root {:common-name "leaf.example"
                                       :country "USA"})}
-           ([err] {:raised err})))
+        ([err] {:raised err})))
     (def gen-subject
       (if-let [c (gen :returned)]
         (get (cert/parse (ca/get-cert c)) :subject)))

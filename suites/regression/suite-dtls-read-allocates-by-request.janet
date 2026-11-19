@@ -481,6 +481,4 @@
                     big-bytes (length (recv :data))))
           (assert (= big-payload (recv :data))
                   (string "recv-from data should match the 8000-byte "
-                          "payload sent by the client"))))))
-)
-
+                          "payload sent by the client")))))))

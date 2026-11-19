@@ -101,8 +101,8 @@
 
     (def outcome (capture-error
                    (fn [] (crypto/cms-encrypt "secret payload"
-                                        (authority :cert)
-                                        {:cipher :bogus-xyz}))))
+                                              (authority :cert)
+                                              {:cipher :bogus-xyz}))))
     (assert (and (tuple? outcome)
                  (= :raised (get outcome 0))
                  (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -191,6 +191,4 @@
                     "return is discarded today; instead the failure "
                     "falls through into key generation and surfaces "
                     "there with a different, confusing error, so it "
-                    observed)))
-
-)
+                    observed))))

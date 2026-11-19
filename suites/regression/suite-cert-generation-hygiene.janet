@@ -447,7 +447,7 @@
     (def crl-path (string sdir "/jsec-crl-" tag ".pem"))
     (def out-path (string sdir "/jsec-crl-" tag ".txt"))
     (defer (do (try (os/rm crl-path) ([_]))
-               (try (os/rm out-path) ([_])))
+             (try (os/rm out-path) ([_])))
       (spit crl-path crl-pem)
       (def exit (os/execute ["openssl" "crl" "-in" crl-path "-text"
                              "-noout" "-out" out-path] :p))

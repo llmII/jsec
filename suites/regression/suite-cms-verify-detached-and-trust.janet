@@ -126,4 +126,3 @@
                       "than silently succeeding; got (:valid %q :content %q)")
               (get result :valid)
               (get result :content)))))
-

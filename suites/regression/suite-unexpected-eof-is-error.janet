@@ -66,9 +66,9 @@
         (def out (ev/chan 1))
         (ev/go (fn []
                  (ev/give out
-                   (try
-                     [:returned (:read c :all)]
-                     ([e] [:raised (string e)])))))
+                          (try
+                            [:returned (:read c :all)]
+                            ([e] [:raised (string e)])))))
         (ev/sleep 0.1)
         # Application data, then the transport closes with no
         # close_notify: the stream is truncated, not completed.

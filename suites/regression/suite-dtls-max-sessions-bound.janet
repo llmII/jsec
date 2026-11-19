@@ -131,13 +131,13 @@
           (each a flood-addrs
             (try
               (do (dtls/send-to server a "x")
-                  (++ held)
-                  (array/push held-ports (dtls/address-port a)))
+                (++ held)
+                (array/push held-ports (dtls/address-port a)))
               ([err]
                 (cond
                   (string/find "session not established" err)
                   (do (++ held)
-                      (array/push held-ports (dtls/address-port a)))
+                    (array/push held-ports (dtls/address-port a)))
                   (string/find "no session for peer address" err) nil
                   (error (string/format "unexpected probe failure: %q"
                                         err))))))

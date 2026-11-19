@@ -9,7 +9,7 @@
                   :tag "master"}
                  {:url "https://github.com/llmII/janet-assay.git"
                   :tag "main"}]
-  :version "0.1.0")
+  :version "0.2.0-interim1")
 
 # ============================================================================
 # Janet Version Floor

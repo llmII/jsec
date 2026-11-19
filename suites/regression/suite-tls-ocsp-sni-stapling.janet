@@ -76,7 +76,7 @@
 (def leaf-cert (ca/sign root leaf-csr {:serial 2 :days-valid 2}))
 (def leaf-serial
   (int/s64 (string "0x" (string/replace-all ":" ""
-                          ((cert/parse leaf-cert) :serial)))))
+                                            ((cert/parse leaf-cert) :serial)))))
 (def leaf @{:cert leaf-cert :key (crypto/export-key leaf-key)})
 (def ocsp-der (ca/create-ocsp-response root @{:serial leaf-serial} :good))
 
@@ -210,4 +210,3 @@
             (string "tls/connect with {:security {:ocsp-stapling true}} must "
                     "send the OCSP status_request (0x0005) extension in "
                     "ClientHello, but no status_request extension was sent"))))
-

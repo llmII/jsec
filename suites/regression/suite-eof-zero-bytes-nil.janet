@@ -89,8 +89,8 @@
 
     (defn close-tail [s sconn server socket-path run]
       (defer (do (try (:close sconn) ([_] nil))
-                 (try (:close server) ([_] nil))
-                 (cleanup-socket socket-path))
+               (try (:close server) ([_] nil))
+               (cleanup-socket socket-path))
         (run)))
 
     (def obs-chunk
@@ -98,39 +98,39 @@
         (do
           (def [c s sconn server socket-path] (session-data-consumed))
           (close-tail s sconn server socket-path
-            (fn []
-              (:close s)
-              (ev/sleep 0.2)
-              (outcome (fn [] (:chunk c 10 nil 2))))))))
+                      (fn []
+                        (:close s)
+                        (ev/sleep 0.2)
+                        (outcome (fn [] (:chunk c 10 nil 2))))))))
 
     (def obs-read-all
       (shape
         (do
           (def [c s sconn server socket-path] (session-data-consumed))
           (close-tail s sconn server socket-path
-            (fn []
-              (def out (ev/chan 1))
-              (ev/go (fn []
-                       (ev/give out (outcome (fn [] (:read c :all))))))
-              (ev/sleep 0.1)
-              (:close s)
-              (ev/take out))))))
+                      (fn []
+                        (def out (ev/chan 1))
+                        (ev/go (fn []
+                                 (ev/give out (outcome (fn [] (:read c :all))))))
+                        (ev/sleep 0.1)
+                        (:close s)
+                        (ev/take out))))))
 
     (def obs-prefilled
       (shape
         (do
           (def [c s sconn server socket-path] (session-data-consumed))
           (close-tail s sconn server socket-path
-            (fn []
-              (def buf @"PRE")
-              (def out (ev/chan 1))
-              (ev/go (fn []
-                       (ev/give out
-                         (try [:returned (:read c :all buf)]
-                              ([e] [:raised (string e)])))))
-              (ev/sleep 0.1)
-              (:close s)
-              (ev/take out))))))
+                      (fn []
+                        (def buf @"PRE")
+                        (def out (ev/chan 1))
+                        (ev/go (fn []
+                                 (ev/give out
+                                          (try [:returned (:read c :all buf)]
+                                            ([e] [:raised (string e)])))))
+                        (ev/sleep 0.1)
+                        (:close s)
+                        (ev/take out))))))
 
     (assert (and (= "nil" obs-chunk) (= "nil" obs-read-all) (= "nil" obs-prefilled))
             (string/format

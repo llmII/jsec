@@ -123,7 +123,7 @@
         (def cleaned (clean-output wmic-out))
         (when-let [idx (string/find "VirtualSize=" cleaned)]
           (when-let [bytes (parse-int (string/slice cleaned
-                                                   (+ idx (length "VirtualSize="))))]
+                                                    (+ idx (length "VirtualSize="))))]
             (div bytes 1024))))))
 
 (defn get-vmsize-kb

@@ -215,5 +215,4 @@
         # No wait on the server fiber: under fixed code both calls raise
         # at option parse and the server sees no datagrams at all; the
         # deferred server close reaps it.
-
         ))))

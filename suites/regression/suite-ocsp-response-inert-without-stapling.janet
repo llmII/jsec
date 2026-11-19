@@ -239,7 +239,7 @@
     (def authority (ca/generate {:common-name "jsec-ocsp-test-ca"
                                  :key-type :rsa-2048}))
     (def issued (:issue authority {:common-name "127.0.0.1"
-                                  :key-type :rsa-2048}))
+                                   :key-type :rsa-2048}))
 
     # A server-capable context with NO :security {:ocsp-stapling true},
     # so apply_session_options (src/jtls/context/server.c:72-85) leaves
@@ -279,4 +279,3 @@
                       "(expected symptom: setting an OCSP response does "
                       "nothing, with no warning)")
               probe))))
-

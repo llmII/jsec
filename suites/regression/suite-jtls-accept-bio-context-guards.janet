@@ -585,6 +585,4 @@ ssize_t read(int fd, void *buf, size_t n) {
                       "(src/jtls/context/sni.c:26), so a session for one "
                       "vhost resumes for another; child stdout: %s; child "
                       "stderr: %s")
-              (string/trim out) (string/trim err))))
-
-)
+              (string/trim out) (string/trim err)))))

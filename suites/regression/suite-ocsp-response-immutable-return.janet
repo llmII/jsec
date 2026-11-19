@@ -76,11 +76,11 @@
     (def option-takes-string
       (try (do (tls/new-context {:cert (leaf :cert) :key (leaf :key)
                                  :ocsp-response resp-str}) true)
-           ([_] false)))
+        ([_] false)))
     (def option-takes-buffer
       (try (do (tls/new-context {:cert (leaf :cert) :key (leaf :key)
                                  :ocsp-response resp-buf}) true)
-           ([_] false)))
+        ([_] false)))
 
     # One DER OCSP request for the parse side, serial 1: one OCSPRequest
     # wrapping one TBSRequest holding one Request holding one CertID with

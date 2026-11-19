@@ -77,8 +77,8 @@
   # immediately by close_notify and the transport close.
   (def [c s sconn server socket-path] (session))
   (defer (do (try (:close sconn) ([_] nil))
-             (try (:close server) ([_] nil))
-             (cleanup-socket socket-path))
+           (try (:close server) ([_] nil))
+           (cleanup-socket socket-path))
     (def out (ev/chan 1))
     (ev/go (fn [] (ev/give out (outcome (fn [] (:read c :all))))))
     (ev/sleep 0.1)

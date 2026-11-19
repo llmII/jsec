@@ -427,7 +427,7 @@
                                            :key (certs :key)
                                            :security "nope"}))))
     (assert (and err2 (string/find ":security must be a table or struct"
-                                  err2))
+                                   err2))
             (string/format
               (string ":security \"nope\" must raise the same "
                       ":security-must-be-a-table-or-struct parameter "
@@ -483,7 +483,7 @@
                                     :key (certs :key)
                                     :security [1 2 3]}))))
     (assert (and err2 (string/find ":security must be a table or struct"
-                                  err2))
+                                   err2))
             (string/format
               (string ":security [1 2 3] must raise at dtls/new-context "
                       "as well, got %q") err2)))
@@ -569,7 +569,7 @@
                        {:cert (certs :cert) :key (certs :key)
                         :security @{:session-cache-size "big"}}))))
     (assert (and nan-err (string/find ":session-cache-size must be a number"
-                                     nan-err))
+                                      nan-err))
             (string/format
               (string ":security @{:session-cache-size \"big\"} must "
                       "raise a parameter error instead of silently "

@@ -94,8 +94,8 @@
           |(do (def c (ev/with-deadline 5
                         (dtls-stream/connect "127.0.0.1" (string dtls-port)
                                              {:verify false})))
-               (:close c true)
-               :connected)))
+             (:close c true)
+             :connected)))
       (assert (= :accepted (get control 0))
               (string/format
                 (string "control: dtls/connect with a valid options table "
@@ -115,14 +115,14 @@
           |(crypto/export-key key-pem "oops")]
          ["(tls-stream/listen \"127.0.0.1\" \"0\" \"oops\") - jtls listen opts"
           |(do (def s (tls-stream/listen "127.0.0.1" "0" "oops"))
-               (:close s)
-               :accepted)]
+             (:close s)
+             :accepted)]
          ["(dtls-stream/connect host port \"oops\") - jdtls connect opts"
           |(do (def c (ev/with-deadline 5
                         (dtls-stream/connect "127.0.0.1" (string dtls-port)
                                              "oops")))
-               (:close c true)
-               :accepted)]
+             (:close c true)
+             :accepted)]
          ["(ca/create-ocsp-response ca req :good \"oops\") - jca opts"
           |(ca/create-ocsp-response my-ca @{:serial 1} :good "oops")]])
 

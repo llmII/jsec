@@ -92,7 +92,7 @@
         (def sync
           (try
             (do (dtls/recv-from server 4096 (buffer/new 4096) 1.0)
-                :returned)
+              :returned)
             ([err] err)))
         (assert (= "timeout" sync)
                 (string/format

@@ -108,7 +108,7 @@ Connect to a TLS server.
         -   `:buffer-size`: Integer. Internal TLS buffer size (default 16384).
         -   `:tcp-nodelay`: Boolean. Enable TCP\_NODELAY (default `true`).
         -   `:handshake-timing`: Boolean. Track handshake duration (default `false`).
-        -   `:security`: Table or struct. Security options (see [Security Options](#org269946d)).
+        -   `:security`: Table or struct. Security options (see [Security Options](#security-options)).
         -   `:alpn`: List of ALPN protocols.
         -   `:ca-file`: Path to CA certificate file or PEM content (string/buffer).
         -   `:ca-path`: Path to CA certificate directory.
@@ -470,6 +470,9 @@ Create a DTLS server bound to an address.
         table (default 1024). When the table is full, expired sessions are
         cleaned up first, then the oldest unestablished session is evicted;
         a new peer is rejected when every session is established.
+    -   `:mtu`: Optional explicit link MTU in bytes (`256`-`65535`). When omitted,
+        the bound interface MTU is resolved automatically (minimum active
+        interface MTU for wildcard binds).
 
 **Returns**: A DTLS server object.
 
@@ -533,6 +536,9 @@ Create a DTLS client connection. Performs handshake.
     -   `:verify-hostname`: Hostname to verify against cert (defaults to `:hostname`).
     -   `:session`: Byte string or buffer. Session data for resumption.
     -   `:handshake-timing`: Boolean. Track handshake duration.
+    -   `:mtu`: Optional explicit link MTU in bytes (`256`-`65535`). When omitted,
+        Linux keeps native kernel PMTU discovery intact and non-Linux hosts
+        resolve the outgoing interface MTU automatically.
 
 **Returns**: A DTLS client object.
 

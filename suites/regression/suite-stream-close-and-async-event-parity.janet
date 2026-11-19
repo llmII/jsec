@@ -130,7 +130,7 @@
           (var r :none)
           (try
             (do (set r (:recv-from server 1024 (buffer/new 1024) 5.0))
-                (ev/give got [:ok r]))
+              (ev/give got [:ok r]))
             ([e] (ev/give got [:raised (string e)])))))
       (def conn (ev/with-deadline 5
                   (tls/connect "127.0.0.1" (string port)
@@ -203,9 +203,9 @@
   (def probe (ev/chan 2))
   (ev/go (fn [] (ev/give probe (ev/take ch))))
   (ev/go (fn [] (ev/sleep seconds)
-               (ev/give probe [:watchdog (string "the operation was "
-                                                 "still suspended after "
-                                                 seconds "s")])))
+           (ev/give probe [:watchdog (string "the operation was "
+                                             "still suspended after "
+                                             seconds "s")])))
   (def r (ev/take probe))
   (if (and (tuple? r) (= :watchdog (get r 0)))
     r
@@ -281,7 +281,7 @@
     (set outcome :no-call)
     (try
       (do (:recv-from closed-server 8 (buffer/new 8))
-          (set outcome [:returned-nil]))
+        (set outcome [:returned-nil]))
       ([e] (set outcome [:raised (string e)])))
     (assert (and (raise-shaped? outcome "[DTLS:IO]")
                  (raise-shaped? outcome "server is closed"))
@@ -568,5 +568,4 @@
                       "server is closed (src/jdtls/server.c:823-825), "
                       "the spelling closed dtls/recv-from must adopt: "
                       "got %q")
-              outcome)))
-)
+              outcome))))

@@ -146,8 +146,8 @@
 
         (ev/cancel fb "test done")
         (defer (do (try (:close s) ([_] nil))
-                   (try (:close sconn) ([_] nil))
-                   (try (:close c) ([_] nil)))
+                 (try (:close sconn) ([_] nil))
+                 (try (:close c) ([_] nil)))
 
           # Proof precondition: the close must have SUSPENDED (it
           # cannot return before the drain fiber opens the window at

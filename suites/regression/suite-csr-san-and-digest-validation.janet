@@ -123,8 +123,8 @@
     # the entry - not silently skipped.
     (var outcome (capture-error
                    (fn [] (crypto/generate-csr key
-                                         {:common-name "csr-san-digest-regression.local"
-                                          :san ["DNS:ok.example.com" :bad]}))))
+                                               {:common-name "csr-san-digest-regression.local"
+                                                :san ["DNS:ok.example.com" :bad]}))))
     (assert (and (tuple? outcome)
                  (= :raised (get outcome 0))
                  (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -141,8 +141,8 @@
     # comma that fails the extension outright.
     (set outcome (capture-error
                    (fn [] (crypto/generate-csr key
-                                         {:common-name "csr-san-digest-regression.local"
-                                          :san [:bad "DNS:b.example.com"]}))))
+                                               {:common-name "csr-san-digest-regression.local"
+                                                :san [:bad "DNS:b.example.com"]}))))
     (assert (and (tuple? outcome)
                  (= :raised (get outcome 0))
                  (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -160,8 +160,8 @@
     # src/jcrypto/csr.c:88-90 ignores it and signs a CSR without SAN.
     (set outcome (capture-error
                    (fn [] (crypto/generate-csr key
-                                         {:common-name "csr-san-digest-regression.local"
-                                          :san "DNS:a.example.com"}))))
+                                               {:common-name "csr-san-digest-regression.local"
+                                                :san "DNS:a.example.com"}))))
     (assert (and (tuple? outcome)
                  (= :raised (get outcome 0))
                  (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -178,8 +178,8 @@
     # :95 silently emits the CSR with no extension.
     (set outcome (capture-error
                    (fn [] (crypto/generate-csr key
-                                         {:common-name "csr-san-digest-regression.local"
-                                          :san []}))))
+                                               {:common-name "csr-san-digest-regression.local"
+                                                :san []}))))
     (assert (and (tuple? outcome)
                  (= :raised (get outcome 0))
                  (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -197,8 +197,8 @@
     (each d [:not-a-real-digest "not-a-real-digest" 42]
       (var outcome (capture-error
                      (fn [] (crypto/generate-csr key
-                                           {:common-name "csr-san-digest-regression.local"
-                                            :digest d}))))
+                                                 {:common-name "csr-san-digest-regression.local"
+                                                  :digest d}))))
       (assert (and (tuple? outcome)
                    (= :raised (get outcome 0))
                    (string/find "CRYPTO:PARAM" (get outcome 1)))
@@ -246,7 +246,7 @@
     (def csr
       (try {:returned (crypto/generate-csr key {:common-name "s.example"
                                                 :country "USA"})}
-           ([err] {:raised err})))
+        ([err] {:raised err})))
     (def observed
       (string
         "; crypto/generate-csr with a three-letter country code "
@@ -262,5 +262,4 @@
                     "src/jcrypto/csr.c:40-82, "
                     "src/jcert/jcert.c:159-163) instead of silently "
                     "returning a certificate or CSR with a partial or "
-                    "empty subject, but " observed)))
-)
+                    "empty subject, but " observed))))

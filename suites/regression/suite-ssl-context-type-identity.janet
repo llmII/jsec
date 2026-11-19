@@ -117,7 +117,7 @@
     (var outcome :no-error)
     (try
       (do (dtls/connect "127.0.0.1" "9" {:context tctx :verify false})
-          (set outcome :no-error))
+        (set outcome :no-error))
       ([err] (set outcome err)))
     (assert (string/find "cannot use TLS context for DTLS connection"
                          (string outcome))
@@ -146,7 +146,7 @@
     (var outcome :no-error)
     (try
       (do (tls/connect "127.0.0.1" "9" {:context dctx :verify false})
-          (set outcome :no-error))
+        (set outcome :no-error))
       ([err] (set outcome err)))
     (assert (string/find want (string outcome))
             (string/format
@@ -159,7 +159,7 @@
     (var control :no-error)
     (try
       (do (tls/connect "127.0.0.1" "9" {:context tctx :verify false})
-          (set control :no-error))
+        (set control :no-error))
       ([err] (set control err)))
     (assert (not (string/find want (string control)))
             (string/format
@@ -175,7 +175,7 @@
           (var wrap-out :no-error)
           (try
             (do (tls/wrap conn {:context dctx :verify false})
-                (set wrap-out :no-error))
+              (set wrap-out :no-error))
             ([err] (set wrap-out err)))
           (assert (string/find want (string wrap-out))
                   (string/format
@@ -199,7 +199,7 @@
         (var loop-out :no-error)
         (try
           (do (tls/accept-loop server dctx (fn [s] nil))
-              (set loop-out :no-error))
+            (set loop-out :no-error))
           ([err] (set loop-out err)))
         (assert (string/find want (string loop-out))
                 (string/format
@@ -221,7 +221,7 @@
       (var tls-out :no-error)
       (try
         (do (tls/connect "127.0.0.1" "9" {:context bad :verify false})
-            (set tls-out :no-error))
+          (set tls-out :no-error))
         ([err] (set tls-out err)))
       (assert (string/find want (string tls-out))
               (string/format
@@ -231,7 +231,7 @@
       (var dtls-out :no-error)
       (try
         (do (dtls/connect "127.0.0.1" "9" {:context bad :verify false})
-            (set dtls-out :no-error))
+          (set dtls-out :no-error))
         ([err] (set dtls-out err)))
       (assert (string/find want (string dtls-out))
               (string/format
@@ -246,11 +246,10 @@
       (var out :no-error)
       (try
         (do (tls/connect "127.0.0.1" "9" {:context ctx :verify false})
-            (set out :no-error))
+          (set out :no-error))
         ([err] (set out err)))
       (assert (not (string/find want (string out)))
               (string/format
                 (string "control: a real ssl-context must never raise %q; "
                         "got %q")
-                want (string out)))))
-)
+                want (string out))))))

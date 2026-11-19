@@ -159,7 +159,7 @@
 (def- ed-spki
   (tlv 0x30 (string ed-algid
                     (tlv 0x03 (string (string/from-bytes 0x00)
-                                     (string/repeat "\x01" 32))))))
+                                      (string/repeat "\x01" 32))))))
 (def- oid-cn (string/from-bytes 0x06 0x03 0x55 0x04 0x03))
 (def- validity
   (tlv 0x30 (string (tlv 0x17 "200101000000Z") (tlv 0x17 "490101000000Z"))))
@@ -185,7 +185,7 @@
       tbs-core))
   (tlv 0x30 (string (tlv 0x30 tbs) ed-algid
                     (tlv 0x03 (string (string/from-bytes 0x00)
-                                     (string/repeat "\x00" 8))))))
+                                      (string/repeat "\x00" 8))))))
 
 (defn- san-ext [general-names-der]
   (tlv 0x30 (string (string/from-bytes 0x06 0x03 0x55 0x1d 0x11)

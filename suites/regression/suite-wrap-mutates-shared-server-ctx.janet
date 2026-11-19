@@ -142,8 +142,7 @@
                           "client certificate on its own connection "
                           "(SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT "
                           "at src/jtls/api/connect.c:118-120); the "
-                          "connection SUCCEEDED with no client certificate")
-                  ))
+                          "connection SUCCEEDED with no client certificate")))
 
         # Scenario B (the leak): a default-configured wrap of the SAME
         # cert+key must see unchanged verify state and accept a client
@@ -186,7 +185,7 @@
         (def a-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-ca-leak.example"))
+                                "wrap-ca-leak.example"))
         (def a-srv (ev/take a-server))
         (assert (nil? a-err)
                 (string/format
@@ -204,7 +203,7 @@
         (def b-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-ca-leak.example"))
+                                "wrap-ca-leak.example"))
         (def b-srv (ev/take b-server))
         (assert (not (nil? b-err))
                 (string/format
@@ -238,7 +237,7 @@
         (def a-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-trusted-leak.example"))
+                                "wrap-trusted-leak.example"))
         (def a-srv (ev/take a-server))
         (assert (nil? a-err)
                 (string/format
@@ -254,7 +253,7 @@
         (def b-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-trusted-leak.example"))
+                                "wrap-trusted-leak.example"))
         (def b-srv (ev/take b-server))
         (assert (not (nil? b-err))
                 (string/format
@@ -290,7 +289,7 @@
         (def a-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-security-leak.example"))
+                                "wrap-security-leak.example"))
         (def a-srv (ev/take a-server))
         (assert (nil? a-err)
                 (string/format
@@ -310,7 +309,7 @@
         (def b-err (client-ping addr {:verify false
                                       :cert (client-leaf :cert)
                                       :key (client-leaf :key)}
-                               "wrap-security-leak.example"))
+                                "wrap-security-leak.example"))
         (def b-srv (ev/take b-server))
         (assert (not (nil? b-err))
                 (string/format

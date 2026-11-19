@@ -651,5 +651,4 @@
       (assert (indexed? (get bad :signers)) ":signers stays an array on failure")
       (assert (indexed? (get bad :certs)) ":certs stays an array on failure")
       (assert (string? (get bad :error)) ":error is a string on failure")
-      (assert (number? (get bad :error-code)) ":error-code is a number on failure")))
-)
+      (assert (number? (get bad :error-code)) ":error-code is a number on failure"))))

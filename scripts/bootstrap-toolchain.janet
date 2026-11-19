@@ -646,9 +646,9 @@ exit /b 0
     (do
       (when (empty? cc)
         (set cc (cond (cmd-exists? "cc") "cc"
-                      (cmd-exists? "gcc") "gcc"
-                      (cmd-exists? "clang") "clang"
-                      "cc")))
+                  (cmd-exists? "gcc") "gcc"
+                  (cmd-exists? "clang") "clang"
+                  "cc")))
       (when (empty? make-cmd)
         (set make-cmd (if (cmd-exists? "gmake") "gmake" "make")))
       (require-cmd cc "C compiler")

@@ -415,54 +415,54 @@
              (:close server))
 
       (relay-pump cs stop-fn
-        (fn [from buf]
-          (when (nil? client-addr)
-            (set client-addr from))
-          (def parsed (parse-first-msg buf))
-          (cond
-            # The lossy relay drops the first cookie-less
-            # ClientHello; the bumped copy stands in for the
-            # client's retransmission at a fresh record sequence.
-            (and (= 1 (parsed :msg-type))
-                 (zero? (client-hello-cookie-len buf))
-                 (not (obs :dropped-first-hello)))
-            (do
-              (put obs :dropped-first-hello true)
-              (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))
+                  (fn [from buf]
+                    (when (nil? client-addr)
+                      (set client-addr from))
+                    (def parsed (parse-first-msg buf))
+                    (cond
+                      # The lossy relay drops the first cookie-less
+                      # ClientHello; the bumped copy stands in for the
+                      # client's retransmission at a fresh record sequence.
+                      (and (= 1 (parsed :msg-type))
+                           (zero? (client-hello-cookie-len buf))
+                           (not (obs :dropped-first-hello)))
+                      (do
+                        (put obs :dropped-first-hello true)
+                        (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))
 
-            # The verified resend carries the client's advanced wire
-            # record sequence - the alignment pin watches it arrive.
-            (and (= 1 (parsed :msg-type))
-                 (pos? (client-hello-cookie-len buf))
-                 (nil? (obs :resend-seq)))
-            (do
-              (def bumped (bump-epoch0-rec-seqs buf 1))
-              (put obs :resend-seq (rec-seq-of bumped))
-              (net/send-to ss server-dest bumped))
+                      # The verified resend carries the client's advanced wire
+                      # record sequence - the alignment pin watches it arrive.
+                      (and (= 1 (parsed :msg-type))
+                           (pos? (client-hello-cookie-len buf))
+                           (nil? (obs :resend-seq)))
+                      (do
+                        (def bumped (bump-epoch0-rec-seqs buf 1))
+                        (put obs :resend-seq (rec-seq-of bumped))
+                        (net/send-to ss server-dest bumped))
 
-            # Later client flights and application data pass through
-            # with epoch-0 record sequences advanced the same way.
-            (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))))
+                      # Later client flights and application data pass through
+                      # with epoch-0 record sequences advanced the same way.
+                      (net/send-to ss server-dest (bump-epoch0-rec-seqs buf 1)))))
 
       (relay-pump ss stop-fn
-        (fn [_ buf]
-          (when client-addr
-            (def parsed (parse-first-msg buf))
-            (cond
-              # Exactly one HelloVerifyRequest reaches the client.
-              (= 3 (parsed :msg-type))
-              (when (zero? (obs :hvr-delivered))
-                (put obs :hvr-delivered (inc (obs :hvr-delivered)))
-                (net/send-to cs client-addr buf))
+                  (fn [_ buf]
+                    (when client-addr
+                      (def parsed (parse-first-msg buf))
+                      (cond
+                        # Exactly one HelloVerifyRequest reaches the client.
+                        (= 3 (parsed :msg-type))
+                        (when (zero? (obs :hvr-delivered))
+                          (put obs :hvr-delivered (inc (obs :hvr-delivered)))
+                          (net/send-to cs client-addr buf))
 
-              # The ServerHello flight: pin its record sequence.
-              (= 2 (parsed :msg-type))
-              (do
-                (when (nil? (obs :flight-seq))
-                  (put obs :flight-seq (rec-seq-of buf)))
-                (net/send-to cs client-addr buf))
+                        # The ServerHello flight: pin its record sequence.
+                        (= 2 (parsed :msg-type))
+                        (do
+                          (when (nil? (obs :flight-seq))
+                            (put obs :flight-seq (rec-seq-of buf)))
+                          (net/send-to cs client-addr buf))
 
-              (net/send-to cs client-addr buf)))))
+                        (net/send-to cs client-addr buf)))))
 
       (ev/go (fn []
                (try

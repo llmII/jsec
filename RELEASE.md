@@ -17,10 +17,15 @@
 4.  Update version in `project.janet`
 5.  Update [NEWS.org](NEWS.md) with changes since last release
 6.  Review and update documentation
-7.  Format all code:
+7.  Regenerate tracked `.md` mirrors from `.org` sources on demand:
+    
+        jpm run regen-docs
+    
+    (Or run `janet scripts/regen-docs.janet [FILE.org ...]` directly.)
+8.  Format all code:
     
         jpm run format
-8.  Build clean and test:
+9.  Build clean and test:
     
         jpm clean && jpm build && jpm install
         janet test/runner.janet -f '{unit,regression,coverage}'
@@ -62,7 +67,8 @@ refined during this time period.
     
         jpm run release
     
-    This runs `clean` and `format` targets.
+    This runs `clean`, `format/all`, and `regen-docs` (`scripts/regen-docs.janet`)
+    to refresh tracked `.md` mirrors with stable heading anchors.
 
 4.  **Final Testing**
     
@@ -156,7 +162,7 @@ For critical security fixes:
 
 <tr>
 <td class="org-left"><code>format-c</code></td>
-<td class="org-left">Format C code with astyle</td>
+<td class="org-left">Format C code with clang-format</td>
 </tr>
 
 <tr>
@@ -165,8 +171,13 @@ For critical security fixes:
 </tr>
 
 <tr>
+<td class="org-left"><code>regen-docs</code></td>
+<td class="org-left">Regenerate <code>.md</code> mirrors from <code>.org</code> docs</td>
+</tr>
+
+<tr>
 <td class="org-left"><code>release</code></td>
-<td class="org-left">Clean and format for release</td>
+<td class="org-left">Clean, format, and regenerate docs</td>
 </tr>
 
 <tr>
