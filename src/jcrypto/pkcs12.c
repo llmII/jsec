@@ -69,9 +69,8 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
         }
         char *data;
         long len = BIO_get_mem_data(cert_bio, &data);
-        janet_table_put(
-            result, janet_ckeywordv("cert"),
-            janet_stringv((const uint8_t *)data, (int32_t)len));
+        janet_table_put(result, janet_ckeywordv("cert"),
+                        janet_stringv((const uint8_t *)data, (int32_t)len));
         BIO_free(cert_bio);
 
         /* Get friendly name if present */
@@ -104,9 +103,8 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
         }
         char *data;
         long len = BIO_get_mem_data(key_bio, &data);
-        janet_table_put(
-            result, janet_ckeywordv("key"),
-            janet_stringv((const uint8_t *)data, (int32_t)len));
+        janet_table_put(result, janet_ckeywordv("key"),
+                        janet_stringv((const uint8_t *)data, (int32_t)len));
         BIO_free(key_bio);
         EVP_PKEY_free(pkey);
     }
@@ -126,12 +124,13 @@ Janet cfun_parse_pkcs12(int32_t argc, Janet *argv) {
                 BIO_free(ca_bio);
                 sk_X509_pop_free(ca, X509_free);
                 PKCS12_free(p12);
-                crypto_panic_ssl("failed to export a chain certificate as PEM");
+                crypto_panic_ssl(
+                    "failed to export a chain certificate as PEM");
             }
             char *data;
             long len = BIO_get_mem_data(ca_bio, &data);
-            janet_array_push(chain, janet_stringv((const uint8_t *)data,
-                                                  (int32_t)len));
+            janet_array_push(
+                chain, janet_stringv((const uint8_t *)data, (int32_t)len));
             BIO_free(ca_bio);
         }
         janet_table_put(result, janet_ckeywordv("chain"),
@@ -305,8 +304,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
                 EVP_PKEY_free(pkey);
                 X509_free(cert);
                 sk_X509_pop_free(ca, X509_free);
-                crypto_panic_resource("failed to collect chain certificate %d",
-                                      i);
+                crypto_panic_resource(
+                    "failed to collect chain certificate %d", i);
             }
         }
     }
@@ -327,7 +326,8 @@ Janet cfun_create_pkcs12(int32_t argc, Janet *argv) {
     }
 
     /* Create PKCS#12 */
-    PKCS12 *p12 = PKCS12_create(password, NULL, pkey, cert, ca, 0, 0, 0, 0, 0);
+    PKCS12 *p12 =
+        PKCS12_create(password, NULL, pkey, cert, ca, 0, 0, 0, 0, 0);
 
     /* Cleanup inputs */
     EVP_PKEY_free(pkey);

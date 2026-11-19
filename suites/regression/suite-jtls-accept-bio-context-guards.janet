@@ -390,7 +390,7 @@ ssize_t read(int fd, void *buf, size_t n) {
 (ev/sleep 0.3)
 (def [r3 sess3] (probe "a-session-on-b" "b.example" sess1))
 (print "SUMMARY a-first=" r1 " a-resume-a=" r2 " a-session-on-b=" r3)
-(os/exit 0)
+(:close server)
 ```)
 
 (def-suite :name "JTLS Accept Bio Context Guards Regression"

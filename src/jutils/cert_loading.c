@@ -66,7 +66,7 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) {
         jutils_cert_load_errorf("chain: failed to create certificate BIO: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -74,8 +74,8 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
     if (!cert) {
         BIO_free(bio);
-        jutils_cert_load_errorf("chain: certificate %d failed to parse: %s", cert_num,
-                         get_ssl_error_string());
+        jutils_cert_load_errorf("chain: certificate %d failed to parse: %s",
+                                cert_num, get_ssl_error_string());
         return 0;
     }
 
@@ -83,7 +83,7 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
         X509_free(cert);
         BIO_free(bio);
         jutils_cert_load_errorf("chain: certificate %d could not be used: %s",
-                         cert_num, get_ssl_error_string());
+                                cert_num, get_ssl_error_string());
         return 0;
     }
     X509_free(cert);
@@ -97,8 +97,9 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
             unsigned long err = ERR_peek_last_error();
             if (err != 0 && ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
                 BIO_free(bio);
-                jutils_cert_load_errorf("chain: certificate %d failed to parse: %s",
-                                 cert_num, get_ssl_error_string());
+                jutils_cert_load_errorf(
+                    "chain: certificate %d failed to parse: %s", cert_num,
+                    get_ssl_error_string());
                 return 0;
             }
             break;
@@ -106,8 +107,9 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
         if (SSL_CTX_add_extra_chain_cert(ctx, ca) != 1) {
             X509_free(ca);
             BIO_free(bio);
-            jutils_cert_load_errorf("chain: certificate %d could not be added: %s",
-                             cert_num, get_ssl_error_string());
+            jutils_cert_load_errorf(
+                "chain: certificate %d could not be added: %s", cert_num,
+                get_ssl_error_string());
             return 0;
         }
         /* Note: SSL_CTX_add_extra_chain_cert takes ownership, don't free ca
@@ -155,7 +157,7 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     BIO *bio = BIO_new_mem_buf(data, len);
     if (!bio) {
         jutils_cert_load_errorf("ca: failed to create certificate BIO: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -163,7 +165,7 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
     if (!store) {
         BIO_free(bio);
         jutils_cert_load_errorf("ca: failed to get certificate store: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -176,8 +178,9 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len) {
             unsigned long err = ERR_peek_last_error();
             if (err != 0 && ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
                 BIO_free(bio);
-                jutils_cert_load_errorf("ca: certificate %d failed to parse: %s",
-                                 cert_num, get_ssl_error_string());
+                jutils_cert_load_errorf(
+                    "ca: certificate %d failed to parse: %s", cert_num,
+                    get_ssl_error_string());
                 return 0;
             }
             break;
@@ -237,7 +240,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
     BIO *bio = BIO_new_mem_buf(cert_data, cert_len);
     if (!bio) {
         jutils_cert_load_errorf("failed to create certificate BIO: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -245,7 +248,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
     BIO_free(bio);
     if (!x509) {
         jutils_cert_load_errorf("failed to parse PEM certificate: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -254,7 +257,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
     if (!store) {
         X509_free(x509);
         jutils_cert_load_errorf("failed to get certificate store: %s",
-                         get_ssl_error_string());
+                                get_ssl_error_string());
         return 0;
     }
 
@@ -264,7 +267,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem) {
         unsigned long err = ERR_peek_last_error();
         if (ERR_GET_REASON(err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
             jutils_cert_load_errorf("failed to add trusted certificate: %s",
-                             get_ssl_error_string());
+                                    get_ssl_error_string());
             return 0;
         }
         ERR_clear_error();

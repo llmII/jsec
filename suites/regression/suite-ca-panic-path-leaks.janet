@@ -62,53 +62,12 @@
 # ledger for that run and for the note on the stock LSan suppressions.
 
 (use assay)
-(import assay/memory)
-(import jsec/ca)
 (import ../helpers :prefix "")
 
-# Forced panics per child run. The leak is small per panic (about 4.6 kB
-# for site 1, 1.0 kB for site 2, 0.5 kB for site 3 on this host's
-# OpenSSL 3.6.5), so the proof amplifies it: 50000 forced panics leak
-# hundreds of MB under the defect while the fixed path reuses its
-# chunks and stays flat.
-(def- forced-panics 50000)
-
-# Leak-freedom bound in kB for the whole forced-panic loop. The defect
-# side grows by tens to hundreds of MB (measured); the fixed side stays
-# in the low kB (chunk reuse after the per-panic free).
-(def- leak-bound-kb 4096)
-
-(defn- run-leak-child
-  "Spawn the leak scenario under the janet interpreter. Returns
-   {:exit n :out stdout :err stderr}."
-  [program]
-  (def proc (os/spawn ["janet" "-e" program] :p {:out :pipe :err :pipe}))
-  (def out-buf @"")
-  (def err-buf @"")
-  (ev/go (fn [] (when-let [b (:read (proc :out) :all)] (buffer/push out-buf b))))
-  (ev/go (fn [] (when-let [b (:read (proc :err) :all)] (buffer/push err-buf b))))
-  (def exit (os/proc-wait proc))
-  (:close (proc :out))
-  (:close (proc :err))
-  {:exit exit :out (string out-buf) :err (string err-buf)})
-
-(defn- result-fields
-  "Parse the child's RESULT:<raised>:<growth-kb> line into [raised growth]
-   or nil when absent."
-  [out]
-  (when-let [idx (string/find "RESULT:" out)]
-    (def start (+ idx (length "RESULT:")))
-    (def stop (or (string/find "\n" out start) (length out)))
-    (def parts (string/split ":" (string/trim (string/slice out start stop))))
-    (when (= 2 (length parts))
-      (def raised (scan-number (parts 0)))
-      (def growth (scan-number (parts 1)))
-      (when (and raised growth) [raised growth]))))
-
 (def- ca-create-leak-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/ca)
-(import assay/memory)
 
 (def ca (ca/generate {:common-name "Leak Root"}))
 (def cert-pem (:get-cert ca))
@@ -118,32 +77,12 @@
    or nil when the call did not raise."
   []
   (try (do (ca/create cert-pem "THIS IS NOT A KEY") nil) ([e] e)))
-
-# Warm the allocator first so the growth sample is not arena slop.
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
+```))
 
 (def- crl-leak-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/ca)
-(import assay/memory)
 
 (def ca (ca/generate {:common-name "Leak Root"}))
 (def bad-revoked {:revoked @[{:serial 1 :reason :bogus-reason}]})
@@ -155,31 +94,12 @@
   (try (do (:generate-crl ca bad-revoked)
            nil)
        ([e] e)))
-
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
+```))
 
 (def- ocsp-leak-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/ca)
-(import assay/memory)
 
 (def ca (ca/generate {:common-name "Leak Root"}))
 (def request-info @{:serial (int/s64 7)})
@@ -192,68 +112,7 @@
                                   {:revocation-time "not-a-time"})
            nil)
        ([e] e)))
-
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
-
-(defn- assert-leak-freedom
-  "Shared parent-side contract for one panic path: the child survives,
-   every forced panic raised the named error, and the process growth
-   stays under the leak-freedom bound."
-  [child error-fragment alloc-note panic-note]
-  (def exit (child :exit))
-  (def out (child :out))
-  (def err (child :err))
-  (assert (= 0 exit)
-          (string/format
-            (string "the forced-panic child must survive (the bad input is "
-                    "a normal error condition, not a process-fatal one); "
-                    "child exit status %d; child stdout: %s; child "
-                    "stderr: %s")
-            exit (string/trim out) (string/trim err)))
-  (assert (string/find error-fragment out)
-          (string/format
-            (string "every forced panic must raise the named error %q "
-                    "(the raise contract the fix must keep); child "
-                    "stdout: %s; child stderr: %s")
-            error-fragment (string/trim out) (string/trim err)))
-  (def fields (result-fields out))
-  (assert (not (nil? fields))
-          (string/format
-            (string "the child must report RESULT:<raised>:<growth-kb>; "
-                    "child stdout: %s; child stderr: %s")
-            (string/trim out) (string/trim err)))
-  (def [raised growth] fields)
-  (assert (= raised forced-panics)
-          (string/format
-            (string "the child must force the panic on every one of the %d "
-                    "iterations (raise contract); it reported %d raises; "
-                    "child stdout: %s")
-            forced-panics raised (string/trim out)))
-  (assert (<= growth leak-bound-kb)
-          (string/format
-            (string "each panic must free its earlier allocations: forcing "
-                    "this panic %d times must stay under %d kB of process "
-                    "growth, but the process grew by %d kB - the panic "
-                    "leaves its earlier allocations unfreed (%s; %s)")
-            raised leak-bound-kb growth alloc-note panic-note)))
+```))
 
 (def-suite :name "CA Panic Path Leak Regression"
   :description "Ticket 7fba14b72c: CA panic paths must free their earlier OpenSSL allocations"
@@ -262,7 +121,7 @@
     :timeout 120
 
     (def child (run-leak-child ca-create-leak-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "failed to parse private key PEM"
       "the X509 loaded at src/jca/types.c:313"
       "ca_pem_to_key panics at src/jca/types.c:144-145"))
@@ -271,7 +130,7 @@
     :timeout 120
 
     (def child (run-leak-child crl-leak-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "unknown revocation reason"
       "the X509_CRL allocated at src/jca/crl.c:179"
       "ca_keyword_to_reason panics at src/jca/crl.c:242 via src/jca/crl.c:43"))
@@ -280,7 +139,7 @@
     :timeout 120
 
     (def child (run-leak-child ocsp-leak-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "invalid revocation-time format"
       "the OCSP_BASICRESP at src/jca/ocsp.c:221 and OCSP_CERTID at src/jca/ocsp.c:241"
       "the revocation-time panics at src/jca/ocsp.c:279-288")))

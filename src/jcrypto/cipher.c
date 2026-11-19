@@ -291,8 +291,9 @@ Janet cfun_decrypt(int32_t argc, Janet *argv) {
         }
     }
 
-    /* Write directly into Janet string memory - no intermediate buffer copy */
-    uint8_t *plaintext_buf = janet_string_begin((int32_t)ciphertext.len);
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
+    uint8_t *plaintext_buf = janet_string_begin(ciphertext.len);
 
     /* Decrypt */
     int len;
@@ -356,7 +357,8 @@ Janet cfun_generate_nonce(int32_t argc, Janet *argv) {
         crypto_panic_param("unsupported cipher algorithm: %v", argv[0]);
     }
 
-    /* Write directly into Janet string memory - no intermediate buffer copy */
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
     uint8_t *nonce = janet_string_begin(info->nonce_len);
 
     if (RAND_bytes(nonce, info->nonce_len) != 1) {

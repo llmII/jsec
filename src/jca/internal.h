@@ -63,9 +63,9 @@
  */
 
 typedef struct {
-    X509 *cert;                       /* CA certificate */
-    EVP_PKEY *key;                    /* CA private key */
-    STACK_OF(X509) * issued;          /* Issued certs (only if track_issued) */
+    X509 *cert;              /* CA certificate */
+    EVP_PKEY *key;           /* CA private key */
+    STACK_OF(X509) * issued; /* Issued certs (only if track_issued) */
     STACK_OF(X509_REVOKED) * revoked; /* Revoked certs (for CRL generation) */
     int64_t serial;                   /* Next serial number */
     uint8_t track_issued; /* Whether to track issued certs (default: 0) */

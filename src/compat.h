@@ -361,9 +361,10 @@ static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
 
 /*
  * Socket flags for jsec_accept4:
- * When the platform defines SOCK_CLOEXEC and SOCK_NONBLOCK (Linux, BSDs, Illumos),
- * JSEC_SOCK_* directly aliases the system constants so accept4(2) can consume
- * them without translation overhead. Otherwise fallback bit values are used.
+ * When the platform defines SOCK_CLOEXEC and SOCK_NONBLOCK (Linux, BSDs,
+ * Illumos), JSEC_SOCK_* directly aliases the system constants so accept4(2)
+ * can consume them without translation overhead. Otherwise fallback bit
+ * values are used.
  */
 #ifdef SOCK_CLOEXEC
 #define JSEC_SOCK_CLOEXEC SOCK_CLOEXEC
@@ -430,11 +431,13 @@ static inline void jsec_winsock_cleanup(void) {}
 
 /*
  * Platform accept4 capability detection using Janet's OS macros:
- * Linux, BSDs (FreeBSD 10+, OpenBSD 5.7+, NetBSD 8.0+, DragonFly), and Illumos
- * provide accept4(2) in <sys/socket.h> with SOCK_NONBLOCK and SOCK_CLOEXEC.
- * macOS and other POSIX platforms fall back to accept() + fcntl.
+ * Linux, BSDs (FreeBSD 10+, OpenBSD 5.7+, NetBSD 8.0+, DragonFly), and
+ * Illumos provide accept4(2) in <sys/socket.h> with SOCK_NONBLOCK and
+ * SOCK_CLOEXEC. macOS and other POSIX platforms fall back to accept() +
+ * fcntl.
  */
-#if (defined(JANET_LINUX) || defined(JANET_BSD) || defined(JANET_ILLUMOS)) && \
+#if (defined(JANET_LINUX) || defined(JANET_BSD) ||                           \
+     defined(JANET_ILLUMOS)) &&                                              \
     defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
 #define JSEC_HAVE_ACCEPT4 1
 #else
@@ -450,7 +453,8 @@ static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
     if (fd >= 0) {
         return fd;
     }
-    /* Fall back to accept() + fcntl only if accept4 is unimplemented in running kernel */
+    /* Fall back to accept() + fcntl only if accept4 is unimplemented in
+     * running kernel */
     if (errno != ENOSYS) {
         return fd;
     }

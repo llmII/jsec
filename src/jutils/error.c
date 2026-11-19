@@ -91,7 +91,8 @@ const char *get_ssl_error_string(void) {
 int jutils_is_unexpected_eof(void) {
 #ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
     unsigned long err = ERR_peek_error();
-    return err != 0 && ERR_GET_REASON(err) == SSL_R_UNEXPECTED_EOF_WHILE_READING;
+    return err != 0 &&
+           ERR_GET_REASON(err) == SSL_R_UNEXPECTED_EOF_WHILE_READING;
 #else
     return 0;
 #endif

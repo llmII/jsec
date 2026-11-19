@@ -183,15 +183,15 @@ void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc);
 #define JDTLS_SESS_TRACK_HANDSHAKE (1u << 1)
 
 typedef struct DTLSSession {
-    SSL *ssl;                 /* OpenSSL SSL object */
-    BIO *rbio;                /* Read BIO (memory BIO for incoming data) */
-    BIO *wbio;                /* Write BIO (memory BIO for outgoing data) */
+    SSL *ssl;  /* OpenSSL SSL object */
+    BIO *rbio; /* Read BIO (memory BIO for incoming data) */
+    BIO *wbio; /* Write BIO (memory BIO for outgoing data) */
     DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
-    struct DTLSSession *next; /* For linked list in hash bucket */
-    double last_activity;     /* Time of last activity (for timeout) */
-    uint64_t rec_seq_off;     /* Record sequence alignment: constant
-                               * offset added to outbound epoch-0 record
-                               * headers (RFC 6347 section 4.2.1) */
+    struct DTLSSession *next;      /* For linked list in hash bucket */
+    double last_activity;          /* Time of last activity (for timeout) */
+    uint64_t rec_seq_off;          /* Record sequence alignment: constant
+                                    * offset added to outbound epoch-0 record
+                                    * headers (RFC 6347 section 4.2.1) */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
     struct timespec ts_connect;   /* Time when session was created */
@@ -222,8 +222,8 @@ typedef struct DTLSSession {
 typedef struct DTLSClient DTLSClient;
 typedef struct DTLSServer DTLSServer;
 
-/* DTLSClientAsyncState flags (bits 0-2) and DTLSClientOp (bits 3-4) packed into
- * uint8_t flags. */
+/* DTLSClientAsyncState flags (bits 0-2) and DTLSClientOp (bits 3-4) packed
+ * into uint8_t flags. */
 #define JDTLS_CAS_WANT_WRITE (1u << 0)
 #define JDTLS_CAS_IO_IN_FLIGHT (1u << 1)
 #define JDTLS_CAS_FLUSH_ONLY (1u << 2)
@@ -283,28 +283,29 @@ typedef struct {
     double timeout;
     int32_t nbytes;
 #ifdef JANET_WINDOWS
-    uint8_t io_in_flight;              /* 1 while WSARecvFrom overlapped op is queued */
+    uint8_t io_in_flight; /* 1 while WSARecvFrom overlapped op is queued */
     struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
     uint8_t recv_buf[65536];           /* Buffer for received datagram */
 #endif
 } DTLSRecvFromState;
 
 struct DTLSClient {
-    JanetStream stream;            /* Embedded stream for method dispatch */
-    JanetStream *transport;        /* Underlying UDP socket (connected) */
-    SSL *ssl;                      /* OpenSSL SSL object */
-    SSL_CTX *ctx;                  /* Client SSL context */
-    BIO *rbio;             /* Memory BIO: we write received data, SSL reads */
-    BIO *wbio;             /* Memory BIO: SSL writes, we sendto() */
+    JanetStream stream;     /* Embedded stream for method dispatch */
+    JanetStream *transport; /* Underlying UDP socket (connected) */
+    SSL *ssl;               /* OpenSSL SSL object */
+    SSL_CTX *ctx;           /* Client SSL context */
+    BIO *rbio; /* Memory BIO: we write received data, SSL reads */
+    BIO *wbio; /* Memory BIO: SSL writes, we sendto() */
     DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    struct timespec ts_connect;    /* Time when client was created */
-    struct timespec ts_handshake;  /* Time when handshake completed */
-    DTLSAddress peer_addr;         /* Server address (for reference) */
-    DTLSClientAsyncState async_state; /* Embedded async state (eliminates malloc) */
-    DTLSState state;               /* Connection state */
-    uint8_t flags;                 /* Bitmask of JDTLS_CLIENT_* */
+    struct timespec ts_connect;   /* Time when client was created */
+    struct timespec ts_handshake; /* Time when handshake completed */
+    DTLSAddress peer_addr;        /* Server address (for reference) */
+    DTLSClientAsyncState
+        async_state; /* Embedded async state (eliminates malloc) */
+    DTLSState state; /* Connection state */
+    uint8_t flags;   /* Bitmask of JDTLS_CLIENT_* */
 };
 
 /*
@@ -413,8 +414,8 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
  * Methods like :recv-from, :send-to, :close work through method dispatch.
  */
 
-#define DTLS_SESSION_TABLE_SIZE 256 /* Hash table buckets */
-#define DTLS_SESSION_TIMEOUT 300.0  /* 5 minutes default timeout */
+#define DTLS_SESSION_TABLE_SIZE 256    /* Hash table buckets */
+#define DTLS_SESSION_TIMEOUT 300.0     /* 5 minutes default timeout */
 #define DTLS_MAX_SESSIONS_DEFAULT 1024 /* Default session table bound */
 
 struct DTLSServer {
@@ -423,12 +424,13 @@ struct DTLSServer {
     SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
     double session_timeout; /* Session timeout in seconds */
-    double last_cleanup;    /* Timestamp of last expired session cleanup sweep */
-    long link_mtu;          /* Configured or resolved interface link MTU */
-    DTLSRecvFromState recvfrom_state; /* Embedded recvfrom async state (eliminates malloc) */
-    int session_count;      /* Number of active sessions */
-    int max_sessions;       /* Upper bound on session_count */
-    uint8_t closed;         /* Server has been closed */
+    double last_cleanup; /* Timestamp of last expired session cleanup sweep */
+    long link_mtu;       /* Configured or resolved interface link MTU */
+    DTLSRecvFromState recvfrom_state; /* Embedded recvfrom async state
+                                         (eliminates malloc) */
+    int session_count;                /* Number of active sessions */
+    int max_sessions;                 /* Upper bound on session_count */
+    uint8_t closed;                   /* Server has been closed */
 };
 
 /* MTU resolution and option configuration (mtu.c) */
@@ -466,14 +468,14 @@ void dtls_server_cleanup_expired(DTLSServer *server, double now);
 
 /* Drive SSL operation, return want-read/want-write/done/error */
 typedef enum {
-    DTLS_RESULT_OK = 0,     /* Operation complete */
-    DTLS_RESULT_WANT_READ,  /* Need to wait for readable */
-    DTLS_RESULT_WANT_WRITE, /* Need to wait for writable */
-    DTLS_RESULT_EOF,        /* Peer closed cleanly (close_notify) */
+    DTLS_RESULT_OK = 0,         /* Operation complete */
+    DTLS_RESULT_WANT_READ,      /* Need to wait for readable */
+    DTLS_RESULT_WANT_WRITE,     /* Need to wait for writable */
+    DTLS_RESULT_EOF,            /* Peer closed cleanly (close_notify) */
     DTLS_RESULT_UNEXPECTED_EOF, /* Peer closed without close_notify:
                                  * a truncation; read surfaces raise
                                  * JSEC_UNEXPECTED_EOF_ERROR */
-    DTLS_RESULT_ERROR       /* Error occurred */
+    DTLS_RESULT_ERROR           /* Error occurred */
 } DTLSResult;
 
 /* Convert SSL_get_error to DTLSResult, optionally capturing jsec_socket_errno

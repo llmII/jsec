@@ -152,7 +152,8 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Write directly into Janet string memory - no intermediate buffer copy */
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
     uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Encrypt */
@@ -275,7 +276,8 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Write directly into Janet string memory - no intermediate buffer copy */
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
     uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Decrypt */

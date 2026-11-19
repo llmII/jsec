@@ -663,7 +663,8 @@ Janet cfun_ca_generate_intermediate(int32_t argc, Janet *argv) {
     }
 
     /* Set serial number: explicit :serial override, else fresh random of at
-     * least 64 bits of entropy (issuance no longer walks the parent counter) */
+     * least 64 bits of entropy (issuance no longer walks the parent counter)
+     */
     if (have_serial) {
         if (!ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial)) {
             X509_free(cert);

@@ -5,6 +5,7 @@
 
 (import ./certs :prefix "" :export true)
 (import ./sockets :prefix "" :export true)
+(import ./leaks :prefix "" :export true)
 
 # Additional assertion helpers that janet-assay doesn't provide
 

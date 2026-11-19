@@ -32,7 +32,8 @@ Janet cfun_sign(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to get signature length");
     }
 
-    /* Write directly into Janet string memory - no intermediate buffer copy */
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
     uint8_t *sig = janet_string_begin((int32_t)siglen);
 
     if (EVP_DigestSign(mdctx, sig, &siglen, data.bytes, (size_t)data.len) <=

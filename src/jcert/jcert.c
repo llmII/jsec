@@ -158,7 +158,7 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2);                        /* Version 3 */
+    X509_set_version(x509, 2); /* Version 3 */
     /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
     if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
@@ -326,7 +326,7 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2);                        /* Version 3 */
+    X509_set_version(x509, 2); /* Version 3 */
     /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
     if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
@@ -604,6 +604,7 @@ static Janet extract_san(X509 *cert) {
     GENERAL_NAMES *names =
         X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
     if (!names) {
+        X509_free(cert);
         cert_panic_parse(
             "failed to decode subject alternative name extension");
     }
@@ -654,11 +655,13 @@ static Janet extract_san(X509 *cert) {
                              ip->data[15]);
                     janet_array_push(arr, janet_cstringv(buf));
                 } else {
+                    int bad_len = ip->length;
                     GENERAL_NAMES_free(names);
+                    X509_free(cert);
                     janet_panicf("[CERT:PARSE] subject alternative name "
                                  "holds an IP address entry of length %d "
                                  "that cannot be represented",
-                                 (int)ip->length);
+                                 bad_len);
                 }
                 break;
             }
@@ -679,6 +682,7 @@ static Janet extract_key_usage(X509 *cert) {
     ASN1_BIT_STRING *usage =
         X509_get_ext_d2i(cert, NID_key_usage, NULL, NULL);
     if (!usage) {
+        X509_free(cert);
         cert_panic_parse("failed to decode key usage extension");
     }
 
@@ -715,6 +719,7 @@ static Janet extract_ext_key_usage(X509 *cert) {
     EXTENDED_KEY_USAGE *eku =
         X509_get_ext_d2i(cert, NID_ext_key_usage, NULL, NULL);
     if (!eku) {
+        X509_free(cert);
         cert_panic_parse("failed to decode extended key usage extension");
     }
 
@@ -837,12 +842,14 @@ static Janet calc_fingerprint(X509 *cert, const EVP_MD *md) {
     unsigned int digest_len;
 
     if (!X509_digest(cert, md, digest, &digest_len)) {
+        X509_free(cert);
         cert_panic_ssl("failed to compute certificate fingerprint");
     }
 
     /* Format as hex with colons */
     char *result = janet_smalloc((size_t)digest_len * 3);
     if (!result) {
+        X509_free(cert);
         cert_panic_resource("failed to format certificate fingerprint");
     }
 

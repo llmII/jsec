@@ -463,10 +463,22 @@ struct DTLSFlightTimer {
  * Janet source helper instead of hand-packed boot bytecode keeps the
  * body independent of the bytecode format, which a hand-packed body
  * would break against silently the day that format changes. */
-#define DTLS_FLIGHT_TIMER_BODY_SOURCE \
+#define DTLS_FLIGHT_TIMER_BODY_SOURCE                                        \
     "(fn [arm step] (step arm) (step arm) nil)"
 
 static Janet dtls_flight_timer_step(int32_t argc, Janet *argv);
+
+static int dtls_flight_timer_gc(void *p, size_t s) {
+    (void)s;
+    DTLSFlightTimer *arm = (DTLSFlightTimer *)p;
+    if (arm->slot && *arm->slot == arm) {
+        *arm->slot = NULL;
+    }
+    return 0;
+}
+
+static const JanetAbstractType dtls_flight_timer_type = {
+    "jsec/dtls-flight-timer", dtls_flight_timer_gc, JANET_ATEND_GC};
 
 static JanetFunction *dtls_flight_timer_body = NULL;
 
@@ -477,19 +489,19 @@ void jdtls_flight_timer_init(JanetTable *env) {
     }
     if (janet_dostring(env, DTLS_FLIGHT_TIMER_BODY_SOURCE,
                        "jdtls-flight-timer-body", &out) ||
-            !janet_checktype(out, JANET_FUNCTION)) {
+        !janet_checktype(out, JANET_FUNCTION)) {
         janet_panic("could not compile DTLS flight timer helper body");
     }
     dtls_flight_timer_body = janet_unwrap_function(out);
     janet_gcroot(out);
 }
 
-/* Unroot what the arm kept alive and free it. The owner's slot is
- * already clear, so the arm is unreachable from its owner here. */
+/* Unroot what the arm kept alive. The owner's slot is already clear, so
+ * the GC reclaims the arm abstract once the helper fiber finishes. */
 static void dtls_flight_timer_release(DTLSFlightTimer *arm) {
+    arm->slot = NULL;
     janet_gcunroot(janet_wrap_fiber(arm->fiber));
     janet_gcunroot(janet_wrap_abstract(arm->transport));
-    janet_free(arm);
 }
 
 /* Retire an arm whose helper fiber must never run again: bumping
@@ -515,7 +527,8 @@ static void dtls_flight_timer_retire_in_place(DTLSFlightTimer *arm) {
 static Janet dtls_flight_timer_step(int32_t argc, Janet *argv) {
     DTLSFlightTimer *arm;
     janet_fixarity(argc, 1);
-    arm = (DTLSFlightTimer *)janet_getpointer(argv, 0);
+    arm = (DTLSFlightTimer *)janet_getabstract(argv, 0,
+                                               &dtls_flight_timer_type);
     if (!(arm->flags & JDTLS_TIMER_WAKE_PHASE)) {
         arm->flags |= JDTLS_TIMER_WAKE_PHASE;
         if (!(arm->flags & JDTLS_TIMER_CANCELED)) {
@@ -523,12 +536,15 @@ static Janet dtls_flight_timer_step(int32_t argc, Janet *argv) {
         }
         return janet_wrap_nil();
     }
-    if (!(arm->flags & JDTLS_TIMER_CANCELED) && *arm->slot == arm) {
+    if (!(arm->flags & JDTLS_TIMER_CANCELED) && arm->slot &&
+        *arm->slot == arm) {
         struct timeval tv;
         int rc;
         /* Detach first: teardown during the tick must not reach the
          * arm while it is driving the retransmission. */
-        *arm->slot = NULL;
+        DTLSFlightTimer **slot = arm->slot;
+        *slot = NULL;
+        arm->slot = NULL;
         rc = DTLSv1_handle_timeout(arm->ssl);
         if (rc > 0 && arm->flush) {
             arm->flush(arm->owner, arm->transport);
@@ -540,7 +556,7 @@ static Janet dtls_flight_timer_step(int32_t argc, Janet *argv) {
             /* A zero remaining interval means handle_timeout did not
              * reset the flight timer; retire instead of spinning on it. */
             if (seconds > 0.0) {
-                dtls_flight_timer_arm(arm->slot, arm->ssl, arm->owner,
+                dtls_flight_timer_arm(slot, arm->ssl, arm->owner,
                                       arm->transport, arm->flush);
             }
         }
@@ -561,7 +577,13 @@ void dtls_flight_timer_arm(DTLSFlightTimer **slot, SSL *ssl, void *owner,
         return;
     }
     dtls_flight_timer_disarm(slot, 0);
-    arm = (DTLSFlightTimer *)janet_malloc(sizeof(DTLSFlightTimer));
+    if (!dtls_flight_timer_body) {
+        /* Helper body missing (module init never compiled it): keep the
+         * handshake running without retransmission, like the OOM case. */
+        return;
+    }
+    arm = (DTLSFlightTimer *)janet_abstract(&dtls_flight_timer_type,
+                                            sizeof(DTLSFlightTimer));
     if (!arm) {
         return; /* OOM: handshake continues without retransmission */
     }
@@ -572,17 +594,15 @@ void dtls_flight_timer_arm(DTLSFlightTimer **slot, SSL *ssl, void *owner,
     arm->slot = slot;
     arm->seconds = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
     arm->flags = 0;
-    if (!dtls_flight_timer_body) {
-        /* Helper body missing (module init never compiled it): keep the
-         * handshake running without retransmission, like the OOM case. */
-        janet_free(arm);
-        return;
-    }
-    fiber_args[0] = janet_wrap_pointer(arm);
+    arm->fiber = NULL;
+    Janet arm_val = janet_wrap_abstract(arm);
+    janet_gcroot(arm_val);
+    fiber_args[0] = arm_val;
     fiber_args[1] = janet_wrap_cfunction(dtls_flight_timer_step);
     fiber = janet_fiber(dtls_flight_timer_body, 16, 2, fiber_args);
+    janet_gcunroot(arm_val);
     if (!fiber) {
-        janet_free(arm);
+        arm->slot = NULL;
         return;
     }
     arm->fiber = fiber;
@@ -605,6 +625,7 @@ void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc) {
         return;
     }
     *slot = NULL;
+    arm->slot = NULL;
     arm->flags |= JDTLS_TIMER_CANCELED;
     if (in_gc) {
         /* A GC finalizer runs during a sweep, where even janet_schedule

@@ -7,9 +7,9 @@
 
 #include "../internal.h"
 
-/* Cached default client SSL_CTX instances (slot 0: verify=0, slot 1: verify=1)
- * Protected by ctx_cache_lock. Avoids reloading the system CA bundle on every
- * default client connection. */
+/* Cached default client SSL_CTX instances (slot 0: verify=0, slot 1:
+ * verify=1) Protected by ctx_cache_lock. Avoids reloading the system CA
+ * bundle on every default client connection. */
 static SSL_CTX *default_client_ctx[2] = {NULL, NULL};
 
 /*============================================================================

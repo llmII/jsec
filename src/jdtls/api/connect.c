@@ -102,8 +102,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
                 dtls_panic_config(":context must be a jsec/ssl-context");
             }
-            shared_ctx =
-                (DTLSContext *)janet_unwrap_abstract(ctx_opt);
+            shared_ctx = (DTLSContext *)janet_unwrap_abstract(ctx_opt);
             /* Verify it's a DTLS context, not TLS */
             if (!shared_ctx->is_dtls) {
                 dtls_panic_config(
@@ -143,7 +142,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         /* Set non-blocking */
         jsec_socket_set_nonblock(fd);
 
-        if (connect(fd, rp->ai_addr, (socklen_t)rp->ai_addrlen) < 0 &&
+#ifdef JANET_WINDOWS
+        socklen_t ai_len = (socklen_t)rp->ai_addrlen;
+#else
+        socklen_t ai_len = rp->ai_addrlen;
+#endif
+        if (connect(fd, rp->ai_addr, ai_len) < 0 &&
             jsec_socket_errno != JSEC_EINPROGRESS &&
             jsec_socket_errno != JSEC_EWOULDBLOCK) {
             jsec_close_socket(fd);
@@ -152,7 +156,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
         }
 
         memcpy(&addr, rp->ai_addr, rp->ai_addrlen);
-        addrlen = (socklen_t)rp->ai_addrlen;
+        addrlen = ai_len;
         break;
     }
     freeaddrinfo(ai);

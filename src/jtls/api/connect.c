@@ -539,9 +539,8 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 err == ERROR_OPERATION_ABORTED) {
                 return;
             }
-            janet_cancel(fiber,
-                         janet_cstringv(err ? jsec_socket_strerror(err)
-                                            : "connect failed"));
+            janet_cancel(fiber, janet_cstringv(err ? jsec_socket_strerror(err)
+                                                   : "connect failed"));
             stream->flags |= JANET_STREAM_TOCLOSE;
             janet_async_end(fiber);
             return;

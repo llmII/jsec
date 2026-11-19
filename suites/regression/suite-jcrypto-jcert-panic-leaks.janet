@@ -71,75 +71,20 @@
 #       raises (OpenSSL 3.6.5): site 1 grew about 88000 kB, site 2
 #       about 103000 kB, site 3 about 87000 kB, site 4 about 257000 kB,
 #   (c) under fixed code each raise frees its earlier allocations
-#       before unwinding, forcing it 50000 times leaves the process
-#       memory flat (the same-size alloc/free cycle reuses its chunks),
-#       and the raise still happens.
+#       before unwinding, forcing it 50000 times plateaus in the late
+#       iteration window (V_N2 - V_N1 near zero), and the raise still
+#       happens.
 #
-# Shape: leak-class, driven like crash-class - each scenario runs in a
-# SUBPROCESS child (janet -e) that self-measures its virtual size with
-# assay/memory around the forced-raise loop and reports
-# RESULT:<raised>:<growth-kb> and ERR:<first error>. The parent asserts
-# the child survived with exit 0, every forced raise produced the named
-# error, and the growth stays under the leak-freedom bound. The
-# subprocess shape keeps the measurement clean: the worker process
-# itself never holds the leaks and concurrent tests cannot pollute the
-# sample.
-#
-# Proof contract: plain tests asserting the correct behaviour - each
-# bad-input raise raises AND its earlier allocations are freed. Under
-# the defect the leak-freedom assertions fail on purpose with the
-# predicted growth (the raise leaves its earlier allocations unfreed)
-# and they become the regression guard once the fix lands.
+# Shape: leak-class, driven via suites/helpers/leaks.janet two-window
+# plateau measurement in a SUBPROCESS child (janet -e).
 
 (use assay)
-(import assay/memory)
-(import jsec/crypto)
-(import jsec/cert)
-
-# Forced raises per child run. The leak is under a kB to a few kB per
-# raise (about 1.8 kB for the ec-point-mul objects and about 5.1 kB for
-# the parsed certificate, key and chain stack on this host's OpenSSL),
-# so the proof amplifies it: 50000 forced raises leak tens to hundreds
-# of MB under the defect while the fixed path reuses its chunks and
-# stays flat.
-(def- forced-raises 50000)
-
-# Leak-freedom bound in kB for the whole forced-raise loop. The defect
-# side grows by tens to hundreds of MB (measured); the fixed side stays
-# in the low kB (chunk reuse after the per-raise free).
-(def- leak-bound-kb 4096)
-
-(defn- run-leak-child
-  "Spawn the leak scenario under the janet interpreter. Returns
-   {:exit n :out stdout :err stderr}."
-  [program]
-  (def proc (os/spawn ["janet" "-e" program] :p {:out :pipe :err :pipe}))
-  (def out-buf @"")
-  (def err-buf @"")
-  (ev/go (fn [] (when-let [b (:read (proc :out) :all)] (buffer/push out-buf b))))
-  (ev/go (fn [] (when-let [b (:read (proc :err) :all)] (buffer/push err-buf b))))
-  (def exit (os/proc-wait proc))
-  (:close (proc :out))
-  (:close (proc :err))
-  {:exit exit :out (string out-buf) :err (string err-buf)})
-
-(defn- result-fields
-  "Parse the child's RESULT:<raised>:<growth-kb> line into [raised growth]
-   or nil when absent."
-  [out]
-  (when-let [idx (string/find "RESULT:" out)]
-    (def start (+ idx (length "RESULT:")))
-    (def stop (or (string/find "\n" out start) (length out)))
-    (def parts (string/split ":" (string/trim (string/slice out start stop))))
-    (when (= 2 (length parts))
-      (def raised (scan-number (parts 0)))
-      (def growth (scan-number (parts 1)))
-      (when (and raised growth) [raised growth]))))
+(import ../helpers :prefix "")
 
 (def- ec-point-mul-non-byte-coordinate-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/crypto)
-(import assay/memory)
 
 (defn force-once
   "Force the ec-point-mul non-byte :x/:y raise once. Returns the error
@@ -147,32 +92,12 @@
   []
   (try (do (crypto/ec-point-mul :p-256 "\x01" {:x 1 :y 2}) nil)
        ([e] e)))
-
-# Warm the allocator first so the growth sample is not arena slop.
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) :vsize))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) :vsize))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
+```))
 
 (def- ec-point-add-non-byte-coordinate-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/crypto)
-(import assay/memory)
 
 (defn force-once
   "Force the ec-point-add non-byte :x/:y raise once. Returns the error
@@ -180,32 +105,12 @@
   []
   (try (do (crypto/ec-point-add :p-256 {:x 1 :y 2} {:x 3 :y 4}) nil)
        ([e] e)))
-
-# Warm the allocator first so the growth sample is not arena slop.
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) :vsize))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) :vsize))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
+```))
 
 (def- ec-point-to-bytes-non-byte-coordinate-child
-  ```
+  (make-plateau-leak-child
+    ```
 (import jsec/crypto)
-(import assay/memory)
 
 (defn force-once
   "Force the ec-point-to-bytes non-byte :x/:y raise once. Returns the
@@ -213,38 +118,17 @@
   []
   (try (do (crypto/ec-point-to-bytes :p-256 {:x 1 :y 2}) nil)
        ([e] e)))
-
-# Warm the allocator first so the growth sample is not arena slop.
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) :vsize))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) :vsize))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
+```))
 
 (def- create-pkcs12-bad-chain-element-child
-  ```
-(import jsec/crypto)
+  (make-plateau-leak-child
+    ```
 (import jsec/cert)
-(import assay/memory)
+(import jsec/crypto)
 
-(def kp (cert/generate-self-signed-cert {:common-name "Leak PKCS12"
-                                        :bits 1024}))
-(def cert-pem (kp :cert))
-(def key-pem (kp :key))
+(def pair (cert/generate-self-signed-cert {:common-name "Leak Cert"}))
+(def cert-pem (pair :cert))
+(def key-pem (pair :key))
 
 (defn force-once
   "Force the create-pkcs12 non-byte :chain element raise once. Returns
@@ -254,69 +138,7 @@
                                  {:password "pw" :chain [123]})
            nil)
        ([e] e)))
-
-# Warm the allocator first so the growth sample is not arena slop.
-(for i 0 200 (force-once))
-(gccollect)
-
-(def v0 (get (memory/info) :vsize))
-(var raised 0)
-(var first-err nil)
-(for i 0 50000
-  (def e (force-once))
-  (if (nil? e)
-    (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e))))
-  (when (zero? (mod i 1000)) (gccollect)))
-(gccollect)
-(def v1 (get (memory/info) :vsize))
-
-(print "RESULT:" raised ":" (div (- v1 v0) 1024))
-(print "ERR:" (string first-err))
-(os/exit 0)
-```)
-
-(defn- assert-leak-freedom
-  "Shared parent-side contract for one raise path: the child survives,
-   every forced raise produced the named error, and the process growth
-   stays under the leak-freedom bound."
-  [child error-fragment alloc-note raise-note]
-  (def exit (child :exit))
-  (def out (child :out))
-  (def err (child :err))
-  (assert (= 0 exit)
-          (string/format
-            (string "the forced-raise child must survive (the bad input is "
-                    "a normal error condition, not a process-fatal one); "
-                    "child exit status %d; child stdout: %s; child "
-                    "stderr: %s")
-            exit (string/trim out) (string/trim err)))
-  (assert (string/find error-fragment out)
-          (string/format
-            (string "every forced raise must produce the named error %q "
-                    "(the raise contract the fix must keep); child "
-                    "stdout: %s; child stderr: %s")
-            error-fragment (string/trim out) (string/trim err)))
-  (def fields (result-fields out))
-  (assert (not (nil? fields))
-          (string/format
-            (string "the child must report RESULT:<raised>:<growth-kb>; "
-                    "child stdout: %s; child stderr: %s")
-            (string/trim out) (string/trim err)))
-  (def [raised growth] fields)
-  (assert (= raised forced-raises)
-          (string/format
-            (string "the child must force the raise on every one of the %d "
-                    "iterations (raise contract); it reported %d raises; "
-                    "child stdout: %s")
-            forced-raises raised (string/trim out)))
-  (assert (<= growth leak-bound-kb)
-          (string/format
-            (string "each raise must free its earlier allocations: forcing "
-                    "this raise %d times must stay under %d kB of process "
-                    "growth, but the process grew by %d kB - the raise "
-                    "leaves its earlier allocations unfreed (%s; %s)")
-            raised leak-bound-kb growth alloc-note raise-note)))
+```))
 
 (def-suite :name "Jcrypto Jcert Panic Leak Regression"
   :description "Ticket 5c41cf2c70: jcrypto and jcert raise paths must free their earlier OpenSSL allocations"
@@ -325,7 +147,7 @@
     :timeout 120
 
     (def child (run-leak-child ec-point-mul-non-byte-coordinate-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "expected string, symbol, keyword or buffer"
       (string "the EC_GROUP at src/jcrypto/ec.c:79, the BN_CTX at "
               "src/jcrypto/ec.c:84 and the scalar BIGNUM at "
@@ -337,7 +159,7 @@
     :timeout 120
 
     (def child (run-leak-child ec-point-add-non-byte-coordinate-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "expected string, symbol, keyword or buffer"
       (string "the EC_GROUP at src/jcrypto/ec.c:269, the BN_CTX at "
               "src/jcrypto/ec.c:272 and the EC_POINTs at "
@@ -349,7 +171,7 @@
     :timeout 120
 
     (def child (run-leak-child ec-point-to-bytes-non-byte-coordinate-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "expected string, symbol, keyword or buffer"
       (string "the EC_GROUP at src/jcrypto/ec.c:413, the BN_CTX at "
               "src/jcrypto/ec.c:416 and the EC_POINT at "
@@ -361,7 +183,7 @@
     :timeout 120
 
     (def child (run-leak-child create-pkcs12-bad-chain-element-child))
-    (assert-leak-freedom
+    (assert-plateau-leak-freedom
       child "expected string, symbol, keyword or buffer"
       (string "the X509 at src/jcrypto/pkcs12.c:202, the EVP_PKEY at "
               "src/jcrypto/pkcs12.c:216 and the chain STACK_OF(X509) at "

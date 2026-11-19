@@ -283,9 +283,9 @@ Janet cfun_dtls_set_session(int32_t argc, Janet *argv) {
 
     /* Deserialize session from DER */
     const unsigned char *p = bytes.bytes;
-    SSL_SESSION *session =
-        (bytes.bytes && bytes.len > 0) ? d2i_SSL_SESSION(NULL, &p, bytes.len)
-                                       : NULL;
+    SSL_SESSION *session = (bytes.bytes && bytes.len > 0)
+                               ? d2i_SSL_SESSION(NULL, &p, bytes.len)
+                               : NULL;
     if (!session) {
         dtls_panic_ssl("failed to parse session data");
     }

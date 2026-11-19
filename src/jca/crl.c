@@ -203,8 +203,8 @@ Janet cfun_ca_revoke(int32_t argc, Janet *argv) {
             X509_REVOKED_free(revoked);
             ca_panic_ssl("failed to set revocation reason");
         }
-        if (!X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason, reason_enum, 0,
-                                       0)) {
+        if (!X509_REVOKED_add1_ext_i2d(revoked, NID_crl_reason, reason_enum,
+                                       0, 0)) {
             ASN1_ENUMERATED_free(reason_enum);
             X509_REVOKED_free(revoked);
             ca_panic_ssl("failed to add revocation reason extension");
@@ -384,7 +384,8 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
                 !janet_checktype(reason_v, JANET_STRING) &&
                 !janet_checktype(reason_v, JANET_KEYWORD)) {
                 X509_CRL_free(crl);
-                ca_panic_param("revocation reason must be a string or keyword");
+                ca_panic_param(
+                    "revocation reason must be a string or keyword");
             }
             CARevocationReason reason;
             if (!ca_try_keyword_to_reason(reason_v, &reason)) {
@@ -490,9 +491,8 @@ Janet cfun_ca_generate_crl(int32_t argc, Janet *argv) {
     {
         X509V3_CTX v3ctx;
         X509V3_set_ctx(&v3ctx, ca->cert, NULL, NULL, crl, 0);
-        X509_EXTENSION *aki =
-            X509V3_EXT_conf_nid(NULL, &v3ctx, NID_authority_key_identifier,
-                                "keyid:always");
+        X509_EXTENSION *aki = X509V3_EXT_conf_nid(
+            NULL, &v3ctx, NID_authority_key_identifier, "keyid:always");
         if (!aki) {
             X509_CRL_free(crl);
             ca_panic_ssl("failed to build authority key identifier");

@@ -9,8 +9,7 @@
 /* External declarations */
 extern void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
                                          int32_t nbytes, int32_t buf_start,
-                                         int mode,
-                                         double timeout);
+                                         int mode, double timeout);
 extern void dtls_client_start_async_write(DTLSClient *client, Janet src,
                                           int mode, double timeout);
 
@@ -221,9 +220,8 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
     /* Try initial write */
     int32_t nwritten = 0;
     int sock_err = 0;
-    DTLSResult result =
-        dtls_do_write_ex(client->ssl, data.bytes, data.len, &nwritten,
-                         &sock_err);
+    DTLSResult result = dtls_do_write_ex(client->ssl, data.bytes, data.len,
+                                         &nwritten, &sock_err);
 
     if (result == DTLS_RESULT_OK) {
         ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
@@ -264,10 +262,9 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
     }
 
     /* Need to wait */
-    int mode =
-        (flush_rc == -2 || result == DTLS_RESULT_WANT_WRITE)
-            ? JANET_ASYNC_LISTEN_WRITE
-            : JANET_ASYNC_LISTEN_READ;
+    int mode = (flush_rc == -2 || result == DTLS_RESULT_WANT_WRITE)
+                   ? JANET_ASYNC_LISTEN_WRITE
+                   : JANET_ASYNC_LISTEN_READ;
     dtls_client_start_async_write_flush(client, argv[1], mode, timeout, 0);
     return janet_wrap_nil(); /* Will be replaced by async result */
 }
