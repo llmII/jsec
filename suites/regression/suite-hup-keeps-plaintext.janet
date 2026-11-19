@@ -91,6 +91,7 @@
 
   (def-test "async read-all completes with buffered plaintext at clean close_notify"
     :timeout 30
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (def obs-with-plaintext (shape (parked-read-all-then-close true)))
     (def obs-zero-bytes (shape (parked-read-all-then-close false)))

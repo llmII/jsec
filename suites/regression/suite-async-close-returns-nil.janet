@@ -74,11 +74,13 @@
 
   (def-test "async close returns nil instead of raising Connection closed"
     :timeout 60
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (let [[server socket-path] (make-server :unix)
           addr (get-server-addr server :unix socket-path)
           ready (ev/chan 1)]
       (var mc nil)
+      (var mconn nil)
 
       (defer (do (:close server) (cleanup-socket socket-path))
 
@@ -94,6 +96,7 @@
                    (try
                      (do
                        (def conn (make-client-conn :unix addr))
+                       (set mconn conn)
                        (def c (tls/wrap conn {:verify false}))
                        (set mc c)
                        (ev/give ready :handshake-done)
@@ -115,6 +118,8 @@
         # bytes keep the buffer full and nothing refills it later.
         (ev/sleep 1.0)
         (ev/cancel fa "fill done")
+        (ev/sleep 0.05)
+        (try (forever (:write mconn "x" 0.05)) ([_] nil))
 
         # Drain fiber: waits until the close has had time to suspend
         # on WANT_WRITE (the buffer is still full), then raw-reads the

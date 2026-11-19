@@ -109,7 +109,8 @@ static int kernel_tracks_pmtu(jsec_socket_t fd, int family) {
 
     if (family == AF_INET) {
 #ifdef IP_MTU
-        return getsockopt(fd, IPPROTO_IP, IP_MTU, &mtu, &optlen) == 0 &&
+        return getsockopt(fd, IPPROTO_IP, IP_MTU, (char *)&mtu, &optlen) ==
+                   0 &&
                mtu > 0;
 #else
         (void)fd;
@@ -121,7 +122,8 @@ static int kernel_tracks_pmtu(jsec_socket_t fd, int family) {
 
     if (family == AF_INET6) {
 #ifdef IPV6_MTU
-        return getsockopt(fd, IPPROTO_IPV6, IPV6_MTU, &mtu, &optlen) == 0 &&
+        return getsockopt(fd, IPPROTO_IPV6, IPV6_MTU, (char *)&mtu,
+                          &optlen) == 0 &&
                mtu > 0;
 #else
         (void)fd;
@@ -197,7 +199,8 @@ static int sockaddr_ip_equal(const struct sockaddr *a,
 static int socket_allows_ipv4_on_v6(jsec_socket_t fd) {
     int v6only = 0;
     socklen_t len = (socklen_t)sizeof(v6only);
-    if (getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, &len) == 0) {
+    if (getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, &len) ==
+        0) {
         return v6only == 0;
     }
     return 0;

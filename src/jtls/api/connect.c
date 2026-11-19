@@ -461,6 +461,15 @@ Janet cfun_upgrade(int32_t argc, Janet *argv) {
 
 /* State for async TLS connect operation */
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
+    struct sockaddr_storage target_addr;
+    int target_addrlen;
+    LPFN_CONNECTEX connectex;
+    uint8_t io_in_flight;
+#endif
     char *hostname; /* Hostname for SNI (owned, must free) */
     Janet opts;     /* TLS options (must mark for GC) */
 } TLSConnectState;
@@ -479,6 +488,13 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             break;
 
         case JANET_ASYNC_EVENT_DEINIT:
+#ifdef JANET_WINDOWS
+            if (state) {
+                jutils_win_cancel_overlapped(fiber, stream,
+                                             &state->overlapped,
+                                             &state->io_in_flight);
+            }
+#endif
             /* Janet will free fiber->ev_state (the state struct)
              * automatically. We only need to free the hostname string if it
              * wasn't already freed. */
@@ -493,19 +509,58 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             return;
 
 #ifdef JANET_WINDOWS
-        case JANET_ASYNC_EVENT_INIT:
-            /* Windows IOCP: Check connect status immediately since Windows
-             * doesn't support readiness-based async connect the same way.
-             * Fall through to WRITE case to check getsockopt for connect
-             * result. */
-#if defined(__GNUC__) || defined(__clang__)
-            __attribute__((fallthrough));
-#endif
+        case JANET_ASYNC_EVENT_INIT: {
+            memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+            BOOL ok = state->connectex(
+                (SOCKET)stream->handle,
+                (const struct sockaddr *)&state->target_addr,
+                state->target_addrlen, NULL, 0, NULL, &state->overlapped);
+            if (!ok) {
+                int err = WSAGetLastError();
+                if (err != WSA_IO_PENDING) {
+                    janet_cancel(fiber,
+                                 janet_cstringv(jsec_socket_strerror(err)));
+                    stream->flags |= JANET_STREAM_TOCLOSE;
+                    janet_async_end(fiber);
+                    return;
+                }
+            }
+            janet_async_in_flight(fiber);
+            state->io_in_flight = 1;
+            return;
+        }
+
+        case JANET_ASYNC_EVENT_FAILED: {
+            state->io_in_flight = 0;
+            int err = jutils_overlapped_error(stream, &state->overlapped);
+            if (err == WSA_OPERATION_ABORTED ||
+                err == ERROR_OPERATION_ABORTED) {
+                return;
+            }
+            janet_cancel(fiber,
+                         janet_cstringv(err ? jsec_socket_strerror(err)
+                                            : "connect failed"));
+            stream->flags |= JANET_STREAM_TOCLOSE;
+            janet_async_end(fiber);
+            return;
+        }
+
+        case JANET_ASYNC_EVENT_COMPLETE: {
+            state->io_in_flight = 0;
+            if (setsockopt((SOCKET)stream->handle, SOL_SOCKET,
+                           SO_UPDATE_CONNECT_CONTEXT, NULL, 0) != 0) {
+                int err = WSAGetLastError();
+                janet_cancel(fiber,
+                             janet_cstringv(err ? jsec_socket_strerror(err)
+                                                : "connect failed"));
+                stream->flags |= JANET_STREAM_TOCLOSE;
+                janet_async_end(fiber);
+                return;
+            }
 #else
         case JANET_ASYNC_EVENT_INIT:
             /* On non-Windows, wait for actual WRITE event before checking */
             return;
-#endif
 
         case JANET_ASYNC_EVENT_ERR:
         case JANET_ASYNC_EVENT_HUP:
@@ -513,13 +568,8 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             /* Check if connect succeeded via SO_ERROR */
             int res = 0;
             socklen_t size = sizeof(res);
-#ifdef JANET_WINDOWS
-            int r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR,
-                               (char *)&res, (int *)&size);
-#else
             int r =
                 getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
-#endif
 
             if (r != 0 || res != 0) {
                 /* Connect failed */
@@ -530,6 +580,7 @@ static void tls_connect_callback(JanetFiber *fiber, JanetAsyncEvent event) {
                 janet_async_end(fiber);
                 return;
             }
+#endif
 
             /* TCP connect succeeded - now set up TLS */
             /* Extract state data - Janet will free the state struct in
@@ -760,6 +811,12 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
     const char *port = NULL;
     const char *unix_path = NULL;
     Janet opts = janet_wrap_nil();
+#ifdef JANET_WINDOWS
+    struct sockaddr_storage target_addr;
+    int target_addrlen = 0;
+    LPFN_CONNECTEX connectex_fn = NULL;
+    memset(&target_addr, 0, sizeof(target_addr));
+#endif
 
     if (is_unix) {
         /* Unix socket mode */
@@ -916,13 +973,49 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                         rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
                         rp->ai_protocol);
 #elif defined(JANET_WINDOWS)
-            /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
-            fd = WSASocketW(rp->ai_family, rp->ai_socktype, rp->ai_protocol,
-                            NULL, 0, WSA_FLAG_OVERLAPPED);
-            if (fd != INVALID_SOCKET) {
-                unsigned long mode = 1;
-                ioctlsocket(fd, FIONBIO, &mode);
+            if ((rp->ai_family != AF_INET && rp->ai_family != AF_INET6) ||
+                rp->ai_addrlen > sizeof(target_addr)) {
+                continue;
             }
+            fd = jsec_win_overlapped_socket(rp->ai_family, rp->ai_socktype,
+                                            rp->ai_protocol);
+            if (fd != INVALID_SOCKET) {
+                struct sockaddr_storage bind_addr;
+                int bind_len = 0;
+                memset(&bind_addr, 0, sizeof(bind_addr));
+                if (rp->ai_family == AF_INET) {
+                    struct sockaddr_in *in4 =
+                        (struct sockaddr_in *)&bind_addr;
+                    in4->sin_family = AF_INET;
+                    in4->sin_addr.s_addr = INADDR_ANY;
+                    bind_len = (int)sizeof(*in4);
+                } else {
+                    struct sockaddr_in6 *in6 =
+                        (struct sockaddr_in6 *)&bind_addr;
+                    in6->sin6_family = AF_INET6;
+                    in6->sin6_addr = in6addr_any;
+                    bind_len = (int)sizeof(*in6);
+                }
+                if (bind(fd, (struct sockaddr *)&bind_addr, bind_len) == 0) {
+                    GUID guid = WSAID_CONNECTEX;
+                    DWORD bytes = 0;
+                    if (WSAIoctl(fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                                 &guid, sizeof(guid), &connectex_fn,
+                                 sizeof(connectex_fn), &bytes, NULL,
+                                 NULL) == 0 &&
+                        connectex_fn != NULL) {
+                        unsigned long mode = 1;
+                        ioctlsocket(fd, FIONBIO, &mode);
+                        memcpy(&target_addr, rp->ai_addr, rp->ai_addrlen);
+                        target_addrlen = (int)rp->ai_addrlen;
+                        break;
+                    }
+                }
+                jsec_close_socket(fd);
+                fd = JSEC_INVALID_SOCKET;
+                connectex_fn = NULL;
+            }
+            continue;
 #else
             fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
             if (fd != -1) {
@@ -932,17 +1025,13 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 if (flags != -1) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
             }
 #endif
+#ifndef JANET_WINDOWS
             if (fd == JSEC_INVALID_SOCKET) continue;
 
             /* Attempt non-blocking connect */
-#ifdef JANET_WINDOWS
-            status = WSAConnect(fd, rp->ai_addr, (int)rp->ai_addrlen, NULL,
-                                NULL, NULL, NULL);
-#else
             do {
                 status = connect(fd, rp->ai_addr, rp->ai_addrlen);
             } while (status == -1 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
             if (status == 0) {
                 /* Connected immediately (rare, but possible on localhost) */
@@ -970,6 +1059,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
                 jsec_close_socket(fd);
                 fd = JSEC_INVALID_SOCKET;
             }
+#endif
         }
         freeaddrinfo(ai);
     }
@@ -999,6 +1089,7 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
         janet_stream_close(stream);
         tls_panic_config("failed to allocate TLS connect state");
     }
+    memset(state, 0, sizeof(TLSConnectState));
     size_t host_len = strlen(host);
     state->hostname = janet_malloc(host_len + 1);
     if (!state->hostname) {
@@ -1008,6 +1099,11 @@ Janet cfun_connect(int32_t argc, Janet *argv) {
     }
     memcpy(state->hostname, host, host_len + 1);
     state->opts = opts;
+#ifdef JANET_WINDOWS
+    state->target_addr = target_addr;
+    state->target_addrlen = target_addrlen;
+    state->connectex = connectex_fn;
+#endif
 
     /* Start async wait for connect completion */
     janet_async_start(stream, JANET_ASYNC_LISTEN_WRITE, tls_connect_callback,

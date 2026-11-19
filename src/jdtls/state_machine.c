@@ -52,6 +52,220 @@
 #include <sys/time.h>
 #endif
 
+#ifdef JANET_WINDOWS
+typedef struct DtlsPacketNode {
+    struct DtlsPacketNode *next;
+    size_t len;
+    size_t offset;
+    uint8_t data[1];
+} DtlsPacketNode;
+
+typedef struct {
+    DtlsPacketNode *head;
+    DtlsPacketNode *tail;
+} DtlsPacketQueue;
+
+static void jdtls_packet_queue_clear(DtlsPacketQueue *q) {
+    while (q->head) {
+        DtlsPacketNode *next = q->head->next;
+        OPENSSL_free(q->head);
+        q->head = next;
+    }
+    q->tail = NULL;
+}
+
+static int jdtls_pkt_bio_create(BIO *b) {
+    DtlsPacketQueue *q = OPENSSL_zalloc(sizeof(*q));
+    if (!q) {
+        return 0;
+    }
+    BIO_set_data(b, q);
+    BIO_set_init(b, 1);
+    return 1;
+}
+
+static int jdtls_pkt_bio_destroy(BIO *b) {
+    if (!b) {
+        return 0;
+    }
+    DtlsPacketQueue *q = (DtlsPacketQueue *)BIO_get_data(b);
+    if (q) {
+        jdtls_packet_queue_clear(q);
+        OPENSSL_free(q);
+        BIO_set_data(b, NULL);
+    }
+    BIO_set_init(b, 0);
+    return 1;
+}
+
+static int jdtls_pkt_bio_write(BIO *b, const char *in, int inl) {
+    DtlsPacketQueue *q = (DtlsPacketQueue *)BIO_get_data(b);
+    if (!q || !in || inl < 0) {
+        return -1;
+    }
+    if (inl == 0) {
+        return 0;
+    }
+    DtlsPacketNode *node =
+        OPENSSL_malloc(offsetof(DtlsPacketNode, data) + (size_t)inl);
+    if (!node) {
+        return -1;
+    }
+    node->next = NULL;
+    node->len = (size_t)inl;
+    node->offset = 0;
+    memcpy(node->data, in, (size_t)inl);
+    if (q->tail) {
+        q->tail->next = node;
+    } else {
+        q->head = node;
+    }
+    q->tail = node;
+    return inl;
+}
+
+static int jdtls_pkt_bio_read(BIO *b, char *out, int outl) {
+    DtlsPacketQueue *q = (DtlsPacketQueue *)BIO_get_data(b);
+    if (!q || !out || outl <= 0) {
+        return 0;
+    }
+    DtlsPacketNode *node = q->head;
+    if (!node) {
+        return 0;
+    }
+    size_t avail = node->len - node->offset;
+    size_t copy_len = avail < (size_t)outl ? avail : (size_t)outl;
+    memcpy(out, node->data + node->offset, copy_len);
+    node->offset += copy_len;
+    if (node->offset >= node->len) {
+        q->head = node->next;
+        if (!q->head) {
+            q->tail = NULL;
+        }
+        OPENSSL_free(node);
+    }
+    return (int)copy_len;
+}
+
+static long jdtls_pkt_bio_ctrl(BIO *b, int cmd, long num, void *ptr) {
+    (void)num;
+    (void)ptr;
+    DtlsPacketQueue *q = (DtlsPacketQueue *)BIO_get_data(b);
+    if (!q) {
+        return 0;
+    }
+    switch (cmd) {
+        case BIO_CTRL_PENDING:
+            return q->head ? (long)(q->head->len - q->head->offset) : 0;
+        case BIO_CTRL_WPENDING:
+            return 0;
+        case BIO_CTRL_RESET:
+            jdtls_packet_queue_clear(q);
+            return 1;
+        case BIO_CTRL_FLUSH:
+            return 1;
+        case BIO_CTRL_EOF:
+            return q->head ? 0 : 1;
+        default:
+            return 0;
+    }
+}
+
+static BIO_METHOD *dtls_pkt_bio_method = NULL;
+
+void jdtls_init_packet_bio_method(void) {
+    if (dtls_pkt_bio_method) {
+        return;
+    }
+    int type = BIO_get_new_index();
+    if (type == -1) {
+        dtls_panic_ssl("failed to allocate DTLS packet BIO type");
+    }
+    BIO_METHOD *m =
+        BIO_meth_new(type | BIO_TYPE_SOURCE_SINK, "jdtls-packet-wbio");
+    if (!m) {
+        dtls_panic_ssl("failed to create DTLS packet BIO method");
+    }
+    BIO_meth_set_write(m, jdtls_pkt_bio_write);
+    BIO_meth_set_read(m, jdtls_pkt_bio_read);
+    BIO_meth_set_ctrl(m, jdtls_pkt_bio_ctrl);
+    BIO_meth_set_create(m, jdtls_pkt_bio_create);
+    BIO_meth_set_destroy(m, jdtls_pkt_bio_destroy);
+    dtls_pkt_bio_method = m;
+}
+
+BIO *jdtls_new_packet_wbio(void) {
+    if (!dtls_pkt_bio_method) {
+        jdtls_init_packet_bio_method();
+    }
+    return BIO_new(dtls_pkt_bio_method);
+}
+
+/* Flush queued wbio packets directly without popping/dropping on
+ * WSAEWOULDBLOCK. Returns 0 when empty, 1 if send would block (head node
+ * preserved with updated offset), or -1 on hard error. */
+int jdtls_win_flush_wbio(BIO *wbio, jsec_socket_t sock, ssize_t *out_sent) {
+    DtlsPacketQueue *q = wbio ? (DtlsPacketQueue *)BIO_get_data(wbio) : NULL;
+    if (!q) {
+        return 0;
+    }
+    if (q->head != NULL) {
+        /* On Winsock2, an ICMP Port Unreachable error on a connected UDP
+         * socket is queued on the receive side and ignored by send(). Peek
+         * non-blockingly so a pending ICMP error surfaces synchronously on
+         * flush/write just as POSIX send() consumes sk_err. */
+        char peek = 0;
+        int pr = recv((SOCKET)sock, &peek, 1, MSG_PEEK);
+        if (pr == SOCKET_ERROR) {
+            int perr = WSAGetLastError();
+            if (perr != WSAEWOULDBLOCK && perr != WSAEMSGSIZE &&
+                perr != WSAEINTR) {
+                (void)recv((SOCKET)sock, &peek, 0, 0);
+                jdtls_packet_queue_clear(q);
+                WSASetLastError(perr);
+                return -1;
+            }
+        }
+    }
+    while (q->head != NULL) {
+        DtlsPacketNode *node = q->head;
+        size_t rem = node->len - node->offset;
+        if (rem == 0) {
+            q->head = node->next;
+            if (!q->head) {
+                q->tail = NULL;
+            }
+            OPENSSL_free(node);
+            continue;
+        }
+        int chunk = rem > (size_t)INT_MAX ? INT_MAX : (int)rem;
+        int sent = send((SOCKET)sock,
+                        (const char *)(node->data + node->offset), chunk, 0);
+        if (sent > 0) {
+            if (out_sent) {
+                *out_sent += (ssize_t)sent;
+            }
+            node->offset += (size_t)sent;
+            if (node->offset >= node->len) {
+                q->head = node->next;
+                if (!q->head) {
+                    q->tail = NULL;
+                }
+                OPENSSL_free(node);
+            }
+        } else {
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK) {
+                return 1;
+            }
+            WSASetLastError(err);
+            return -1;
+        }
+    }
+    return 0;
+}
+#endif
+
 /*
  * =============================================================================
  * SSL Result Translation

@@ -227,10 +227,14 @@ typedef struct {
 #ifdef JANET_WINDOWS
     /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
     WSAOVERLAPPED overlapped;
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
     WSABUF wsa_buf;
     DWORD wsa_flags;
     uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
     DWORD bytes_received;
+    void *win_write_wait; /* Active WSAPoll wait handle for WANT_WRITE */
+    uint8_t io_in_flight; /* 1 while WSARecv overlapped op is queued */
+    uint8_t flush_only;   /* 1 when flushing pre-encrypted wbio record */
 #endif
     DTLSClient *client;
     JanetBuffer *buffer;      /* For read */
@@ -252,12 +256,14 @@ typedef struct {
 #ifdef JANET_WINDOWS
     /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
     WSAOVERLAPPED overlapped;
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
     WSABUF wsa_buf;
     DWORD wsa_flags;
     uint8_t recv_buf[65536];           /* Buffer for received datagram */
     struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
     int peer_addrlen;
     DWORD bytes_received;
+    uint8_t io_in_flight; /* 1 while WSARecvFrom overlapped op is queued */
 #endif
     DTLSServer *server;
     JanetBuffer *buffer;
@@ -294,18 +300,45 @@ struct DTLSClient {
  */
 #define JDTLS_PACKET_BUF_SIZE 17408
 
+#ifdef JANET_WINDOWS
+void jdtls_init_packet_bio_method(void);
+BIO *jdtls_new_packet_wbio(void);
+int jdtls_win_flush_wbio(BIO *wbio, jsec_socket_t sock, ssize_t *out_sent);
+#endif
+
+/*
+ * Helper: Flush any pending data from client's wbio to the socket.
+ * Returns bytes sent (>= 0) when drained, -2 if send would block (unsent
+ * packets preserved in wbio on Windows), or -1 on hard socket error.
+ */
 static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
     /* Skip if wbio is NULL (dgram BIO handles I/O directly) or transport
      * closed */
-    if (!client->wbio || !client->transport) {
+    if (!client->wbio || !client->transport ||
+        client->transport->handle == JANET_HANDLE_NONE) {
         return 0;
     }
 
+#ifdef JANET_WINDOWS
+    ssize_t total_sent = 0;
+    int rc = jdtls_win_flush_wbio(
+        client->wbio, (jsec_socket_t)client->transport->handle, &total_sent);
+    if (rc < 0) {
+        return -1;
+    }
+    if (rc > 0) {
+        return -2;
+    }
+    return total_sent;
+#else
     uint8_t stack_buf[JDTLS_PACKET_BUF_SIZE];
     ssize_t total_sent = 0;
 
     while (BIO_ctrl_pending(client->wbio) > 0) {
         size_t pending = BIO_ctrl_pending(client->wbio);
+        if (pending > (size_t)INT_MAX) {
+            return total_sent > 0 ? total_sent : -1;
+        }
         uint8_t *buf = stack_buf;
         uint8_t *heap_buf = NULL;
 
@@ -318,12 +351,14 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
         }
 
         int n = BIO_read(client->wbio, buf, (int)pending);
+        ssize_t sent = 0;
+        int sock_err = 0;
         if (n > 0) {
-            ssize_t sent = sendto((jsec_socket_t)client->transport->handle,
-                                  (const char *)buf, (size_t)n, 0,
-                                  (struct sockaddr *)&client->peer_addr.addr,
-                                  client->peer_addr.addrlen);
-            if (sent > 0) {
+            sent = send((jsec_socket_t)client->transport->handle,
+                        (const char *)buf, (size_t)n, MSG_NOSIGNAL);
+            if (sent < 0) {
+                sock_err = jsec_socket_errno;
+            } else {
                 total_sent += sent;
             }
         }
@@ -332,12 +367,21 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
             janet_free(heap_buf);
         }
 
+        if (sent < 0) {
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
+                return -2;
+            }
+            errno = sock_err;
+            return -1;
+        }
+
         if (n <= 0) {
             break;
         }
     }
 
     return total_sent;
+#endif
 }
 
 /*
@@ -497,9 +541,13 @@ void jdtls_register_context(JanetTable *env);
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 int dtls_client_start_handshake(DTLSClient *client);
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int32_t buf_start, int mode, double timeout);
+                                  int32_t nbytes, int32_t buf_start, int mode,
+                                  double timeout);
 void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
                                    double timeout);
+void dtls_client_start_async_write_flush(DTLSClient *client, Janet src,
+                                         int mode, double timeout,
+                                         int flush_only);
 void dtls_client_start_async_close(DTLSClient *client, int mode);
 
 /* close.c */

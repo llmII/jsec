@@ -46,6 +46,7 @@
 
   (def-test "read on a truncated stream raises instead of clean EOF"
     :timeout 15
+    :skip-cases [skip-unix-socket-on-windows?]
 
     (let [[server socket-path] (make-server :unix)
           addr (get-server-addr server :unix socket-path)]

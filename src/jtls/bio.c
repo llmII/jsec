@@ -70,18 +70,11 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         tls->bio_ahead.pe = tls->bio_ahead.data;
 
         /* Read as much as we can into the buffer */
-#ifdef JANET_WINDOWS
-        int n;
-        do {
-            n = recv(fd, (char *)tls->bio_ahead.data,
-                     (int)tls->bio_ahead.capacity, 0);
-        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#else
         ssize_t n;
         do {
-            n = read(fd, tls->bio_ahead.data, tls->bio_ahead.capacity);
+            n = (ssize_t)jsec_socket_read(fd, tls->bio_ahead.data,
+                                          tls->bio_ahead.capacity);
         } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
         if (n > 0) {
             tls->bio_ahead.pe = tls->bio_ahead.data + n;
@@ -103,17 +96,10 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 #endif
 
     /* Direct socket read into caller's destination buffer */
-#ifdef JANET_WINDOWS
-    int n;
-    do {
-        n = recv(fd, dst, len, 0);
-    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#else
     ssize_t n;
     do {
-        n = read(fd, dst, (size_t)len);
+        n = (ssize_t)jsec_socket_read(fd, dst, len);
     } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
     if (n > 0) {
         return (int)n;
@@ -159,23 +145,14 @@ int jtls_bio_flush(TLSStream *tls) {
     jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
     while (tls->write_buffer.head < tls->write_buffer.tail) {
         size_t to_send = tls->write_buffer.tail - tls->write_buffer.head;
-#ifdef JANET_WINDOWS
-        int n;
-        do {
-            n = send(fd,
-                     (const char *)(tls->write_buffer.data +
-                                    tls->write_buffer.head),
-                     (int)to_send, 0);
-        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#else
         ssize_t n;
         do {
-            n = send(fd,
-                     (const char *)(tls->write_buffer.data +
-                                    tls->write_buffer.head),
-                     to_send, MSG_NOSIGNAL);
+            n = (ssize_t)jsec_socket_send(
+                fd,
+                (const char *)(tls->write_buffer.data +
+                               tls->write_buffer.head),
+                to_send);
         } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
         if (n > 0) {
             tls->write_buffer.head += (size_t)n;
@@ -243,17 +220,10 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
         }
 
         jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-#ifdef JANET_WINDOWS
-        int n;
-        do {
-            n = send(fd, src, len, 0);
-        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#else
         ssize_t n;
         do {
-            n = send(fd, src, (size_t)len, MSG_NOSIGNAL);
+            n = (ssize_t)jsec_socket_send(fd, src, len);
         } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
         if (n > 0) {
             return (int)n;
@@ -291,17 +261,10 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
 
     /* Record alone exceeds write buffer capacity: write directly to socket */
     jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-#ifdef JANET_WINDOWS
-    int n;
-    do {
-        n = send(fd, src, len, 0);
-    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#else
     ssize_t n;
     do {
-        n = send(fd, src, (size_t)len, MSG_NOSIGNAL);
+        n = (ssize_t)jsec_socket_send(fd, src, len);
     } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
-#endif
 
     if (n > 0) {
         return (int)n;

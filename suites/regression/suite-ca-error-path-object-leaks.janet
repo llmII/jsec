@@ -94,7 +94,7 @@
   (when-let [idx (string/find "RESULT:" out)]
     (def start (+ idx (length "RESULT:")))
     (def stop (or (string/find "\n" out start) (length out)))
-    (def parts (string/split ":" (string/slice out start stop)))
+    (def parts (string/split ":" (string/trim (string/slice out start stop))))
     (when (= 2 (length parts))
       (def raised (scan-number (parts 0)))
       (def growth (scan-number (parts 1)))

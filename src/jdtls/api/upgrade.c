@@ -159,7 +159,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
                                 is_server)) { /* is_dtls = 1 */
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
-        client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
+        jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
         jsec_panic(JSEC_MOD_DTLS, "SSL",
                    "failed to apply security options: %s",
                    jutils_cert_load_error());
@@ -181,7 +181,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             if (!add_trusted_cert(client->ctx, trusted)) {
                 SSL_CTX_free(client->ctx);
                 client->ctx = NULL;
-                client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
+                jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
                 jsec_panic(JSEC_MOD_DTLS, "SSL",
                            "failed to add trusted certificate: %s",
                            jutils_cert_load_error());
@@ -198,7 +198,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
             SSL_CTX_set_default_verify_paths(client->ctx) != 1) {
             SSL_CTX_free(client->ctx);
             client->ctx = NULL;
-            client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
+            jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
             dtls_panic_ssl("failed to load default verify paths");
         }
     } else {
@@ -211,7 +211,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
         /* ctx was already set on client, need to clean up */
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
-        client->flags &= (uint8_t)~JDTLS_CLIENT_OWNS_CTX;
+        jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
         dtls_panic_ssl("failed to create SSL object");
     }
 
@@ -232,7 +232,7 @@ Janet cfun_dtls_upgrade(int32_t argc, Janet *argv) {
      * - wbio: SSL writes encrypted data here, we sendto() from it
      */
     client->rbio = BIO_new(BIO_s_mem());
-    client->wbio = BIO_new(BIO_s_mem());
+    client->wbio = jdtls_new_packet_wbio();
     if (!client->rbio || !client->wbio) {
         if (client->rbio) BIO_free(client->rbio);
         if (client->wbio) BIO_free(client->wbio);

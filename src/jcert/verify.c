@@ -167,10 +167,10 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
     JanetArray *chain_arr = NULL;
     JanetArray *trusted_arr = NULL;
     const char *trusted_dir = NULL;
-    size_t trusted_dir_len = 0;
+    int32_t trusted_dir_len = 0;
     const char *purpose_str = NULL;
     const char *hostname = NULL;
-    size_t hostname_len = 0;
+    int32_t hostname_len = 0;
     time_t verify_time = 0;
     int use_verify_time = 0;
     int check_crl = 0;
@@ -238,6 +238,9 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                                       janet_ckeywordv("trusted-dir"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
+            if (bv.len >= INT32_MAX) {
+                cert_panic_param("trusted_dir too long");
+            }
             trusted_dir = (const char *)bv.bytes;
             trusted_dir_len = bv.len;
         }
@@ -256,6 +259,9 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                  : janet_struct_get(opts_struct, janet_ckeywordv("hostname"));
         if (!janet_checktype(val, JANET_NIL)) {
             JanetByteView bv = janet_getbytes(&val, 0);
+            if (bv.len >= INT32_MAX) {
+                cert_panic_param("hostname too long");
+            }
             hostname = (const char *)bv.bytes;
             hostname_len = bv.len;
         }
@@ -477,7 +483,7 @@ Janet cfun_cert_verify_chain(int32_t argc, Janet *argv) {
                                     hostname_len);
             janet_buffer_push_u8(host_buf, 0);
             if (X509_check_host(cert, (const char *)host_buf->data,
-                                hostname_len, 0, NULL) != 1) {
+                                (size_t)hostname_len, 0, NULL) != 1) {
                 janet_table_put(ret, janet_ckeywordv("valid"),
                                 janet_wrap_boolean(0));
                 janet_table_put(ret, janet_ckeywordv("error"),

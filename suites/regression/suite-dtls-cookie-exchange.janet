@@ -110,22 +110,26 @@
    first flight is the cookie-less ClientHello; the client fiber is
    bounded by a deadline and abandoned. Returns the datagram."
   []
-  (def sink (net/listen "127.0.0.1" "0" :datagram))
+  (def sink (net/listen "127.0.0.1" "0" :datagram true))
   (def [_ sink-port] (net/localname sink))
   (def hello (buffer/new 1024))
   (ev/go (fn []
            (try
-             (net/recv-from sink 65536 hello 5)
+             (net/recv-from sink 4096 hello 5)
              ([err] nil))))
+  (var client-stream nil)
   (ev/go (fn []
            (try
-             (ev/with-deadline 3
-               (dtls/connect "127.0.0.1" sink-port {:verify false}))
+             (let [s (net/connect "127.0.0.1" (string sink-port) :datagram)]
+               (set client-stream s)
+               (dtls/upgrade s {:verify false}))
              ([err] nil))))
   (var waited 0.0)
   (while (and (empty? hello) (< waited 5))
     (ev/sleep 0.05)
     (+= waited 0.05))
+  (when client-stream
+    (try (net/close client-stream) ([_] nil)))
   (net/close sink)
   hello)
 
@@ -174,7 +178,7 @@
   (defer (net/close sock)
     (net/send-to sock dest payload)
     (try
-      (do (net/recv-from sock 65536 reply 3) reply)
+      (do (net/recv-from sock 4096 reply 3) reply)
       ([err] nil))))
 
 (defn- get-u48
@@ -257,9 +261,9 @@
         (def buf (buffer/new 65536))
         (var from nil)
         (try
-          (set from (net/recv-from sock 65536 buf 0.1))
+          (set from (net/recv-from sock 4096 buf))
           ([err] nil))
-        (when from
+        (when (and from (not (stop)))
           (try
             (f from buf)
             ([err] nil)))))))
@@ -383,9 +387,12 @@
     # through that wire, to Finished and application data.
 
     (def [server port received] (start-server-and-echo))
-    (def cs (net/listen "127.0.0.1" "0" :datagram))
+    (def cs (net/listen "127.0.0.1" "0" :datagram true))
     (def [_ cs-port] (net/localname cs))
-    (def ss (net/socket :datagram :ipv4))
+    (def ss (net/listen "127.0.0.1" "0" :datagram true))
+    (def [_ ss-port] (net/localname ss))
+    (def cs-self (first (net/address "127.0.0.1" cs-port :datagram)))
+    (def ss-self (first (net/address "127.0.0.1" ss-port :datagram)))
     (def looked (net/address "127.0.0.1" port :datagram))
     (def server-dest (if (indexed? looked) (first looked) looked))
     (def obs @{:dropped-first-hello false
@@ -399,6 +406,9 @@
     (def stop-fn (fn [] stopped))
     (defer (do
              (set stopped true)
+             (try (net/send-to ss cs-self "") ([_] nil))
+             (try (net/send-to cs ss-self "") ([_] nil))
+             (ev/sleep 0.05)
              (net/close cs)
              (net/close ss)
              (try (when client-box (:close client-box)) ([err] nil))

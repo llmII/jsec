@@ -46,6 +46,42 @@ static int dtls_client_cancel_socket_error(JanetFiber *fiber,
     return 1;
 }
 
+static void dtls_client_async_step(JanetFiber *fiber,
+                                   DTLSClientAsyncState *state);
+
+#ifdef JANET_WINDOWS
+static int dtls_client_start_wsarecv(DTLSClient *client,
+                                     DTLSClientAsyncState *state,
+                                     JanetFiber *fiber) {
+    if (!client || !client->transport ||
+        client->transport->handle == JANET_HANDLE_NONE) {
+        WSASetLastError(WSAENOTSOCK);
+        return -1;
+    }
+    memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
+    state->wsa_flags = 0;
+    state->bytes_received = 0;
+    state->wsa_buf.buf = (char *)state->recv_buf;
+    state->wsa_buf.len = sizeof(state->recv_buf);
+
+    int status = WSARecv((SOCKET)client->transport->handle, &state->wsa_buf,
+                         1, &state->bytes_received, &state->wsa_flags,
+                         &state->overlapped, NULL);
+    if (status == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
+        return -1;
+    }
+    /* IOCP posts a completion packet for both synchronous 0 and
+     * WSA_IO_PENDING. */
+    janet_async_in_flight(fiber);
+    state->io_in_flight = 1;
+    return 0;
+}
+
+static void dtls_client_win_poll_resume(JanetFiber *fiber, void *ctx) {
+    dtls_client_async_step(fiber, (DTLSClientAsyncState *)ctx);
+}
+#endif
+
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     DTLSClientAsyncState *state = (DTLSClientAsyncState *)fiber->ev_state;
 
@@ -57,36 +93,47 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
     switch (event) {
         case JANET_ASYNC_EVENT_INIT:
 #ifdef JANET_WINDOWS
-            /* Windows IOCP with memory BIOs:
-             * - If want_write: Flush wbio via WSASendTo, then wait for recv
-             * - Else: Start WSARecvFrom to receive UDP datagram into recv_buf
+            /* Windows IOCP with memory BIOs: flush outbound flight and start
+             * either WSAPoll(POLLOUT) for WANT_WRITE or WSARecv for
+             * WANT_READ.
              */
             if (state && state->client && state->client->transport) {
                 DTLSClient *client = state->client;
-                JanetStream *stream = client->transport;
-
-                /* First flush any pending wbio data */
-                dtls_client_flush_wbio(client);
-
-                /* Now start async receive */
-                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
-                state->wsa_flags = 0;
-                state->bytes_received = 0;
-                state->wsa_buf.buf = (char *)state->recv_buf;
-                state->wsa_buf.len = sizeof(state->recv_buf);
-
-                int status =
-                    WSARecv((SOCKET)stream->handle, &state->wsa_buf, 1,
-                            &state->bytes_received, &state->wsa_flags,
-                            &state->overlapped, NULL);
-
-                if (status == SOCKET_ERROR &&
-                    WSAGetLastError() != WSA_IO_PENDING) {
-                    janet_cancel(fiber, janet_cstringv("WSARecv failed"));
+                ssize_t fr = dtls_client_flush_wbio(client);
+                if (fr == -1) {
+                    int err = WSAGetLastError();
+                    char msg[JSEC_IO_ERROR_BUFSIZE];
+                    client->state = DTLS_STATE_ERROR;
+                    snprintf(msg, sizeof(msg), "[DTLS:IO] socket error: %s",
+                             jsec_socket_strerror(err));
+                    janet_cancel(fiber, janet_cstringv(msg));
                     janet_async_end(fiber);
                     return;
                 }
-                janet_async_in_flight(fiber);
+                if (fr == -2 || state->want_write) {
+                    state->want_write = 1;
+                    if (jutils_win_poll_start(
+                            client->transport, fiber, POLLOUT, state,
+                            &state->win_write_wait,
+                            dtls_client_win_poll_resume) < 0) {
+                        client->state = DTLS_STATE_ERROR;
+                        janet_cancel(fiber, janet_cstringv("out of memory"));
+                        janet_async_end(fiber);
+                        return;
+                    }
+                    break;
+                }
+                if (dtls_client_start_wsarecv(client, state, fiber) < 0) {
+                    int err = WSAGetLastError();
+                    char msg[JSEC_IO_ERROR_BUFSIZE];
+                    client->state = DTLS_STATE_ERROR;
+                    snprintf(msg, sizeof(msg),
+                             "[DTLS:IO] WSARecv failed: %s",
+                             jsec_socket_strerror(err));
+                    janet_cancel(fiber, janet_cstringv(msg));
+                    janet_async_end(fiber);
+                    return;
+                }
             }
             break;
 #else
@@ -99,8 +146,14 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
 #endif
         case JANET_ASYNC_EVENT_DEINIT:
             /* Real teardown (state was not stolen for a mode switch):
-             * retire the handshake flight timer with the registration. */
+             * cancel pending Winsock ops and retire the handshake timer. */
             if (state) {
+#ifdef JANET_WINDOWS
+                jutils_win_poll_cancel(&state->win_write_wait);
+                jutils_win_cancel_overlapped(
+                    fiber, state->client ? state->client->transport : NULL,
+                    &state->overlapped, &state->io_in_flight);
+#endif
                 dtls_flight_timer_disarm(&state->client->flight_timer, 0);
             }
             break;
@@ -146,37 +199,59 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
             return;
 
 #ifdef JANET_WINDOWS
-        case JANET_ASYNC_EVENT_COMPLETE:
         case JANET_ASYNC_EVENT_FAILED: {
+            state->io_in_flight = 0;
+            DTLSClient *client = state->client;
+            int err = jutils_overlapped_error(client->transport,
+                                              &state->overlapped);
+            if (err == WSA_OPERATION_ABORTED ||
+                err == ERROR_OPERATION_ABORTED) {
+                return;
+            }
+            char msg[JSEC_IO_ERROR_BUFSIZE];
+            client->state = DTLS_STATE_ERROR;
+            jutils_format_overlapped_error(msg, sizeof(msg), "DTLS:IO",
+                                           client->transport,
+                                           &state->overlapped);
+            janet_cancel(fiber, janet_cstringv(msg));
+            janet_async_end(fiber);
+            return;
+        }
+
+        case JANET_ASYNC_EVENT_COMPLETE: {
+            state->io_in_flight = 0;
             /* Windows IOCP: Receive completed with actual data - write to
              * rbio */
             DTLSClient *client = state->client;
-            DWORD bytes_transferred;
-            DWORD flags;
+            DWORD bytes_transferred = 0;
+            DWORD flags = 0;
             BOOL success = WSAGetOverlappedResult(
                 (SOCKET)client->transport->handle, &state->overlapped,
                 &bytes_transferred, FALSE, &flags);
 
-            if (!success || bytes_transferred == 0) {
-                /* No data received - start another receive */
-                memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
-                state->wsa_flags = 0;
-                state->bytes_received = 0;
-                state->wsa_buf.buf = (char *)state->recv_buf;
-                state->wsa_buf.len = sizeof(state->recv_buf);
+            if (!success) {
+                int err = WSAGetLastError();
+                char msg[JSEC_IO_ERROR_BUFSIZE];
+                client->state = DTLS_STATE_ERROR;
+                snprintf(msg, sizeof(msg), "[DTLS:IO] socket error: %s",
+                         jsec_socket_strerror(err));
+                janet_cancel(fiber, janet_cstringv(msg));
+                janet_async_end(fiber);
+                return;
+            }
 
-                int status =
-                    WSARecv((SOCKET)client->transport->handle,
-                            &state->wsa_buf, 1, &state->bytes_received,
-                            &state->wsa_flags, &state->overlapped, NULL);
-                if (status == SOCKET_ERROR &&
-                    WSAGetLastError() != WSA_IO_PENDING) {
-                    janet_cancel(fiber,
-                                 janet_cstringv("WSARecv restart failed"));
+            if (bytes_transferred == 0) {
+                if (dtls_client_start_wsarecv(client, state, fiber) < 0) {
+                    int err = WSAGetLastError();
+                    char msg[JSEC_IO_ERROR_BUFSIZE];
+                    client->state = DTLS_STATE_ERROR;
+                    snprintf(msg, sizeof(msg),
+                             "[DTLS:IO] WSARecv restart failed: %s",
+                             jsec_socket_strerror(err));
+                    janet_cancel(fiber, janet_cstringv(msg));
                     janet_async_end(fiber);
                     return;
                 }
-                janet_async_in_flight(fiber);
                 return;
             }
 
@@ -187,217 +262,279 @@ void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event) {
         }
 #endif
         case JANET_ASYNC_EVENT_READ:
-        case JANET_ASYNC_EVENT_WRITE: {
-            DTLSClient *client = state->client;
+        case JANET_ASYNC_EVENT_WRITE:
+            dtls_client_async_step(fiber, state);
+            break;
 
-            DTLSResult result = DTLS_RESULT_ERROR;
-            Janet retval = janet_wrap_nil();
-            int32_t nwritten = 0;
-            int sock_err = 0;
-            int close_transport = 0;
-            const char *op_name = "DTLS";
+        default:
+            break;
+    }
+}
 
-            switch (state->op) {
-                case CLIENT_OP_HANDSHAKE:
-                    op_name = "Handshake";
-                    result = dtls_do_handshake_ex(client->ssl, &sock_err);
-                    if (result == DTLS_RESULT_OK) {
-                        client->state = DTLS_STATE_ESTABLISHED;
-                        /* Record handshake completion time if tracking
-                         * enabled */
-                        if (client->flags & JDTLS_CLIENT_TRACK_HANDSHAKE) {
-                            clock_gettime(CLOCK_MONOTONIC,
-                                          &client->ts_handshake);
-                        }
-                        retval = janet_wrap_abstract(client);
-                    }
-                    break;
+static void dtls_client_async_step(JanetFiber *fiber,
+                                   DTLSClientAsyncState *state) {
+    DTLSClient *client = state->client;
 
-                case CLIENT_OP_READ: {
-                    op_name = "Read";
-                    int32_t before = state->buffer->count;
-                    int32_t remaining =
-                        state->nbytes -
-                        (state->buffer->count - state->buf_start);
-                    if (remaining <= 0) {
-                        /* Nothing left to request: complete with the
-                         * buffer and never issue SSL_read(..., 0),
-                         * which would read as EOF. */
-                        retval = janet_wrap_buffer(state->buffer);
-                        result = DTLS_RESULT_OK;
-                        break;
-                    }
-                    result = dtls_do_read_ex(client->ssl, state->buffer,
-                                             remaining, &sock_err);
-                    if (result == DTLS_RESULT_UNEXPECTED_EOF) {
-                        /* A truncation raises below - it must never
-                         * look like a clean end of data */
-                    } else {
-                        if (state->buffer->count > before) {
-                            /* For datagrams, return after first
-                             * successful read */
-                            retval = janet_wrap_buffer(state->buffer);
-                            result = DTLS_RESULT_OK;
-                        }
-                        if (result == DTLS_RESULT_EOF) {
-                            /* Clean EOF: what this call appended or nil */
-                            retval = state->buffer->count > state->buf_start
-                                         ? janet_wrap_buffer(state->buffer)
-                                         : janet_wrap_nil();
-                            result = DTLS_RESULT_OK;
-                        }
-                    }
-                    break;
-                }
-
-                case CLIENT_OP_WRITE: {
-                    op_name = "Write";
-                    JanetByteView view =
-                        janet_getbytes(&state->write_src, 0);
-                    if (view.len != state->write_len) {
-                        janet_cancel(
-                            fiber, janet_cstringv(
-                                       "write source changed during write"));
-                        janet_async_end(fiber);
-                        return;
-                    }
-                    result = dtls_do_write_ex(client->ssl, view.bytes,
-                                              view.len, &nwritten, &sock_err);
-                    if (result == DTLS_RESULT_OK) {
-                        retval = janet_wrap_nil();
-                    }
-                    break;
-                }
-
-                case CLIENT_OP_CLOSE:
-                    op_name = "Shutdown";
-                    result = dtls_do_shutdown_ex(client->ssl, &sock_err);
-                    if (result == DTLS_RESULT_OK ||
-                        result == DTLS_RESULT_EOF ||
-                        result == DTLS_RESULT_UNEXPECTED_EOF) {
-                        client->flags |= JDTLS_CLIENT_CLOSED;
-                        client->state = DTLS_STATE_CLOSED;
-                        /* The transport close is deferred past the
-                         * completion below: closing it here let its
-                         * close event reach this still-registered
-                         * listener and cancel the completing fiber
-                         * with "stream error" */
-                        close_transport = 1;
-                        retval = janet_wrap_nil();
-                        result = DTLS_RESULT_OK;
-                    }
-                    break;
+#ifdef JANET_WINDOWS
+    if (state->want_write) {
+        ssize_t fr = dtls_client_flush_wbio(client);
+        if (fr == -1) {
+            int err = WSAGetLastError();
+            char msg[JSEC_IO_ERROR_BUFSIZE];
+            client->state = DTLS_STATE_ERROR;
+            snprintf(msg, sizeof(msg), "[DTLS:IO] socket error: %s",
+                     jsec_socket_strerror(err));
+            janet_cancel(fiber, janet_cstringv(msg));
+            janet_async_end(fiber);
+            return;
+        }
+        if (fr == -2) {
+            if (jutils_win_poll_start(client->transport, fiber, POLLOUT,
+                                      state, &state->win_write_wait,
+                                      dtls_client_win_poll_resume) < 0) {
+                client->state = DTLS_STATE_ERROR;
+                janet_cancel(fiber, janet_cstringv("out of memory"));
+                janet_async_end(fiber);
             }
+            return;
+        }
+        if (state->op == CLIENT_OP_WRITE && state->flush_only) {
+            state->flush_only = 0;
+            janet_schedule(fiber, janet_wrap_nil());
+            janet_async_end(fiber);
+            return;
+        }
+    }
+#endif
 
-            /* Flush any data SSL wrote to wbio - handshake responses, etc */
-            dtls_client_flush_wbio(client);
+    DTLSResult result = DTLS_RESULT_ERROR;
+    Janet retval = janet_wrap_nil();
+    int32_t nwritten = 0;
+    int sock_err = 0;
+    int close_transport = 0;
+    const char *op_name = "DTLS";
 
-            /* Handle result */
-            switch (result) {
-                case DTLS_RESULT_OK: {
-                    JanetStream *transport = client->transport;
-                    janet_schedule(fiber, retval);
-                    janet_async_end(fiber);
-                    if (close_transport && transport) {
-                        janet_stream_close(transport);
-                    }
-                    break;
+    switch (state->op) {
+        case CLIENT_OP_HANDSHAKE:
+            op_name = "Handshake";
+            result = dtls_do_handshake_ex(client->ssl, &sock_err);
+            if (result == DTLS_RESULT_OK) {
+                client->state = DTLS_STATE_ESTABLISHED;
+                /* Record handshake completion time if tracking enabled */
+                if (client->flags & JDTLS_CLIENT_TRACK_HANDSHAKE) {
+                    clock_gettime(CLOCK_MONOTONIC, &client->ts_handshake);
                 }
+                retval = janet_wrap_abstract(client);
+            }
+            break;
 
-                case DTLS_RESULT_WANT_READ: {
-                    /* Need to switch async modes - end current, start new */
-                    DTLSClientAsyncState *saved = state;
-                    saved->want_write = 0; /* Update for next INIT */
-                    fiber->ev_state = NULL;
-                    janet_async_end(fiber);
-                    janet_async_start_fiber(
-                        fiber, client->transport, JANET_ASYNC_LISTEN_READ,
-                        dtls_client_async_callback, saved);
-                    /* Handshake pending on WANT_READ: arm the DTLS
-                     * flight timer so a lost flight is retransmitted
-                     * even when no peer datagram arrives. */
-                    if (state->op == CLIENT_OP_HANDSHAKE) {
-                        dtls_flight_timer_arm(&client->flight_timer,
-                                              client->ssl, client,
-                                              client->transport,
-                                              dtls_client_flight_flush);
-                    }
-                    break;
+        case CLIENT_OP_READ: {
+            op_name = "Read";
+            int32_t before = state->buffer->count;
+            int32_t remaining =
+                state->nbytes - (state->buffer->count - state->buf_start);
+            if (remaining <= 0) {
+                /* Nothing left to request: complete with the
+                 * buffer and never issue SSL_read(..., 0),
+                 * which would read as EOF. */
+                retval = janet_wrap_buffer(state->buffer);
+                result = DTLS_RESULT_OK;
+                break;
+            }
+            result = dtls_do_read_ex(client->ssl, state->buffer, remaining,
+                                     &sock_err);
+            if (result == DTLS_RESULT_UNEXPECTED_EOF) {
+                /* A truncation raises below - it must never
+                 * look like a clean end of data */
+            } else {
+                if (state->buffer->count > before) {
+                    /* For datagrams, return after first
+                     * successful read */
+                    retval = janet_wrap_buffer(state->buffer);
+                    result = DTLS_RESULT_OK;
                 }
-
-                case DTLS_RESULT_WANT_WRITE: {
-                    DTLSClientAsyncState *saved = state;
-                    saved->want_write = 1; /* Update for next INIT */
-                    fiber->ev_state = NULL;
-                    janet_async_end(fiber);
-                    janet_async_start_fiber(
-                        fiber, client->transport, JANET_ASYNC_LISTEN_WRITE,
-                        dtls_client_async_callback, saved);
-                    break;
-                }
-
-                case DTLS_RESULT_EOF:
-                    client->state = DTLS_STATE_CLOSED;
-                    if (state->op == CLIENT_OP_WRITE) {
-                        /* Peer closed with the write's bytes unwritten:
-                         * fail the write like tls/write and Janet's
-                         * ev/write / net/write instead of completing
-                         * nil */
-                        char msg[256];
-                        snprintf(msg, sizeof(msg),
-                                 "[DTLS:IO] Write error: connection closed "
-                                 "with %d of %d bytes unwritten",
-                                 (int)(state->write_len - nwritten),
-                                 (int)state->write_len);
-                        janet_cancel(fiber, janet_cstringv(msg));
-                        janet_async_end(fiber);
-                    } else {
-                        janet_schedule(fiber, janet_wrap_nil());
-                        janet_async_end(fiber);
-                    }
-                    break;
-
-                case DTLS_RESULT_UNEXPECTED_EOF:
-                    if (state->op == CLIENT_OP_WRITE) {
-                        /* Peer closed without close_notify and the
-                         * write's bytes are unwritten: the write fails
-                         * like tls/write and Janet's ev/write /
-                         * net/write - read surfaces own the truncation
-                         * raise */
-                        client->state = DTLS_STATE_CLOSED;
-                        char msg[256];
-                        snprintf(msg, sizeof(msg),
-                                 "[DTLS:IO] Write error: connection closed "
-                                 "with %d of %d bytes unwritten",
-                                 (int)(state->write_len - nwritten),
-                                 (int)state->write_len);
-                        janet_cancel(fiber, janet_cstringv(msg));
-                        janet_async_end(fiber);
-                    } else {
-                        /* A truncation raises the one documented error -
-                         * it must never look like a clean end of data */
-                        client->state = DTLS_STATE_ERROR;
-                        janet_cancel(fiber,
-                                     janet_cstringv(JSEC_UNEXPECTED_EOF_ERROR));
-                        janet_async_end(fiber);
-                    }
-                    break;
-
-                case DTLS_RESULT_ERROR: {
-                    char buf[JSEC_IO_ERROR_BUFSIZE];
-                    dtls_format_io_error(buf, sizeof(buf), op_name, sock_err,
-                                         fiber->ev_stream);
-                    client->state = DTLS_STATE_ERROR;
-                    janet_cancel(fiber, janet_cstringv(buf));
-                    janet_async_end(fiber);
-                    break;
+                if (result == DTLS_RESULT_EOF) {
+                    /* Clean EOF: what this call appended or nil */
+                    retval = state->buffer->count > state->buf_start
+                                 ? janet_wrap_buffer(state->buffer)
+                                 : janet_wrap_nil();
+                    result = DTLS_RESULT_OK;
                 }
             }
             break;
         }
 
-        default:
+        case CLIENT_OP_WRITE: {
+            op_name = "Write";
+            JanetByteView view = janet_getbytes(&state->write_src, 0);
+            if (view.len != state->write_len) {
+                janet_cancel(fiber, janet_cstringv(
+                                        "write source changed during write"));
+                janet_async_end(fiber);
+                return;
+            }
+            result = dtls_do_write_ex(client->ssl, view.bytes, view.len,
+                                      &nwritten, &sock_err);
+            if (result == DTLS_RESULT_OK) {
+                retval = janet_wrap_nil();
+            }
             break;
+        }
+
+        case CLIENT_OP_CLOSE:
+            op_name = "Shutdown";
+            result = dtls_do_shutdown_ex(client->ssl, &sock_err);
+            if (result == DTLS_RESULT_OK || result == DTLS_RESULT_EOF ||
+                result == DTLS_RESULT_UNEXPECTED_EOF) {
+                client->flags |= JDTLS_CLIENT_CLOSED;
+                client->state = DTLS_STATE_CLOSED;
+                /* The transport close is deferred past the
+                 * completion below: closing it here let its
+                 * close event reach this still-registered
+                 * listener and cancel the completing fiber
+                 * with "stream error" */
+                close_transport = 1;
+                retval = janet_wrap_nil();
+                result = DTLS_RESULT_OK;
+            }
+            break;
+    }
+
+    /* Flush any data SSL wrote to wbio - handshake responses, etc */
+    ssize_t flush_rc = dtls_client_flush_wbio(client);
+    if (flush_rc == -1) {
+        int err = jsec_socket_errno;
+        char buf[JSEC_IO_ERROR_BUFSIZE];
+        client->state = DTLS_STATE_ERROR;
+        dtls_format_io_error(buf, sizeof(buf), op_name, err,
+                             fiber->ev_stream);
+        janet_cancel(fiber, janet_cstringv(buf));
+        janet_async_end(fiber);
+        return;
+    }
+    if (flush_rc == -2) {
+#ifdef JANET_WINDOWS
+        if (result == DTLS_RESULT_OK && state->op == CLIENT_OP_WRITE) {
+            state->flush_only = 1;
+        }
+#endif
+        if (result != DTLS_RESULT_ERROR &&
+            result != DTLS_RESULT_UNEXPECTED_EOF) {
+            result = DTLS_RESULT_WANT_WRITE;
+        }
+    }
+
+    /* Handle result */
+    switch (result) {
+        case DTLS_RESULT_OK: {
+            JanetStream *transport = client->transport;
+            janet_schedule(fiber, retval);
+            janet_async_end(fiber);
+            if (close_transport && transport) {
+                janet_stream_close(transport);
+            }
+            break;
+        }
+
+        case DTLS_RESULT_WANT_READ: {
+            /* Need to switch async modes - end current, start new */
+            DTLSClientAsyncState *saved = state;
+            int is_handshake = (saved->op == CLIENT_OP_HANDSHAKE);
+            saved->want_write = 0; /* Update for next INIT */
+            fiber->ev_state = NULL;
+#ifdef JANET_WINDOWS
+            jutils_win_poll_cancel(&saved->win_write_wait);
+            jutils_win_cancel_overlapped(
+                NULL, saved->client ? saved->client->transport : NULL,
+                &saved->overlapped, &saved->io_in_flight);
+#endif
+            janet_async_end(fiber);
+            janet_async_start_fiber(fiber, client->transport,
+                                    JANET_ASYNC_LISTEN_READ,
+                                    dtls_client_async_callback, saved);
+            /* Handshake pending on WANT_READ: arm the DTLS
+             * flight timer only if INIT did not terminate fiber. */
+            if (is_handshake && fiber->ev_state != NULL) {
+                dtls_flight_timer_arm(&client->flight_timer, client->ssl,
+                                      client, client->transport,
+                                      dtls_client_flight_flush);
+            }
+            break;
+        }
+
+        case DTLS_RESULT_WANT_WRITE: {
+            DTLSClientAsyncState *saved = state;
+            saved->want_write = 1; /* Update for next INIT */
+            fiber->ev_state = NULL;
+#ifdef JANET_WINDOWS
+            jutils_win_poll_cancel(&saved->win_write_wait);
+            jutils_win_cancel_overlapped(
+                NULL, saved->client ? saved->client->transport : NULL,
+                &saved->overlapped, &saved->io_in_flight);
+#endif
+            janet_async_end(fiber);
+            janet_async_start_fiber(fiber, client->transport,
+                                    JANET_ASYNC_LISTEN_WRITE,
+                                    dtls_client_async_callback, saved);
+            break;
+        }
+
+        case DTLS_RESULT_EOF:
+            client->state = DTLS_STATE_CLOSED;
+            if (state->op == CLIENT_OP_WRITE) {
+                /* Peer closed with the write's bytes unwritten:
+                 * fail the write like tls/write and Janet's
+                 * ev/write / net/write instead of completing
+                 * nil */
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "[DTLS:IO] Write error: connection closed "
+                         "with %d of %d bytes unwritten",
+                         (int)(state->write_len - nwritten),
+                         (int)state->write_len);
+                janet_cancel(fiber, janet_cstringv(msg));
+                janet_async_end(fiber);
+            } else {
+                janet_schedule(fiber, janet_wrap_nil());
+                janet_async_end(fiber);
+            }
+            break;
+
+        case DTLS_RESULT_UNEXPECTED_EOF:
+            if (state->op == CLIENT_OP_WRITE) {
+                /* Peer closed without close_notify and the
+                 * write's bytes are unwritten: the write fails
+                 * like tls/write and Janet's ev/write /
+                 * net/write - read surfaces own the truncation
+                 * raise */
+                client->state = DTLS_STATE_CLOSED;
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "[DTLS:IO] Write error: connection closed "
+                         "with %d of %d bytes unwritten",
+                         (int)(state->write_len - nwritten),
+                         (int)state->write_len);
+                janet_cancel(fiber, janet_cstringv(msg));
+                janet_async_end(fiber);
+            } else {
+                /* A truncation raises the one documented error -
+                 * it must never look like a clean end of data */
+                client->state = DTLS_STATE_ERROR;
+                janet_cancel(fiber,
+                             janet_cstringv(JSEC_UNEXPECTED_EOF_ERROR));
+                janet_async_end(fiber);
+            }
+            break;
+
+        case DTLS_RESULT_ERROR: {
+            char buf[JSEC_IO_ERROR_BUFSIZE];
+            dtls_format_io_error(buf, sizeof(buf), op_name, sock_err,
+                                 fiber->ev_stream);
+            client->state = DTLS_STATE_ERROR;
+            janet_cancel(fiber, janet_cstringv(buf));
+            janet_async_end(fiber);
+            break;
+        }
     }
 }
 
@@ -474,8 +611,9 @@ void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
 }
 
 /* Helper to create and start async write */
-void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
-                                   double timeout) {
+void dtls_client_start_async_write_flush(DTLSClient *client, Janet src,
+                                         int mode, double timeout,
+                                         int flush_only) {
     DTLSClientAsyncState *state = janet_malloc(sizeof(DTLSClientAsyncState));
     if (!state) {
         dtls_panic_io("out of memory");
@@ -486,6 +624,11 @@ void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
     state->write_len = janet_getbytes(&state->write_src, 0).len;
     state->op = CLIENT_OP_WRITE;
     state->want_write = (mode == JANET_ASYNC_LISTEN_WRITE) ? 1 : 0;
+#ifdef JANET_WINDOWS
+    state->flush_only = flush_only ? 1 : 0;
+#else
+    (void)flush_only;
+#endif
     /* Arm once here, at initial suspension: the deadline is absolute
      * from the call, so the WANT_READ/WANT_WRITE mode-switches in the
      * callback must not re-arm it. */
@@ -494,6 +637,11 @@ void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
     }
     janet_async_start(client->transport, mode, dtls_client_async_callback,
                       state);
+}
+
+void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
+                                   double timeout) {
+    dtls_client_start_async_write_flush(client, src, mode, timeout, 0);
 }
 
 /* Helper to create and start async close */

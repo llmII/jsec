@@ -47,6 +47,11 @@
  */
 #define OSSL_STR(s) ((unsigned char *)(uintptr_t)(s))
 
+/* Clear bit(s) in a uint8_t flags field without constant ~ truncation (MSVC
+ * C4310). */
+#define jsec_clear_u8_flag(field, bit)                                       \
+    ((field) &= (uint8_t)(0xFFu ^ (unsigned)(bit)))
+
 /*============================================================================
  * PUBLIC API - Utility Functions
  *============================================================================
@@ -114,6 +119,38 @@ int jutils_pending_socket_error(JanetStream *stream);
  * when SO_ERROR is zero) into buf. Returns non-zero if SO_ERROR was non-zero. */
 int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
                                JanetStream *stream);
+
+#ifdef JANET_WINDOWS
+/* Query overlapped IOCP failure via WSAGetOverlappedResult with SO_ERROR
+ * fallback. */
+int jutils_overlapped_error(JanetStream *stream, WSAOVERLAPPED *ov);
+
+/* Format "[<category>] socket error: <reason>" from overlapped completion
+ * failure. */
+void jutils_format_overlapped_error(char *buf, size_t buflen,
+                                    const char *category, JanetStream *stream,
+                                    WSAOVERLAPPED *ov);
+
+/* Cancel a still-in-flight IOCP operation during DEINIT so a timed-out or
+ * cancelled wait does not linger in the kernel and consume later events.
+ * Also detaches fiber->ev_state on the JANET_FIBER_EV_FLAG_IN_FLIGHT path
+ * where janet_async_end defers janet_free(overlapped) to IOCP completion. */
+void jutils_win_cancel_overlapped(JanetFiber *fiber, JanetStream *stream,
+                                  WSAOVERLAPPED *ov, uint8_t *io_in_flight);
+
+/* Resume callback invoked on the Janet event loop when WSAPoll reports
+ * readiness on a socket wait started by jutils_win_poll_start. */
+typedef void (*JsecWinPollResumeFn)(JanetFiber *fiber, void *ctx);
+
+/* Wait for Winsock readiness (POLLOUT/POLLIN) on Janet's worker thread pool
+ * so IOCP avoids zero-byte WSASend immediate-completion busy spins. */
+int jutils_win_poll_start(JanetStream *stream, JanetFiber *fiber,
+                          short events, void *ctx, void **slot,
+                          JsecWinPollResumeFn resume_fn);
+
+/* Cancel an active WSAPoll wait during DEINIT. */
+void jutils_win_poll_cancel(void **slot);
+#endif
 
 /* Helper to convert Janet string or keyword to C string
  * Returns NULL if the value is neither a string nor keyword. */

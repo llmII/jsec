@@ -114,6 +114,11 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     int32_t before = buf->count;
     int sock_err = 0;
     DTLSResult result = dtls_do_read_ex(client->ssl, buf, n, &sock_err);
+    if (dtls_client_flush_wbio_to_peer(client) == -1) {
+        int err = jsec_socket_errno;
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Read", err, client->transport);
+    }
 
     if (result == DTLS_RESULT_UNEXPECTED_EOF) {
         /* A peer close without close_notify truncates the stream and
@@ -161,6 +166,11 @@ Janet cfun_dtls_flush(int32_t argc, Janet *argv) {
         dtls_panic_io("DTLS client is closed");
     }
 
+    if (dtls_client_flush_wbio_to_peer(client) == -1) {
+        dtls_raise_sync_io_error("Flush", jsec_socket_errno,
+                                 client->transport);
+    }
+
     return argv[0];
 }
 
@@ -194,6 +204,20 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
 
     double timeout = parse_timeout_opt(argc, argv, 2, JSEC_MOD_DTLS, -1.0);
 
+    if (client->wbio && BIO_ctrl_pending(client->wbio) > 0) {
+        ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+        if (flush_rc == -1) {
+            int err = jsec_socket_errno;
+            client->state = DTLS_STATE_ERROR;
+            dtls_raise_sync_io_error("Write", err, client->transport);
+        }
+        if (flush_rc == -2) {
+            dtls_client_start_async_write_flush(
+                client, argv[1], JANET_ASYNC_LISTEN_WRITE, timeout, 0);
+            return janet_wrap_nil();
+        }
+    }
+
     /* Try initial write */
     int32_t nwritten = 0;
     int sock_err = 0;
@@ -202,7 +226,25 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
                          &sock_err);
 
     if (result == DTLS_RESULT_OK) {
+        ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+        if (flush_rc == -1) {
+            int err = jsec_socket_errno;
+            client->state = DTLS_STATE_ERROR;
+            dtls_raise_sync_io_error("Write", err, client->transport);
+        }
+        if (flush_rc == -2) {
+            dtls_client_start_async_write_flush(
+                client, argv[1], JANET_ASYNC_LISTEN_WRITE, timeout, 1);
+            return janet_wrap_nil();
+        }
         return janet_wrap_nil();
+    }
+
+    ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+    if (flush_rc == -1) {
+        int err = jsec_socket_errno;
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Write", err, client->transport);
     }
 
     if (result == DTLS_RESULT_EOF || result == DTLS_RESULT_UNEXPECTED_EOF) {
@@ -222,9 +264,11 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
     }
 
     /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
-                                                 : JANET_ASYNC_LISTEN_WRITE;
-    dtls_client_start_async_write(client, argv[1], mode, timeout);
+    int mode =
+        (flush_rc == -2 || result == DTLS_RESULT_WANT_WRITE)
+            ? JANET_ASYNC_LISTEN_WRITE
+            : JANET_ASYNC_LISTEN_READ;
+    dtls_client_start_async_write_flush(client, argv[1], mode, timeout, 0);
     return janet_wrap_nil(); /* Will be replaced by async result */
 }
 

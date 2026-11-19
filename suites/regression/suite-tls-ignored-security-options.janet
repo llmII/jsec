@@ -82,7 +82,11 @@
 (defn- abspath
   "Absolute path for a possibly-relative scratch path."
   [p]
-  (if (string/has-prefix? "/" p) p (string (os/cwd) "/" p)))
+  (def norm (string/replace-all "\\" "/" p))
+  (if (or (string/has-prefix? "/" norm)
+          (and (>= (length norm) 2) (= (get norm 1) (chr ":"))))
+    norm
+    (string (string/replace-all "\\" "/" (os/cwd)) "/" norm)))
 
 (defn- write-pem
   "Write PEM text to a file under the given scratch dir; returns its path."
@@ -101,10 +105,10 @@
   ``
 (import jsec/tls :as tls)
 
-(os/setenv "SSL_CERT_FILE" "%s")
+(os/setenv "SSL_CERT_FILE" %q)
 
-(def leaf-cert (slurp "%s"))
-(def leaf-key (slurp "%s"))
+(def leaf-cert (slurp %q))
+(def leaf-key (slurp %q))
 
 (def server (net/listen "127.0.0.1" "0"))
 (def [host port] (net/localname server))
@@ -121,7 +125,7 @@
   (try
     (with [c (tls/connect host (string port)
                           {:verify true
-                           :ca "%s"
+                           :ca %q
                            :hostname "server.example"})]
       (def data (:read c 2 nil 5.0))
       (string "RESULT:accepted:" (describe data)))

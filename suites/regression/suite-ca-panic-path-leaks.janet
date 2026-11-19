@@ -99,7 +99,7 @@
   (when-let [idx (string/find "RESULT:" out)]
     (def start (+ idx (length "RESULT:")))
     (def stop (or (string/find "\n" out start) (length out)))
-    (def parts (string/split ":" (string/slice out start stop)))
+    (def parts (string/split ":" (string/trim (string/slice out start stop))))
     (when (= 2 (length parts))
       (def raised (scan-number (parts 0)))
       (def growth (scan-number (parts 1)))
@@ -121,16 +121,19 @@
 
 # Warm the allocator first so the growth sample is not arena slop.
 (for i 0 200 (force-once))
+(gccollect)
 
-(def v0 (get (memory/info) :vsize))
+(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 (var raised 0)
 (var first-err nil)
 (for i 0 50000
   (def e (force-once))
   (if (nil? e)
     (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e)))))
-(def v1 (get (memory/info) :vsize))
+    (do (++ raised) (unless first-err (set first-err e))))
+  (when (zero? (mod i 1000)) (gccollect)))
+(gccollect)
+(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 
 (print "RESULT:" raised ":" (div (- v1 v0) 1024))
 (print "ERR:" (string first-err))
@@ -143,26 +146,30 @@
 (import assay/memory)
 
 (def ca (ca/generate {:common-name "Leak Root"}))
+(def bad-revoked {:revoked @[{:serial 1 :reason :bogus-reason}]})
 
 (defn force-once
   "Force the CRL bad-reason panic once. Returns the error raised, or
    nil when the call did not raise."
   []
-  (try (do (:generate-crl ca {:revoked @[{:serial 1 :reason :bogus-reason}]})
+  (try (do (:generate-crl ca bad-revoked)
            nil)
        ([e] e)))
 
 (for i 0 200 (force-once))
+(gccollect)
 
-(def v0 (get (memory/info) :vsize))
+(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 (var raised 0)
 (var first-err nil)
 (for i 0 50000
   (def e (force-once))
   (if (nil? e)
     (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e)))))
-(def v1 (get (memory/info) :vsize))
+    (do (++ raised) (unless first-err (set first-err e))))
+  (when (zero? (mod i 1000)) (gccollect)))
+(gccollect)
+(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 
 (print "RESULT:" raised ":" (div (- v1 v0) 1024))
 (print "ERR:" (string first-err))
@@ -187,16 +194,19 @@
        ([e] e)))
 
 (for i 0 200 (force-once))
+(gccollect)
 
-(def v0 (get (memory/info) :vsize))
+(def v0 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 (var raised 0)
 (var first-err nil)
 (for i 0 50000
   (def e (force-once))
   (if (nil? e)
     (error "scenario did not raise")
-    (do (++ raised) (unless first-err (set first-err e)))))
-(def v1 (get (memory/info) :vsize))
+    (do (++ raised) (unless first-err (set first-err e))))
+  (when (zero? (mod i 1000)) (gccollect)))
+(gccollect)
+(def v1 (get (memory/info) (if (= (os/which) :macos) :rss :vsize)))
 
 (print "RESULT:" raised ":" (div (- v1 v0) 1024))
 (print "ERR:" (string first-err))

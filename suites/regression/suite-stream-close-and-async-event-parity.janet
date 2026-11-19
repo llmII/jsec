@@ -443,11 +443,12 @@
                   (string "an async socket error must be reported as an "
                           "error carrying the OS reason; got %s %s")
                   tag a))
+        (def al (string/ascii-lower a))
         (assert (and (string/find "[DTLS:IO]" a)
-                     (or (string/find "refused" a)
-                         (string/find "reset" a)
-                         (string/find "unreach" a)
-                         (string/find "Connection" a)))
+                     (or (string/find "refused" al)
+                         (string/find "reset" al)
+                         (string/find "unreach" al)
+                         (string/find "connection" al)))
                 (string/format
                   (string "JANET_ASYNC_EVENT_ERR must be handled apart "
                           "from JANET_ASYNC_EVENT_CLOSE and report the "
@@ -483,11 +484,12 @@
                           "carrying the OS reason - a raise, never "
                           "nil, never a hardcoded string; got %s %s")
                   tag a))
+        (def al (string/ascii-lower a))
         (assert (and (string/find "[TLS:IO]" a)
-                     (or (string/find "refused" a)
-                         (string/find "reset" a)
-                         (string/find "unreach" a)
-                         (string/find "Connection" a)))
+                     (or (string/find "refused" al)
+                         (string/find "reset" al)
+                         (string/find "unreach" al)
+                         (string/find "connection" al)))
                 (string/format
                   (string "JANET_ASYNC_EVENT_ERR must be handled apart "
                           "from JANET_ASYNC_EVENT_CLOSE and report the "

@@ -99,17 +99,12 @@ int jutils_is_unexpected_eof(void) {
 
 int jutils_pending_socket_error(JanetStream *stream) {
     int res = 0;
-    int r = -1;
-    socklen_t size = sizeof(res);
-    if (!stream) {
+    socklen_t size = (socklen_t)sizeof(res);
+    if (!stream || stream->handle == JANET_HANDLE_NONE) {
         return 0;
     }
-#ifdef JANET_WINDOWS
-    r = getsockopt((SOCKET)stream->handle, SOL_SOCKET, SO_ERROR, (char *)&res,
-                   (int *)&size);
-#else
-    r = getsockopt(stream->handle, SOL_SOCKET, SO_ERROR, &res, &size);
-#endif
+    int r = jsec_socket_getsockopt((jsec_socket_t)stream->handle, SOL_SOCKET,
+                                   SO_ERROR, &res, &size);
     return (r == 0 && res != 0) ? res : 0;
 }
 
@@ -124,3 +119,148 @@ int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
     snprintf(buf, buflen, "[%s] socket error", category);
     return 0;
 }
+
+#ifdef JANET_WINDOWS
+int jutils_overlapped_error(JanetStream *stream, WSAOVERLAPPED *ov) {
+    int err = 0;
+    if (stream && stream->handle != JANET_HANDLE_NONE && ov) {
+        DWORD bytes = 0;
+        DWORD flags = 0;
+        if (!WSAGetOverlappedResult((SOCKET)stream->handle, ov, &bytes, FALSE,
+                                    &flags)) {
+            err = WSAGetLastError();
+        }
+    }
+    if (err == 0) {
+        err = jutils_pending_socket_error(stream);
+    }
+    return err;
+}
+
+void jutils_format_overlapped_error(char *buf, size_t buflen,
+                                    const char *category, JanetStream *stream,
+                                    WSAOVERLAPPED *ov) {
+    int err = jutils_overlapped_error(stream, ov);
+    if (err != 0) {
+        snprintf(buf, buflen, "[%s] socket error: %s", category,
+                 jsec_socket_strerror(err));
+    } else {
+        snprintf(buf, buflen, "[%s] socket error", category);
+    }
+}
+
+void jutils_win_cancel_overlapped(JanetFiber *fiber, JanetStream *stream,
+                                  WSAOVERLAPPED *ov, uint8_t *io_in_flight) {
+    if (io_in_flight && *io_in_flight) {
+        if (stream && stream->handle != JANET_HANDLE_NONE && ov) {
+            CancelIoEx((HANDLE)stream->handle, ov);
+        }
+        *io_in_flight = 0;
+    }
+    if (fiber && (fiber->flags & 1) && fiber->ev_state == (void *)ov) {
+        fiber->ev_state = NULL;
+    }
+}
+
+typedef struct {
+    SOCKET sock;
+    JanetStream *stream;
+    JanetFiber *fiber;
+    void *ctx;
+    void **slot;
+    JsecWinPollResumeFn resume_fn;
+    short events;
+    uint8_t owns_close;
+    volatile LONG cancelled;
+} JsecWinPollWait;
+
+static JanetEVGenericMessage
+jutils_win_poll_subr(JanetEVGenericMessage args) {
+    JsecWinPollWait *wait = (JsecWinPollWait *)args.argp;
+    while (InterlockedCompareExchange(&wait->cancelled, 0, 0) == 0) {
+        WSAPOLLFD pfd;
+        pfd.fd = wait->sock;
+        pfd.events = wait->events;
+        pfd.revents = 0;
+        int r = WSAPoll(&pfd, 1, 20);
+        if (r != 0) {
+            args.tag = r;
+            return args;
+        }
+    }
+    args.tag = 0;
+    return args;
+}
+
+static void jutils_win_poll_cb(JanetEVGenericMessage args) {
+    JsecWinPollWait *wait = (JsecWinPollWait *)args.argp;
+    JanetFiber *fiber = wait->fiber;
+    JanetStream *stream = wait->stream;
+    void *ctx = wait->ctx;
+    void **slot = wait->slot;
+    JsecWinPollResumeFn resume_fn = wait->resume_fn;
+    int cancelled = (InterlockedCompareExchange(&wait->cancelled, 0, 0) != 0);
+
+    if (wait->owns_close) {
+        if (stream->flags & JANET_STREAM_CLOSED) {
+            closesocket(wait->sock);
+        } else {
+            stream->flags &= ~JANET_STREAM_NOT_CLOSEABLE;
+        }
+    }
+
+    janet_gcunroot(janet_wrap_abstract(stream));
+    janet_gcunroot(janet_wrap_fiber(fiber));
+
+    if (!cancelled && fiber->ev_state == ctx) {
+        if (slot && *slot == wait) {
+            *slot = NULL;
+        }
+        janet_free(wait);
+        resume_fn(fiber, ctx);
+        return;
+    }
+
+    janet_free(wait);
+}
+
+int jutils_win_poll_start(JanetStream *stream, JanetFiber *fiber,
+                          short events, void *ctx, void **slot,
+                          JsecWinPollResumeFn resume_fn) {
+    JsecWinPollWait *wait = janet_malloc(sizeof(JsecWinPollWait));
+    if (!wait) {
+        return -1;
+    }
+    wait->sock = (SOCKET)stream->handle;
+    wait->stream = stream;
+    wait->fiber = fiber;
+    wait->ctx = ctx;
+    wait->slot = slot;
+    wait->resume_fn = resume_fn;
+    wait->events = events;
+    wait->owns_close =
+        ((stream->flags & JANET_STREAM_NOT_CLOSEABLE) == 0) ? 1 : 0;
+    wait->cancelled = 0;
+    if (wait->owns_close) {
+        stream->flags |= JANET_STREAM_NOT_CLOSEABLE;
+    }
+    if (slot) {
+        *slot = wait;
+    }
+    janet_gcroot(janet_wrap_fiber(fiber));
+    janet_gcroot(janet_wrap_abstract(stream));
+    JanetEVGenericMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.argp = wait;
+    janet_ev_threaded_call(jutils_win_poll_subr, msg, jutils_win_poll_cb);
+    return 0;
+}
+
+void jutils_win_poll_cancel(void **slot) {
+    if (slot && *slot) {
+        JsecWinPollWait *wait = (JsecWinPollWait *)(*slot);
+        InterlockedExchange(&wait->cancelled, 1);
+        *slot = NULL;
+    }
+}
+#endif
