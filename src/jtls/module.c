@@ -82,7 +82,7 @@ void jtls_module_init(JanetTable *env) {
          "Options:\n"
          "  :cert, :key - Server certificate/key paths\n"
          "  :verify - Client verification (default true)\n"
-         "  :security - Security options table\n"
+         "  :security - Security options table or struct\n"
          "  :alpn - ALPN protocols array\n"
          "  :sni - SNI hostname->options table (server only)\n"},
         {"wrap", cfun_wrap,
@@ -113,7 +113,9 @@ void jtls_module_init(JanetTable *env) {
          "Create a TCP listener socket for TLS server.\n"
          "Options table can include:\n"
          "  :backlog - listen backlog size (default 1024)\n"
-         "Returns a stream usable with net/localname and accept.\n"},
+         "Returns a stream usable with net/localname and accept.\n"
+         "The listener supports (:localname listener) and\n"
+         "(tls-stream/localname listener) as well as net/localname.\n"},
         {"accept", cfun_accept,
          "(accept listener context &opt timeout)\n\n"
          "Accept a connection on a listener and wrap with TLS.\n"
@@ -133,6 +135,11 @@ void jtls_module_init(JanetTable *env) {
          "(write stream data &opt timeout)\n\n"
          "Write data to TLS stream. Takes optional timeout in seconds.\n"
          "Returns nil, or raises an error if write failed.\n"},
+        {"flush", cfun_flush,
+         "(flush stream)\n\n"
+         "Flush buffered output on the TLS stream, matching net/flush.\n"
+         "Returns the stream itself. Raises [TLS:IO] when the stream is "
+         "closed.\n"},
         {"close", cfun_close,
          "(close stream &opt force)\n\n"
          "Close TLS stream. Sends close_notify per RFC unless force is "
@@ -142,6 +149,16 @@ void jtls_module_init(JanetTable *env) {
          "(shutdown stream &opt direction)\n\n"
          "Perform TLS shutdown but keep underlying socket open.\n"
          "Useful for transitioning back to raw TCP.\n"},
+        {"localname", cfun_localname,
+         "(localname stream)\n\n"
+         "Get the local address of a TLS stream or listener as a "
+         "[host port] tuple\n"
+         "(or [unix-path] tuple for Unix domain sockets)."},
+        {"peername", cfun_peername,
+         "(peername stream)\n\n"
+         "Get the peer address of a connected TLS stream as a "
+         "[host port] tuple\n"
+         "(or [unix-path] tuple for Unix domain sockets)."},
         {"session-reused?", cfun_session_reused,
          "(session-reused? stream)\n\n"
          "Check if TLS session was resumed from cache.\n"},
@@ -187,6 +204,19 @@ void jtls_module_init(JanetTable *env) {
          "(get-handshake-time stream)\n\n"
          "Get handshake duration in seconds as a floating-point number.\n"
          "Returns nil if handshake hasn't completed yet.\n"},
+        {"get-peer-cert", cfun_get_peer_cert,
+         "(get-peer-cert stream)\n\n"
+         "Export the peer certificate as an immutable X.509 DER byte "
+         "string.\n"
+         "Returns nil when there is no peer certificate: before the "
+         "handshake\n"
+         "completes or when the peer presented none. Raises on a closed "
+         "stream.\n"
+         "Call after handshake completes.\n"},
+        {"buffer", cfun_get_buffer_config,
+         "(buffer stream)\n\n"
+         "Get the stream's buffer configuration as "
+         "{:read <int|false> :write <int|false>}.\n"},
         {NULL, NULL, NULL}};
 
     janet_cfuns(env, "jsec/tls", cfuns);

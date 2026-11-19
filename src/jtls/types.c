@@ -26,8 +26,8 @@ int ocsp_idx = -1;
 int alpn_idx = -1;
 
 /* Server context cache for session resumption */
-ServerCTXCache server_ctx_cache = {NULL, NULL, NULL, NULL, 0,
-                                   NULL, 0,    NULL, 0};
+ServerCTXCache server_ctx_cache = {NULL, NULL, NULL, NULL, NULL,
+                                   NULL, 0,    0,    0};
 
 /* Mutex protecting the context cache (allocated in module init) */
 JanetOSMutex *ctx_cache_lock = NULL;
@@ -39,7 +39,8 @@ FILE *keylog_file = NULL;
  * TLS CONTEXT ABSTRACT TYPE
  *============================================================================
  * Now uses the unified SSLContext type from jshared.c.
- * The tls_context_type macro aliases ssl_context_type.
+ * Type identity is resolved through jutils_get_context_type; there is no
+ * per-module tls_context_type object.
  * jtls_context_gc is kept for backwards compatibility but delegates to
  * shared.
  */
@@ -48,8 +49,6 @@ int jtls_context_gc(void *p, size_t s) {
     /* Delegate to shared implementation */
     return ssl_context_gc(p, s);
 }
-
-/* tls_context_type is now defined as a macro aliasing ssl_context_type */
 
 /*============================================================================
  * TLS STREAM ABSTRACT TYPE
@@ -63,6 +62,7 @@ int jtls_stream_gc(void *p, size_t s) {
     (void)s;
     TLSStream *tls = (TLSStream *)p;
 
+#if JSEC_LIBRESSL
     /* Free BIO read-ahead buffer */
     if (tls->bio_ahead.data) {
         janet_free(tls->bio_ahead.data);
@@ -70,13 +70,23 @@ int jtls_stream_gc(void *p, size_t s) {
         tls->bio_ahead.p = NULL;
         tls->bio_ahead.pe = NULL;
     }
+#endif
+
+    /* Free write coalescing buffer */
+    if (tls->write_buffer.data) {
+        janet_free(tls->write_buffer.data);
+        tls->write_buffer.data = NULL;
+        tls->write_buffer.capacity = 0;
+        tls->write_buffer.head = 0;
+        tls->write_buffer.tail = 0;
+    }
 
     if (tls->ssl) {
         SSL_free(tls->ssl);
         tls->ssl = NULL;
         tls->bio = NULL; /* BIO is freed by SSL_free */
     }
-    if (tls->ctx && tls->owns_ctx) {
+    if (tls->ctx && (tls->flags & JTLS_FLAG_OWNS_CTX)) {
         SSL_CTX_free(tls->ctx);
         tls->ctx = NULL;
     }
@@ -119,6 +129,7 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :shutdown         - TLS shutdown without closing socket
  *   :session-reused?  - Check if session was resumed
  *   :session          - Get session data for resumption
+ *   :peer-cert        - Get peer certificate as X.509 DER
  *   :set-session      - Set session data before handshake
  *   :version          - Get TLS version string
  *   :cipher           - Get cipher suite name
@@ -127,6 +138,7 @@ int jtls_stream_getter(void *p, Janet key, Janet *out) {
  *   :handshake-time   - Get handshake duration in seconds (nil if not
  * complete) :renegotiate      - Trigger renegotiation (TLS 1.2) :key-update
  *     - Trigger key update (TLS 1.3)
+ *   :buffer           - Get buffer configuration {:read ... :write ...}
  */
 const JanetMethod tls_stream_methods[] = {
     {"close", cfun_close},
@@ -134,10 +146,12 @@ const JanetMethod tls_stream_methods[] = {
     {"read", cfun_read},
     {"chunk", cfun_chunk}, /* Proper chunk (blocks until n bytes or EOF) */
     {"write", cfun_write},
+    {"flush", cfun_flush},
     {"localname", cfun_localname},
     {"peername", cfun_peername},
     {"session-reused?", cfun_session_reused},
     {"session", cfun_get_session},
+    {"peer-cert", cfun_get_peer_cert},
     {"set-session", cfun_set_session},
     {"version", cfun_get_version},
     {"cipher", cfun_get_cipher},
@@ -146,6 +160,7 @@ const JanetMethod tls_stream_methods[] = {
     {"handshake-time", cfun_get_handshake_time},
     {"renegotiate", cfun_renegotiate},
     {"key-update", cfun_key_update},
+    {"buffer", cfun_get_buffer_config},
     {NULL, NULL}};
 
 const JanetAbstractType tls_stream_type = {

@@ -13,7 +13,8 @@
  *   dtls/recv-from   - Receive from any peer [data addr]
  *   dtls/send-to     - Send to specific peer
  *   dtls/close-server - Close server
- *   dtls/localname   - Get server's bound address
+ *   dtls/localname   - Get local address (DTLSAddress for client,
+ *                       [host port] tuple for server)
  *
  * Client-side (1:1 connection):
  *   dtls/connect     - Create DTLS client
@@ -31,6 +32,15 @@
 #include "internal.h"
 
 JANET_MODULE_ENTRY(JanetTable *env) {
+#ifdef JANET_WINDOWS
+    if (jsec_winsock_init() != 0) {
+        dtls_panic_config("failed to initialize Winsock");
+    }
+    jdtls_init_packet_bio_method();
+#endif
+    /* Compile the flight timer's helper-fiber boot body once, here at
+     * module load, and root it in module-level state. */
+    jdtls_flight_timer_init(env);
     /* Register all components */
     jdtls_register_address(env);
     jdtls_register_context(env);

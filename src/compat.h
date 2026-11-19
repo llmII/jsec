@@ -11,12 +11,37 @@
 #ifndef JSEC_COMPAT_H
 #define JSEC_COMPAT_H
 
-/* Enable POSIX features before any system includes (clock_gettime, strdup) */
+/* Enable standard feature test macros before any system includes */
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+#ifndef __EXTENSIONS__
+#define __EXTENSIONS__ 1
+#endif
 
 #include <janet.h>
+/*
+ * Appease overzealous Apple Clang -Wcast-align checks on upstream
+ * janet.h header-accessor macros (char * -> Janet*Head * alignment 1 -> 8)
+ * without modifying upstream Janet or disabling -Wcast-align for jsec.
+ */
+#ifdef JANET_APPLE
+#undef janet_tuple_head
+#define janet_tuple_head(t)                                                  \
+    ((JanetTupleHead *)(uintptr_t)((const char *)(t) -                       \
+                                   offsetof(JanetTupleHead, data)))
+#undef janet_string_head
+#define janet_string_head(s)                                                 \
+    ((JanetStringHead *)(uintptr_t)((const char *)(s) -                      \
+                                    offsetof(JanetStringHead, data)))
+#undef janet_abstract_head
+#define janet_abstract_head(u)                                               \
+    ((JanetAbstractHead *)(uintptr_t)((const char *)(u) -                    \
+                                      offsetof(JanetAbstractHead, data)))
+#endif
 #include <openssl/opensslv.h>
 
 /*
@@ -37,6 +62,10 @@
     (OPENSSL_VERSION_NUMBER >= (((M) << 28) | ((m) << 20) | ((p) << 12)))
 #define LIBRESSL_PREREQ(M, m, p) (0)
 #endif
+
+/* Buffer capacity for single OS / OpenSSL error description strings
+ * (matches thread-local strerror / FormatMessage buffers). */
+#define JSEC_STRERROR_BUFSIZE 256
 
 /*
  * Backend Detection
@@ -68,6 +97,23 @@
 
 #ifndef HAVE_SSL_UP_REF
 #define HAVE_SSL_UP_REF (OPENSSL_PREREQ(1, 1, 0) || LIBRESSL_PREREQ(2, 7, 0))
+#endif
+
+/*
+ * Feature Availability - SSL_get_peer_certificate
+ *
+ * The portable spelling across OpenSSL 1.1.1/3.x and LibreSSL is
+ * SSL_get_peer_certificate; SSL_get1_peer_certificate is the
+ * OpenSSL 3.x-only spelling. OpenSSL 3.x keeps the portable name as
+ * a deprecated alias that is compiled out when
+ * OPENSSL_NO_DEPRECATED_3_0 is set (derived from OPENSSL_NO_DEPRECATED
+ * in openssl/macros.h, pulled in by opensslv.h above), so treat the
+ * name as missing only there.
+ */
+#if OPENSSL_PREREQ(3, 0, 0) && defined(OPENSSL_NO_DEPRECATED_3_0)
+#define HAVE_SSL_GET_PEER_CERTIFICATE 0
+#else
+#define HAVE_SSL_GET_PEER_CERTIFICATE 1
 #endif
 
 /*
@@ -114,12 +160,24 @@
 #endif
 
 /*
+ * Compatibility Shims - SSL_get_peer_certificate
+ *
+ * For OpenSSL 3.x builds that compile out the deprecated
+ * SSL_get_peer_certificate alias: map the portable spelling to the
+ * OpenSSL 3.x name. Call sites use SSL_get_peer_certificate only -
+ * never SSL_get1_peer_certificate and never per-call-site ifdefs.
+ */
+#if !HAVE_SSL_GET_PEER_CERTIFICATE
+#define SSL_get_peer_certificate(ssl) SSL_get1_peer_certificate(ssl)
+#endif
+
+/*
  * =============================================================================
  * Windows Socket Compatibility
  * =============================================================================
  */
 
-#ifdef _WIN32
+#ifdef JANET_WINDOWS
 /* Winsock2 must be included before windows.h to avoid conflicts */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -166,12 +224,27 @@ typedef SOCKET jsec_socket_t;
 /* Socket operations */
 #define jsec_close_socket(s) closesocket(s)
 #define jsec_socket_errno WSAGetLastError()
+#define jsec_socket_set_errno(e) WSASetLastError(e)
+#define jsec_socket_read(s, dst, len) recv((s), (char *)(dst), (int)(len), 0)
+#define jsec_socket_send(s, src, len)                                        \
+    send((s), (const char *)(src), (int)(len), 0)
+#define jsec_socket_sendto(s, src, len, flags, addr, addrlen)                \
+    sendto((s), (const char *)(src), (int)(len), (flags), (addr),            \
+           (int)(addrlen))
+#define jsec_socket_getsockopt(s, level, optname, optval, optlen)            \
+    getsockopt((SOCKET)(s), (level), (optname), (char *)(optval),            \
+               (int *)(optlen))
+
+static inline int jsec_socket_set_nonblock(jsec_socket_t s) {
+    u_long mode = 1;
+    return ioctlsocket(s, FIONBIO, &mode);
+}
 
 /* Cross-platform strerror - returns error message for errno
  * Uses strerror_s on Windows to avoid deprecation warnings.
  * Uses thread-local buffer for thread safety. */
 static inline const char *jsec_strerror(int err) {
-    static __declspec(thread) char buf[256];
+    static __declspec(thread) char buf[JSEC_STRERROR_BUFSIZE];
     if (strerror_s(buf, sizeof(buf), err) != 0) {
         buf[0] = '\0';
     }
@@ -180,10 +253,16 @@ static inline const char *jsec_strerror(int err) {
 
 /* Socket-specific error string (thread-local static buffer) */
 static inline const char *jsec_socket_strerror(int err) {
-    static __declspec(thread) char buf[256];
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
-                   sizeof(buf), NULL);
+    static __declspec(thread) char buf[JSEC_STRERROR_BUFSIZE];
+    buf[0] = '\0';
+    DWORD n = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+        (DWORD)err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf,
+        (DWORD)sizeof(buf), NULL);
+    if (n == 0) {
+        snprintf(buf, sizeof(buf), "WSA error %d", err);
+        return buf;
+    }
     /* Remove trailing newline */
     size_t len = strlen(buf);
     while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
@@ -200,6 +279,7 @@ static inline const char *jsec_socket_strerror(int err) {
 #define JSEC_EAGAIN WSAEWOULDBLOCK
 #define JSEC_EINTR WSAEINTR
 #define JSEC_ECONNRESET WSAECONNRESET
+#define JSEC_ECONNABORTED WSAECONNABORTED
 #define JSEC_EPIPE WSAECONNRESET
 
 /* fcntl/ioctl compatibility */
@@ -222,6 +302,55 @@ static inline void jsec_winsock_cleanup(void) {
     WSACleanup();
 }
 
+static inline jsec_socket_t jsec_win_overlapped_socket(int family, int type,
+                                                       int proto) {
+    SOCKET s = WSASocketW(family, type, proto, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (!SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0)) {
+        int err = WSAGetLastError();
+        closesocket(s);
+        WSASetLastError(err);
+        return INVALID_SOCKET;
+    }
+    return s;
+}
+
+#define jsec_socket_create(family, type, proto)                              \
+    jsec_win_overlapped_socket((family), (type), (proto))
+
+/* Socket flags for jsec_accept4 (fallback bitmask for Windows) */
+#define JSEC_SOCK_CLOEXEC 0x01
+#define JSEC_SOCK_NONBLOCK 0x02
+
+static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
+                                         struct sockaddr *addr, int *addrlen,
+                                         int flags) {
+    SOCKET s = accept(sockfd, addr, addrlen);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (flags & JSEC_SOCK_NONBLOCK) {
+        u_long mode = 1;
+        if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+            int err = WSAGetLastError();
+            closesocket(s);
+            WSASetLastError(err);
+            return INVALID_SOCKET;
+        }
+    }
+    if (flags & JSEC_SOCK_CLOEXEC) {
+        if (!SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0)) {
+            int err = GetLastError();
+            closesocket(s);
+            SetLastError(err);
+            return INVALID_SOCKET;
+        }
+    }
+    return s;
+}
+
 #else
 /* Unix/POSIX systems */
 #define JSEC_HAS_ARPA_INET 1
@@ -230,12 +359,46 @@ static inline void jsec_winsock_cleanup(void) {
 #include <sys/socket.h>
 #include <unistd.h>
 
+/*
+ * Socket flags for jsec_accept4:
+ * When the platform defines SOCK_CLOEXEC and SOCK_NONBLOCK (Linux, BSDs,
+ * Illumos), JSEC_SOCK_* directly aliases the system constants so accept4(2)
+ * can consume them without translation overhead. Otherwise fallback bit
+ * values are used.
+ */
+#ifdef SOCK_CLOEXEC
+#define JSEC_SOCK_CLOEXEC SOCK_CLOEXEC
+#else
+#define JSEC_SOCK_CLOEXEC 0x01
+#endif
+
+#ifdef SOCK_NONBLOCK
+#define JSEC_SOCK_NONBLOCK SOCK_NONBLOCK
+#else
+#define JSEC_SOCK_NONBLOCK 0x02
+#endif
+
 typedef int jsec_socket_t;
 #define JSEC_INVALID_SOCKET (-1)
 #define JSEC_SOCKET_ERROR (-1)
 
 #define jsec_close_socket(s) close(s)
 #define jsec_socket_errno errno
+#define jsec_socket_set_errno(e) (errno = (e))
+#define jsec_socket_create(family, type, proto)                              \
+    socket((family), (type), (proto))
+#define jsec_socket_read(s, dst, len) read((s), (dst), (size_t)(len))
+#define jsec_socket_send(s, src, len)                                        \
+    send((s), (src), (size_t)(len), MSG_NOSIGNAL)
+#define jsec_socket_sendto(s, src, len, flags, addr, addrlen)                \
+    sendto((s), (src), (size_t)(len), (flags), (addr), (socklen_t)(addrlen))
+#define jsec_socket_getsockopt(s, level, optname, optval, optlen)            \
+    getsockopt((s), (level), (optname), (optval), (optlen))
+
+static inline int jsec_socket_set_nonblock(jsec_socket_t s) {
+    int fl = fcntl(s, F_GETFL, 0);
+    return (fl == -1) ? -1 : fcntl(s, F_SETFL, fl | O_NONBLOCK);
+}
 
 /* Cross-platform strerror - same on Unix */
 #define jsec_strerror(err) strerror(err)
@@ -249,6 +412,7 @@ typedef int jsec_socket_t;
 #define JSEC_EAGAIN EAGAIN
 #define JSEC_EINTR EINTR
 #define JSEC_ECONNRESET ECONNRESET
+#define JSEC_ECONNABORTED ECONNABORTED
 #define JSEC_EPIPE EPIPE
 
 /* MSG_DONTWAIT and MSG_NOSIGNAL may not be available on all platforms */
@@ -264,6 +428,62 @@ static inline int jsec_winsock_init(void) {
     return 0;
 }
 static inline void jsec_winsock_cleanup(void) {}
+
+/*
+ * Platform accept4 capability detection using Janet's OS macros:
+ * Linux, BSDs (FreeBSD 10+, OpenBSD 5.7+, NetBSD 8.0+, DragonFly), and
+ * Illumos provide accept4(2) in <sys/socket.h> with SOCK_NONBLOCK and
+ * SOCK_CLOEXEC. macOS and other POSIX platforms fall back to accept() +
+ * fcntl.
+ */
+#if (defined(JANET_LINUX) || defined(JANET_BSD) ||                           \
+     defined(JANET_ILLUMOS)) &&                                              \
+    defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+#define JSEC_HAVE_ACCEPT4 1
+#else
+#define JSEC_HAVE_ACCEPT4 0
+#endif
+
+static inline jsec_socket_t jsec_accept4(jsec_socket_t sockfd,
+                                         struct sockaddr *addr,
+                                         socklen_t *addrlen, int flags) {
+    jsec_socket_t fd;
+#if JSEC_HAVE_ACCEPT4
+    fd = accept4(sockfd, addr, addrlen, flags);
+    if (fd >= 0) {
+        return fd;
+    }
+    /* Fall back to accept() + fcntl only if accept4 is unimplemented in
+     * running kernel */
+    if (errno != ENOSYS) {
+        return fd;
+    }
+#endif
+    fd = accept(sockfd, addr, addrlen);
+    if (fd < 0) {
+        return fd;
+    }
+    if (flags & JSEC_SOCK_NONBLOCK) {
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl == -1 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) == -1) {
+            int err = errno;
+            close(fd);
+            errno = err;
+            return -1;
+        }
+    }
+    if (flags & JSEC_SOCK_CLOEXEC) {
+        int fl = fcntl(fd, F_GETFD, 0);
+        if (fl == -1 || fcntl(fd, F_SETFD, fl | FD_CLOEXEC) == -1) {
+            int err = errno;
+            close(fd);
+            errno = err;
+            return -1;
+        }
+    }
+    return fd;
+}
+
 #endif
 
 #endif /* JSEC_COMPAT_H */

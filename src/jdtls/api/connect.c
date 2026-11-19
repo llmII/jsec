@@ -30,7 +30,9 @@ extern int dtls_client_start_handshake(DTLSClient *client);
  *   :verify - Verify server certificate (default true)
  *   :ca - CA certificate or path
  *   :alpn - ALPN protocols
- *   :sni - Server name for SNI (defaults to host)
+ *   :hostname - Client name for SNI and certificate verification
+ *     (overrides host; :sni is reserved for the server virtual-host map)
+ *   :session - Session data for resumption (byte string or buffer)
  */
 Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
@@ -40,38 +42,42 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Port can be string or integer */
     if (janet_checktype(argv[1], JANET_STRING)) {
-        port = atoi((const char *)janet_unwrap_string(argv[1]));
+        const char *port_str = (const char *)janet_unwrap_string(argv[1]);
+        char *endptr;
+        long port_val = strtol(port_str, &endptr, 10);
+        if (endptr == port_str || *endptr != '\0' || port_val < 1 ||
+            port_val > 65535) {
+            dtls_panic_param("invalid port: %s", port_str);
+        }
+        port = (int)port_val;
     } else {
         port = janet_getinteger(argv, 1);
+        if (port < 1 || port > 65535) {
+            dtls_panic_param("invalid port: %d", port);
+        }
     }
 
     /* Parse options */
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
     int verify = 1; /* Default: verify server */
-    const char *sni = host;
-    const char *verify_hostname =
-        NULL; /* Hostname for certificate verification (can differ from SNI)
-               */
     int track_handshake_time = 0;
+    long explicit_mtu = 0;
     DTLSContext *shared_ctx = NULL; /* Shared context from :context option */
 
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
+        explicit_mtu = jdtls_parse_mtu_opt(opts);
+        Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+        if (!janet_checktype(sni, JANET_NIL)) {
+            dtls_panic_param(
+                ":sni is server-side only (the server virtual-host "
+                "map on tls/new-context); use :hostname for the "
+                "client name");
+        }
+
         Janet v = janet_get(opts, janet_ckeywordv("verify"));
         if (!janet_checktype(v, JANET_NIL)) {
             verify = janet_truthy(v);
-        }
-
-        Janet s = janet_get(opts, janet_ckeywordv("sni"));
-        if (janet_checktype(s, JANET_STRING)) {
-            sni = (const char *)janet_unwrap_string(s);
-        }
-
-        /* :verify-hostname option allows verifying cert against a different
-         * hostname than SNI */
-        Janet vh = janet_get(opts, janet_ckeywordv("verify-hostname"));
-        if (janet_checktype(vh, JANET_STRING)) {
-            verify_hostname = (const char *)janet_unwrap_string(vh);
         }
 
         /* :handshake-timing option enables timing measurement */
@@ -80,60 +86,90 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             track_handshake_time = janet_truthy(ht);
         }
 
+        /* :session accepts nil (absent/no-op) or a byte string or buffer;
+         * anything else raises before any socket, SSL_CTX, or SSL is
+         * allocated (PNB-08 cleanup safety). */
+        Janet session = janet_get(opts, janet_ckeywordv("session"));
+        if (!janet_checktype(session, JANET_NIL) &&
+            !janet_checktype(session, JANET_STRING) &&
+            !janet_checktype(session, JANET_BUFFER)) {
+            dtls_panic_param("session must be a byte string or buffer");
+        }
+
         /* :context option allows reusing a DTLSContext (SSLContext) */
         Janet ctx_opt = janet_get(opts, janet_ckeywordv("context"));
-        if (janet_checktype(ctx_opt, JANET_ABSTRACT)) {
-            shared_ctx = janet_getabstract(&ctx_opt, 0, &dtls_context_type);
+        if (!janet_checktype(ctx_opt, JANET_NIL)) {
+            if (!janet_checkabstract(ctx_opt, jutils_get_context_type())) {
+                dtls_panic_config(":context must be a jsec/ssl-context");
+            }
+            shared_ctx = (DTLSContext *)janet_unwrap_abstract(ctx_opt);
             /* Verify it's a DTLS context, not TLS */
             if (!shared_ctx->is_dtls) {
                 dtls_panic_config(
                     "cannot use TLS context for DTLS connection");
             }
         }
+    } else if (!janet_checktype(opts, JANET_NIL)) {
+        dtls_panic_param("options must be a table or struct");
     }
-
-    /* Create UDP socket and connect */
-#ifdef JANET_WINDOWS
-    /* Windows IOCP requires WSASocketW with WSA_FLAG_OVERLAPPED */
-    jsec_socket_t fd =
-        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-#else
-    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
-#endif
-    if (fd == JSEC_INVALID_SOCKET) {
-        dtls_panic_socket("failed to create socket");
-    }
-
-    /* Set non-blocking */
-#ifdef JANET_WINDOWS
-    unsigned long mode = 1;
-    ioctlsocket(fd, FIONBIO, &mode);
-#else
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
 
     /* Resolve and connect */
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)(uint16_t)port);
 
-    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        jsec_close_socket(fd);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    struct addrinfo *ai = NULL;
+    if (getaddrinfo(host, port_str, &hints, &ai) != 0) {
         dtls_panic_param("invalid address: %s", host);
     }
 
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 &&
-        jsec_socket_errno != JSEC_EINPROGRESS &&
-        jsec_socket_errno != JSEC_EWOULDBLOCK) {
-        jsec_close_socket(fd);
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
+    struct sockaddr_storage addr;
+    memset(&addr, 0, sizeof(addr));
+    socklen_t addrlen = 0;
+
+    struct addrinfo *rp;
+    for (rp = ai; rp != NULL; rp = rp->ai_next) {
+        /* Create UDP socket and connect */
+        fd = jsec_socket_create(rp->ai_family, rp->ai_socktype,
+                                rp->ai_protocol);
+        if (fd == JSEC_INVALID_SOCKET) continue;
+
+        /* Set non-blocking */
+        jsec_socket_set_nonblock(fd);
+
+#ifdef JANET_WINDOWS
+        socklen_t ai_len = (socklen_t)rp->ai_addrlen;
+#else
+        socklen_t ai_len = rp->ai_addrlen;
+#endif
+        if (connect(fd, rp->ai_addr, ai_len) < 0 &&
+            jsec_socket_errno != JSEC_EINPROGRESS &&
+            jsec_socket_errno != JSEC_EWOULDBLOCK) {
+            jsec_close_socket(fd);
+            fd = JSEC_INVALID_SOCKET;
+            continue;
+        }
+
+        memcpy(&addr, rp->ai_addr, rp->ai_addrlen);
+        addrlen = ai_len;
+        break;
+    }
+    freeaddrinfo(ai);
+
+    if (fd == JSEC_INVALID_SOCKET) {
         dtls_panic_socket("connect failed");
     }
 
     /* Wrap as Janet stream */
     JanetStream *transport = janet_stream(
-        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+        (JanetHandle)fd,
+        JANET_STREAM_SOCKET | JANET_STREAM_READABLE | JANET_STREAM_WRITABLE,
+        NULL);
 
     /* Create DTLS client */
     DTLSClient *client =
@@ -148,39 +184,51 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     client->transport = transport;
     client->state = DTLS_STATE_IDLE;
-    client->is_server = 0; /* dtls/connect is always client */
+    /* dtls/connect is always client (JDTLS_CLIENT_IS_SERVER not set) */
 
     /* Initialize handshake timing if enabled */
-    client->track_handshake_time = track_handshake_time;
     if (track_handshake_time) {
+        client->flags |= JDTLS_CLIENT_TRACK_HANDSHAKE;
         clock_gettime(CLOCK_MONOTONIC, &client->ts_connect);
     }
 
     /* Store peer address */
-    client->peer_addr.addr.ss_family = AF_INET;
     memcpy(&client->peer_addr.addr, &addr, sizeof(addr));
-    client->peer_addr.addrlen = sizeof(addr);
+    client->peer_addr.addrlen = addrlen;
 
     /* Create or use existing SSL context */
     if (shared_ctx) {
         /* Use shared context - don't free on GC */
         client->ctx = shared_ctx->ctx;
-        client->owns_ctx = 0;
     } else {
-        /* Create new context - free on GC */
-        client->ctx = SSL_CTX_new(DTLS_client_method());
-        if (!client->ctx) {
-            dtls_panic_ssl("failed to create SSL context");
-        }
-        client->owns_ctx = 1;
-
-        /* Apply security options from jshared */
+        /* Extract and validate :security before any SSL_CTX exists
+         * or ctx_cache_lock is taken (never longjmp past cleanup) */
         Janet security = janet_wrap_nil();
         if (janet_checktype(opts, JANET_TABLE) ||
             janet_checktype(opts, JANET_STRUCT)) {
             security = janet_get(opts, janet_ckeywordv("security"));
         }
-        apply_security_options(client->ctx, security, 1); /* 1 = is_dtls */
+        jutils_validate_security_options(security);
+
+        jutils_cert_load_error_clear();
+
+        /* Create new context - free on GC */
+        client->ctx = SSL_CTX_new(DTLS_client_method());
+        if (!client->ctx) {
+            dtls_panic_ssl("failed to create SSL context");
+        }
+        client->flags |= JDTLS_CLIENT_OWNS_CTX;
+
+        /* Apply security options from jshared */
+        if (!apply_security_options(client->ctx, security, 1,
+                                    0)) { /* is_dtls = 1, is_server = 0 */
+            SSL_CTX_free(client->ctx);
+            client->ctx = NULL;
+            jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
+            jsec_panic(JSEC_MOD_DTLS, "SSL",
+                       "failed to apply security options: %s",
+                       jutils_cert_load_error());
+        }
 
         /* Load certificates if provided */
         if (janet_checktype(opts, JANET_TABLE) ||
@@ -196,7 +244,12 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             Janet trusted = janet_get(opts, janet_ckeywordv("trusted-cert"));
             if (!janet_checktype(trusted, JANET_NIL)) {
                 if (!add_trusted_cert(client->ctx, trusted)) {
-                    dtls_panic_ssl("failed to add trusted certificate");
+                    SSL_CTX_free(client->ctx);
+                    client->ctx = NULL;
+                    jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to add trusted certificate: %s",
+                               jutils_cert_load_error());
                 }
             }
         }
@@ -206,15 +259,21 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
             SSL_CTX_set_verify(client->ctx, SSL_VERIFY_PEER, NULL);
             /* Only load default verify paths if no trusted cert was provided
              */
+            int load_paths = 1;
             if (janet_checktype(opts, JANET_TABLE) ||
                 janet_checktype(opts, JANET_STRUCT)) {
                 Janet trusted =
                     janet_get(opts, janet_ckeywordv("trusted-cert"));
-                if (janet_checktype(trusted, JANET_NIL)) {
-                    SSL_CTX_set_default_verify_paths(client->ctx);
+                if (!janet_checktype(trusted, JANET_NIL)) {
+                    load_paths = 0;
                 }
-            } else {
-                SSL_CTX_set_default_verify_paths(client->ctx);
+            }
+            if (load_paths &&
+                SSL_CTX_set_default_verify_paths(client->ctx) != 1) {
+                SSL_CTX_free(client->ctx);
+                client->ctx = NULL;
+                jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
+                dtls_panic_ssl("failed to load default verify paths");
             }
         } else {
             SSL_CTX_set_verify(client->ctx, SSL_VERIFY_NONE, NULL);
@@ -225,37 +284,22 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
     client->ssl = SSL_new(client->ctx);
     if (!client->ssl) {
         /* Clean up ctx if we own it */
-        if (client->owns_ctx && client->ctx) {
+        if ((client->flags & JDTLS_CLIENT_OWNS_CTX) && client->ctx) {
             SSL_CTX_free(client->ctx);
             client->ctx = NULL;
-            client->owns_ctx = 0;
+            jsec_clear_u8_flag(client->flags, JDTLS_CLIENT_OWNS_CTX);
         }
         dtls_panic_ssl("failed to create SSL object");
     }
 
-    /* Set SNI hostname */
-    SSL_set_tlsext_host_name(client->ssl, sni);
-
-    /* Set hostname for certificate verification
-     * Use verify_hostname if provided, otherwise use sni */
-    if (verify) {
-        const char *host_to_verify = verify_hostname ? verify_hostname : sni;
-        SSL_set_hostflags(client->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-        SSL_set1_host(client->ssl, host_to_verify);
-    }
-
-    /* Session resumption */
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        Janet session_data = janet_get(opts, janet_ckeywordv("session"));
-        if (janet_checktype(session_data, JANET_BUFFER)) {
-            JanetBuffer *buf = janet_unwrap_buffer(session_data);
-            const unsigned char *p = buf->data;
-            SSL_SESSION *session = d2i_SSL_SESSION(NULL, &p, buf->count);
-            if (session) {
-                SSL_set_session(client->ssl, session);
-                SSL_SESSION_free(session);
-            }
+    /* Client name ranking (:hostname over the positional host), SNI,
+     * certificate name verification and :session attachment: one shared
+     * setup for every entry point (D-01) */
+    {
+        const char *fail =
+            jutils_client_setup(client->ssl, opts, host, verify);
+        if (fail) {
+            jutils_raise_client_setup(fail, JSEC_MOD_DTLS);
         }
     }
 
@@ -265,7 +309,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
      * - wbio: SSL writes encrypted data here, we sendto() from it
      */
     client->rbio = BIO_new(BIO_s_mem());
-    client->wbio = BIO_new(BIO_s_mem());
+    client->wbio = jdtls_new_packet_wbio();
     if (!client->rbio || !client->wbio) {
         if (client->rbio) BIO_free(client->rbio);
         if (client->wbio) BIO_free(client->wbio);
@@ -278,6 +322,7 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(client->ssl, client->rbio, client->wbio);
+    BIO *mtu_bio = NULL;
 #else
     /* Unix: Use dgram BIO for direct socket I/O.
      * OpenSSL handles socket I/O directly through the dgram BIO. */
@@ -297,7 +342,11 @@ Janet cfun_dtls_connect(int32_t argc, Janet *argv) {
 
     /* Attach to SSL */
     SSL_set_bio(client->ssl, bio, bio);
+    BIO *mtu_bio = bio;
 #endif
+
+    jdtls_configure_connected_mtu(client->ssl, mtu_bio, fd, addr.ss_family,
+                                  explicit_mtu);
 
     /* Set connect state and start handshake */
     SSL_set_connect_state(client->ssl);

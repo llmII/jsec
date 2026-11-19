@@ -16,6 +16,8 @@
  */
 
 #include "internal.h"
+#include <limits.h>
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #ifndef JANET_WINDOWS
@@ -35,34 +37,118 @@
  */
 
 /*
+ * Record sequence alignment for sessions admitted through the cookie
+ * gate (RFC 6347 section 4.2.1).
+ *
+ * The verified resend that admits a session carries the wire record
+ * sequence its epoch-0 stream has reached - 1 in a single-round
+ * exchange, larger when a multi-round cookie exchange advanced the
+ * client's counter - and the initial ServerHello MUST echo that
+ * number. The session's own write counter restarts at 1 (the
+ * discarded in-session HelloVerifyRequest consumed sequence 0), so
+ * outbound epoch-0 record headers are rewritten with the constant
+ * offset established at admit time. Epoch-0 handshake records carry
+ * no MAC over the header and the handshake hashes cover message
+ * bodies only, so the rewrite is integrity-neutral. Epoch-1 records
+ * (MAC/AEAD over the sequence number) are never touched, and neither
+ * is handshake message_seq.
+ */
+static void server_align_outbound_records(DTLSSession *session, uint8_t *data,
+                                          int len) {
+    int o = 0;
+    if (session->rec_seq_off == 0) {
+        return;
+    }
+    while (o + 13 <= len) {
+        int rl = (data[o + 11] << 8) | data[o + 12];
+        int end = o + 13 + rl;
+        int epoch;
+        if (end > len) {
+            end = len;
+        }
+        epoch = (data[o + 3] << 8) | data[o + 4];
+        if (epoch == 0) {
+            uint64_t rs = 0;
+            int i;
+            for (i = 5; i < 11; i++) {
+                rs = (rs << 8) | data[o + i];
+            }
+            rs = (rs + session->rec_seq_off) & 0xffffffffffffULL;
+            for (i = 10; i >= 5; i--) {
+                data[o + i] = (uint8_t)(rs & 0xff);
+                rs >>= 8;
+            }
+        }
+        o = end;
+    }
+}
+
+/*
  * Send pending data from session's write BIO to peer.
  * Returns bytes sent, or -1 on error.
  * This consolidates the repeated sendto() pattern.
  */
 static ssize_t send_dtls_packet(JanetStream *transport,
                                 DTLSSession *session) {
-    size_t pending = BIO_ctrl_pending(session->wbio);
-    if (pending == 0) {
-        return 0;
+    uint8_t stack_buf[JDTLS_PACKET_BUF_SIZE];
+    ssize_t total_sent = 0;
+
+    while (BIO_ctrl_pending(session->wbio) > 0) {
+        size_t pending = BIO_ctrl_pending(session->wbio);
+        if (pending > (size_t)INT_MAX) {
+            return total_sent > 0 ? total_sent : -1;
+        }
+        uint8_t *send_buf = stack_buf;
+        uint8_t *heap_buf = NULL;
+
+        if (pending > sizeof(stack_buf)) {
+            heap_buf = (uint8_t *)janet_malloc(pending);
+            if (!heap_buf) {
+                return total_sent > 0 ? total_sent : -1;
+            }
+            send_buf = heap_buf;
+        }
+
+        int send_len = BIO_read(session->wbio, send_buf, (int)pending);
+        ssize_t sent = 0;
+        int sock_err = 0;
+        if (send_len > 0) {
+            server_align_outbound_records(session, send_buf, send_len);
+            sent = (ssize_t)jsec_socket_sendto(
+                (jsec_socket_t)transport->handle, (const char *)send_buf,
+                send_len, 0, (struct sockaddr *)&session->peer_addr.addr,
+                session->peer_addr.addrlen);
+            if (sent < 0) {
+                sock_err = jsec_socket_errno;
+            } else {
+                total_sent += sent;
+            }
+        }
+
+        if (heap_buf) {
+            janet_free(heap_buf);
+        }
+
+        if (sent < 0) {
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
+                break;
+            }
+            jsec_socket_set_errno(sock_err);
+            return -1;
+        }
+
+        if (send_len <= 0) {
+            break;
+        }
     }
 
-    uint8_t *send_buf = janet_malloc(pending);
-    if (!send_buf) {
-        return -1;
-    }
+    return total_sent;
+}
 
-    int send_len = BIO_read(session->wbio, send_buf, (int)pending);
-    ssize_t sent = 0;
-
-    if (send_len > 0) {
-        sent = sendto((jsec_socket_t)transport->handle,
-                      (const char *)send_buf, (size_t)send_len, 0,
-                      (struct sockaddr *)&session->peer_addr.addr,
-                      session->peer_addr.addrlen);
-    }
-
-    janet_free(send_buf);
-    return sent;
+/* Flight-timer flush: a retransmitted flight in the session's wbio goes
+ * out to the peer over the server's transport. */
+static void dtls_session_flight_flush(void *owner, JanetStream *transport) {
+    send_dtls_packet(transport, (DTLSSession *)owner);
 }
 
 /*
@@ -80,7 +166,7 @@ static int dtls_server_gc(void *p, size_t s) {
         DTLSSession *session = server->sessions[i];
         while (session) {
             DTLSSession *next = session->next;
-            dtls_session_free(session);
+            dtls_session_free(session, 1);
             session = next;
         }
         server->sessions[i] = NULL;
@@ -142,13 +228,158 @@ const JanetAbstractType dtls_server_type = {"jsec/dtls-server",
 
 /*
  * =============================================================================
- * Cookie Callbacks for OpenSSL
+ * Cookie Generation and Verification (DoS protection)
  * =============================================================================
+ * A cookie is the canonical endpoint identity of the peer (family, port,
+ * address, scope_id - the identity src/jdtls/address.c compares and
+ * hashes, never raw sockaddr bytes) followed by an HMAC of those fields
+ * under a per-process secret. The HMAC binds the full identity; a resend
+ * verifies when the HMAC holds and the cookie's bound family, address
+ * and scope match the presenting datagram, so a client whose source port
+ * rebinds between flights still passes.
  */
+
+/* Dedicated SSL ex_data index for the peer DTLSAddress. Reserved
+ * index 0 belongs to SSL_set_app_data and must not be clobbered. */
+static int dtls_peer_addr_ex_index = -1;
+
+static unsigned char server_cookie_secret[32];
+static int server_cookie_secret_ready = 0;
+
+static int server_cookie_init_secret(void) {
+    if (!server_cookie_secret_ready) {
+        if (RAND_bytes(server_cookie_secret, sizeof(server_cookie_secret)) !=
+            1) {
+            return 0;
+        }
+        server_cookie_secret_ready = 1;
+    }
+    return 1;
+}
+
+/* Serialize the canonical endpoint identity fields of addr (family,
+ * port, address, scope_id) into out. Returns the serialized length, or
+ * 0 when the family has no canonical identity. */
+static size_t server_cookie_identity(const DTLSAddress *addr,
+                                     unsigned char *out) {
+    uint32_t fam = htonl((uint32_t)addr->addr.ss_family);
+    size_t n = 0;
+    memcpy(out + n, &fam, sizeof(fam));
+    n += sizeof(fam);
+    if (addr->addr.ss_family == AF_INET) {
+        const struct sockaddr_in *sin =
+            (const struct sockaddr_in *)&addr->addr;
+        memcpy(out + n, &sin->sin_port, sizeof(sin->sin_port));
+        n += sizeof(sin->sin_port);
+        memcpy(out + n, &sin->sin_addr, sizeof(sin->sin_addr));
+        n += sizeof(sin->sin_addr);
+        return n;
+    }
+    if (addr->addr.ss_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6 =
+            (const struct sockaddr_in6 *)&addr->addr;
+        memcpy(out + n, &sin6->sin6_port, sizeof(sin6->sin6_port));
+        n += sizeof(sin6->sin6_port);
+        memcpy(out + n, &sin6->sin6_addr, sizeof(sin6->sin6_addr));
+        n += sizeof(sin6->sin6_addr);
+        memcpy(out + n, &sin6->sin6_scope_id, sizeof(sin6->sin6_scope_id));
+        n += sizeof(sin6->sin6_scope_id);
+        return n;
+    }
+    return 0;
+}
+
+/* Generate a cookie for the peer: identity fields then HMAC. Returns 0
+ * when the identity cannot be canonicalized or the RNG or HMAC fails,
+ * so no cookie is emitted from an uninitialized secret or partial
+ * buffer. */
+static int server_cookie_generate(const DTLSAddress *addr,
+                                  unsigned char *cookie,
+                                  unsigned int *cookie_len) {
+    unsigned char identity[32];
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned int mac_len = 0;
+    size_t id_len;
+
+    *cookie_len = 0;
+    id_len = server_cookie_identity(addr, identity);
+    if (id_len == 0 || id_len + 32 > 255) {
+        return 0;
+    }
+    if (!server_cookie_init_secret()) {
+        return 0;
+    }
+    if (HMAC(EVP_sha256(), server_cookie_secret,
+             (int)sizeof(server_cookie_secret), identity, id_len, mac,
+             &mac_len) == NULL) {
+        return 0;
+    }
+    if (mac_len != 32) {
+        return 0;
+    }
+    memcpy(cookie, identity, id_len);
+    memcpy(cookie + id_len, mac, mac_len);
+    *cookie_len = (unsigned int)id_len + mac_len;
+    return 1;
+}
+
+/* Verify a cookie presented by the peer. The HMAC must cover the
+ * identity carried in the cookie, and that identity must match the
+ * presenting datagram on family, address and scope_id. */
+static int server_cookie_verify(const DTLSAddress *addr,
+                                const unsigned char *cookie,
+                                unsigned int cookie_len) {
+    unsigned char identity[32];
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned int mac_len = 0;
+    uint32_t fam;
+    size_t id_len, n;
+
+    if (cookie_len < 4 + 32) {
+        return 0;
+    }
+    memcpy(&fam, cookie, sizeof(fam));
+    fam = ntohl(fam);
+    if (fam == (uint32_t)AF_INET) {
+        id_len = 4 + 2 + 4;
+    } else if (fam == (uint32_t)AF_INET6) {
+        id_len = 4 + 2 + 16 + 4;
+    } else {
+        return 0;
+    }
+    if ((size_t)cookie_len != id_len + 32) {
+        return 0;
+    }
+    if (!server_cookie_init_secret()) {
+        return 0;
+    }
+    if (HMAC(EVP_sha256(), server_cookie_secret,
+             (int)sizeof(server_cookie_secret), cookie, id_len, mac,
+             &mac_len) == NULL) {
+        return 0;
+    }
+    if (mac_len != 32) {
+        return 0;
+    }
+    if (CRYPTO_memcmp(mac, cookie + id_len, 32) != 0) {
+        return 0;
+    }
+    n = server_cookie_identity(addr, identity);
+    if (n != id_len || memcmp(identity, cookie, 4) != 0) {
+        return 0;
+    }
+    return memcmp(identity + 6, cookie + 6, id_len - 6) == 0;
+}
 
 /* Generate stateless cookie based on client address */
 static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
                                   unsigned int *cookie_len) {
+    /* For memory BIO, peer address is stored in ex_data */
+    DTLSAddress *addr = SSL_get_ex_data(ssl, dtls_peer_addr_ex_index);
+    if (addr) {
+        return server_cookie_generate(addr, cookie, cookie_len);
+    }
+
     /* Get peer address from BIO */
     BIO *bio = SSL_get_rbio(ssl);
     union {
@@ -156,49 +387,38 @@ static int server_generate_cookie(SSL *ssl, unsigned char *cookie,
         struct sockaddr_in s4;
         struct sockaddr_in6 s6;
     } peer;
-    socklen_t peerlen = sizeof(peer);
-
-    /* For memory BIO, peer address should be stored in ex_data */
-    DTLSAddress *addr = SSL_get_ex_data(ssl, 0);
-    if (addr) {
-        memcpy(&peer, &addr->addr, addr->addrlen);
-        peerlen = addr->addrlen;
-    } else if (BIO_dgram_get_peer(bio, &peer) <= 0) {
-        /* Can't determine peer - generate random cookie */
-        RAND_bytes(cookie, 32);
-        *cookie_len = 32;
-        return 1;
+    DTLSAddress peer_addr;
+    memset(&peer, 0, sizeof(peer));
+    if (bio && BIO_dgram_get_peer(bio, &peer) > 0) {
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        memcpy(&peer_addr.addr, &peer, sizeof(peer_addr.addr));
+        if (peer.ss.ss_family == AF_INET) {
+            peer_addr.addrlen = (socklen_t)sizeof(peer.s4);
+        } else if (peer.ss.ss_family == AF_INET6) {
+            peer_addr.addrlen = (socklen_t)sizeof(peer.s6);
+        } else {
+            peer_addr.addrlen = (socklen_t)sizeof(peer);
+        }
+        return server_cookie_generate(&peer_addr, cookie, cookie_len);
     }
 
-    /* Simple HMAC of peer address */
-    static unsigned char secret[32];
-    static int secret_init = 0;
-    if (!secret_init) {
-        RAND_bytes(secret, sizeof(secret));
-        secret_init = 1;
+    /* Can't determine peer - generate random cookie */
+    *cookie_len = 0;
+    if (RAND_bytes(cookie, 32) != 1) {
+        return 0;
     }
-
-    unsigned int len = 0;
-    HMAC(EVP_sha256(), secret, sizeof(secret), (unsigned char *)&peer,
-         peerlen, cookie, &len);
-    *cookie_len = len;
+    *cookie_len = 32;
     return 1;
 }
 
 static int server_verify_cookie(SSL *ssl, const unsigned char *cookie,
                                 unsigned int cookie_len) {
-    unsigned char expected[EVP_MAX_MD_SIZE];
-    unsigned int expected_len;
-
-    if (!server_generate_cookie(ssl, expected, &expected_len)) {
+    /* For memory BIO, peer address is stored in ex_data */
+    DTLSAddress *addr = SSL_get_ex_data(ssl, dtls_peer_addr_ex_index);
+    if (!addr) {
         return 0;
     }
-
-    if (cookie_len != expected_len) {
-        return 0;
-    }
-
-    return CRYPTO_memcmp(cookie, expected, cookie_len) == 0;
+    return server_cookie_verify(addr, cookie, cookie_len);
 }
 
 /*
@@ -219,6 +439,7 @@ static int server_verify_cookie(SSL *ssl, const unsigned char *cookie,
  *   :verify - Require client certificates (default false)
  *   :ca - CA certificates for client verification
  *   :session-timeout - Session timeout in seconds (default 300)
+ *   :max-sessions - Maximum peer sessions in the table (default 1024)
  */
 static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
@@ -230,69 +451,91 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
         const char *port_str = (const char *)janet_unwrap_string(argv[1]);
         char *endptr;
         long port_val = strtol(port_str, &endptr, 10);
-        if (*endptr != '\0' || port_val < 0 || port_val > 65535) {
+        if (endptr == port_str || *endptr != '\0' || port_val < 0 ||
+            port_val > 65535) {
             dtls_panic_param("invalid port: %s", port_str);
         }
         port = (int)port_val;
     } else {
         port = janet_getinteger(argv, 1);
+        if (port < 0 || port > 65535) {
+            dtls_panic_param("invalid port: %d", port);
+        }
     }
 
     Janet opts = argc > 2 ? argv[2] : janet_wrap_nil();
-
-    /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for IOCP */
-#ifdef JANET_WINDOWS
-    jsec_socket_t fd =
-        WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (fd == JSEC_INVALID_SOCKET) {
-        dtls_panic_socket("failed to create socket");
-    }
-#else
-    jsec_socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd == JSEC_INVALID_SOCKET) {
-        dtls_panic_socket("failed to create socket");
-    }
-#endif
-
-    /* Set socket options */
-    int yes = 1;
-#ifdef JANET_WINDOWS
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
-#else
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-#endif
-
-    /* Set non-blocking */
-    /* Set non-blocking */
-#ifdef JANET_WINDOWS
-    unsigned long mode = 1;
-    ioctlsocket(fd, FIONBIO, &mode);
-#else
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
+    long explicit_mtu = jdtls_parse_mtu_opt(opts);
 
     /* Bind */
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)(uint16_t)port);
 
-    if (strcmp(host, "0.0.0.0") == 0 || strlen(host) == 0) {
-        addr.sin_addr.s_addr = INADDR_ANY;
-    } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        jsec_close_socket(fd);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo *ai = NULL;
+    const char *node = strlen(host) == 0 ? "0.0.0.0" : host;
+    if (getaddrinfo(node, port_str, &hints, &ai) != 0) {
         dtls_panic_param("invalid address: %s", host);
     }
 
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
+    int bind_err = 0;
+    int bound_family = AF_UNSPEC;
+
+    struct addrinfo *rp;
+    for (rp = ai; rp != NULL; rp = rp->ai_next) {
+        /* Create UDP socket - must use WSA_FLAG_OVERLAPPED on Windows for
+         * IOCP */
+        fd = jsec_socket_create(rp->ai_family, rp->ai_socktype,
+                                rp->ai_protocol);
+        if (fd == JSEC_INVALID_SOCKET) continue;
+
+        /* Set socket options */
+        int yes = 1;
+#ifdef JANET_WINDOWS
+        /* Disable ICMP Port Unreachable WSAECONNRESET reporting on
+         * unconnected UDP server sockets so one vanished peer cannot break
+         * recv-from. */
+        BOOL connreset = FALSE;
+        DWORD connreset_bytes = 0;
+        WSAIoctl((SOCKET)fd, SIO_UDP_CONNRESET, &connreset, sizeof(connreset),
+                 NULL, 0, &connreset_bytes, NULL, NULL);
+        (void)yes;
+#else
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#endif
+
+        /* Set non-blocking */
+        jsec_socket_set_nonblock(fd);
+
+        if (bind(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) {
+            bound_family = rp->ai_family;
+            break;
+        }
+
+        bind_err = jsec_socket_errno;
         jsec_close_socket(fd);
+        fd = JSEC_INVALID_SOCKET;
+    }
+    freeaddrinfo(ai);
+
+    if (fd == JSEC_INVALID_SOCKET) {
+        if (bind_err != 0) {
+            jsec_panic(JSEC_MOD_DTLS, "SOCKET", "bind failed: %s",
+                       jsec_socket_strerror(bind_err));
+        }
         dtls_panic_socket("bind failed");
     }
 
     /* Wrap as Janet stream */
     JanetStream *transport = janet_stream(
-        (JanetHandle)fd, JANET_STREAM_READABLE | JANET_STREAM_WRITABLE, NULL);
+        (JanetHandle)fd,
+        JANET_STREAM_SOCKET | JANET_STREAM_READABLE | JANET_STREAM_WRITABLE,
+        NULL);
 
     /* Create DTLS server */
     DTLSServer *server =
@@ -307,15 +550,56 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
     server->transport = transport;
     server->session_timeout = DTLS_SESSION_TIMEOUT;
+    server->max_sessions = DTLS_MAX_SESSIONS_DEFAULT;
+    server->link_mtu =
+        jdtls_resolve_server_link_mtu(fd, bound_family, explicit_mtu);
 
     /* Get session timeout from options */
     if (janet_checktype(opts, JANET_TABLE) ||
         janet_checktype(opts, JANET_STRUCT)) {
         Janet t = janet_get(opts, janet_ckeywordv("session-timeout"));
         if (!janet_checktype(t, JANET_NIL)) {
-            server->session_timeout = janet_unwrap_number(t);
+            if (!janet_checktype(t, JANET_NUMBER)) {
+                dtls_panic_param("invalid :session-timeout %v: expected a "
+                                 "finite non-negative number of seconds",
+                                 t);
+            }
+            double timeout = janet_unwrap_number(t);
+            if (!isfinite(timeout) || timeout < 0.0) {
+                dtls_panic_param("invalid :session-timeout %v: expected a "
+                                 "finite non-negative number of seconds",
+                                 t);
+            }
+            server->session_timeout = timeout;
+        }
+        Janet m = janet_get(opts, janet_ckeywordv("max-sessions"));
+        if (!janet_checktype(m, JANET_NIL)) {
+            if (!janet_checktype(m, JANET_NUMBER)) {
+                dtls_panic_param("invalid :max-sessions %v: expected a "
+                                 "positive integer",
+                                 m);
+            }
+            double limit = janet_unwrap_number(m);
+            if (!isfinite(limit) || limit < 1.0 || limit > floor(limit) ||
+                limit > (double)INT_MAX) {
+                dtls_panic_param("invalid :max-sessions %v: expected a "
+                                 "positive integer",
+                                 m);
+            }
+            server->max_sessions = (int)limit;
         }
     }
+
+    /* Validate :security before any SSL_CTX exists or ctx_cache_lock
+     * is taken (never longjmp past cleanup) */
+    Janet security = janet_wrap_nil();
+    if (janet_checktype(opts, JANET_TABLE) ||
+        janet_checktype(opts, JANET_STRUCT)) {
+        security = janet_get(opts, janet_ckeywordv("security"));
+    }
+    jutils_validate_security_options(security);
+
+    jutils_cert_load_error_clear();
 
     /* Create SSL context */
     server->ctx = SSL_CTX_new(DTLS_server_method());
@@ -332,12 +616,14 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
     SSL_CTX_set_cookie_verify_cb(server->ctx, server_verify_cookie);
 
     /* Apply security options */
-    Janet security = janet_wrap_nil();
-    if (janet_checktype(opts, JANET_TABLE) ||
-        janet_checktype(opts, JANET_STRUCT)) {
-        security = janet_get(opts, janet_ckeywordv("security"));
+    if (!apply_security_options(server->ctx, security, 1,
+                                1)) { /* is_dtls, is_server */
+        SSL_CTX_free(server->ctx);
+        server->ctx = NULL;
+        jsec_panic(JSEC_MOD_DTLS, "SSL",
+                   "failed to apply security options: %s",
+                   jutils_cert_load_error());
     }
-    apply_security_options(server->ctx, security, 1); /* is_dtls = 1 */
 
     /* Load certificate and key (required for server) */
     if (janet_checktype(opts, JANET_TABLE) ||
@@ -352,12 +638,18 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
 
         /* Load certificate */
         if (!jutils_load_cert(server->ctx, cert)) {
-            dtls_panic_ssl("failed to load certificate");
+            SSL_CTX_free(server->ctx);
+            server->ctx = NULL;
+            jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to load certificate: %s",
+                       jutils_cert_load_error());
         }
 
         /* Load private key */
         if (!jutils_load_key(server->ctx, key)) {
-            dtls_panic_ssl("failed to load private key");
+            SSL_CTX_free(server->ctx);
+            server->ctx = NULL;
+            jsec_panic(JSEC_MOD_DTLS, "SSL", "failed to load private key: %s",
+                       jutils_cert_load_error());
         }
 
         /* Verify key matches certificate */
@@ -380,7 +672,9 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
                 if (!add_trusted_cert(server->ctx, trusted_cert)) {
                     SSL_CTX_free(server->ctx);
                     server->ctx = NULL;
-                    dtls_panic_ssl("failed to add trusted certificate");
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to add trusted certificate: %s",
+                               jutils_cert_load_error());
                 }
             }
 
@@ -388,7 +682,11 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
             Janet ca = janet_get(opts, janet_ckeywordv("ca"));
             if (!janet_checktype(ca, JANET_NIL)) {
                 if (!jutils_load_ca(server->ctx, ca)) {
-                    dtls_panic_ssl("failed to load CA certificates");
+                    SSL_CTX_free(server->ctx);
+                    server->ctx = NULL;
+                    jsec_panic(JSEC_MOD_DTLS, "SSL",
+                               "failed to load CA certificates: %s",
+                               jutils_cert_load_error());
                 }
             }
         }
@@ -405,28 +703,242 @@ static Janet cfun_dtls_listen(int32_t argc, Janet *argv) {
  * =============================================================================
  */
 
-typedef struct {
-#ifdef JANET_WINDOWS
-    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
-    WSAOVERLAPPED overlapped;
-    WSABUF wsa_buf;
-    DWORD wsa_flags;
-    uint8_t recv_buf[65536];           /* Buffer for received datagram */
-    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
-    int peer_addrlen;
-    DWORD bytes_received;
-#endif
-    DTLSServer *server;
-    JanetBuffer *buffer;
-    int32_t nbytes;
-    double timeout;
-} DTLSRecvFromState;
+
+/*
+ * =============================================================================
+ * Pre-Session Cookie Gate (RFC 6347 section 4.2.1)
+ * =============================================================================
+ * First contact is handled statelessly, ahead of session creation: a
+ * cookie-less ClientHello is answered with a HelloVerifyRequest
+ * carrying a cookie and no session state, and only a resend whose
+ * cookie verifies is admitted to the session handshake. Unverified
+ * spoofed ClientHellos therefore allocate zero DTLSServerSession
+ * entries.
+ */
+
+/* Locate the cookie field of the ClientHello carried as the first
+ * handshake message of the datagram's first record. On success returns
+ * 1 and sets *cookie_off / *cookie_len (0 for an empty cookie field);
+ * returns 0 when the datagram is not a parseable first-fragment
+ * ClientHello. */
+static int server_client_hello_cookie(const uint8_t *data, int datalen,
+                                      int *cookie_off, int *cookie_len) {
+    unsigned int rec_len;
+    int rec_end, sid_len, off;
+
+    if (datalen < 61 || data[0] != 0x16) {
+        return 0;
+    }
+    if (data[13] != 1) {
+        return 0;
+    }
+    if (data[19] != 0 || data[20] != 0 || data[21] != 0) {
+        return 0; /* Not the first fragment of the message */
+    }
+    rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
+    rec_end = 13 + (int)rec_len;
+    if (rec_end > datalen) {
+        rec_end = datalen;
+    }
+    sid_len = data[59];
+    off = 60 + sid_len;
+    if (off + 1 > rec_end) {
+        return 0;
+    }
+    *cookie_len = data[off];
+    if (off + 1 + *cookie_len > rec_end) {
+        return 0;
+    }
+    *cookie_off = off + 1;
+    return 1;
+}
+
+/* Answer a datagram with a HelloVerifyRequest carrying cookie. The
+ * request mirrors the hello's record and message versions and creates
+ * no session state. */
+static void server_send_hello_verify(DTLSServer *server,
+                                     const DTLSAddress *peer,
+                                     const uint8_t *data, int datalen,
+                                     const unsigned char *cookie,
+                                     unsigned int cookie_len) {
+    uint8_t out[128];
+    unsigned int body_len = 3 + cookie_len;
+    unsigned int rec_len = 12 + body_len;
+    ssize_t sent;
+
+    if ((int)sizeof(out) < 28 + (int)cookie_len) {
+        return;
+    }
+    memset(out, 0, sizeof(out));
+    out[0] = 0x16;
+    out[1] = data[1];
+    out[2] = data[2];
+    memcpy(out + 5, data + 5, 6); /* RFC 6347: echo the hello record seq */
+    out[11] = (uint8_t)(rec_len >> 8);
+    out[12] = (uint8_t)(rec_len & 0xff);
+    out[13] = 3; /* hello_verify_request */
+    out[14] = (uint8_t)(body_len >> 16);
+    out[15] = (uint8_t)((body_len >> 8) & 0xff);
+    out[16] = (uint8_t)(body_len & 0xff);
+    out[22] = out[14];
+    out[23] = out[15];
+    out[24] = out[16];
+    out[25] = data[25];
+    out[26] = data[26];
+    out[27] = (uint8_t)cookie_len;
+    memcpy(out + 28, cookie, cookie_len);
+
+    sent = sendto((jsec_socket_t)server->transport->handle, (const char *)out,
+                  28 + cookie_len, 0, (struct sockaddr *)&peer->addr,
+                  peer->addrlen);
+    (void)sent;
+    (void)datalen;
+}
+
+/* Returns 1 when the datagram is admitted to the session handshake,
+ * 0 when it was answered statelessly with a HelloVerifyRequest or
+ * dropped. */
+static int dtls_server_cookie_gate(DTLSServer *server, const uint8_t *data,
+                                   int datalen, const DTLSAddress *peer) {
+    unsigned char cookie[96];
+    unsigned int cookie_len;
+    int cookie_off, echo_len;
+
+    if (!server_client_hello_cookie(data, datalen, &cookie_off, &echo_len)) {
+        return 0;
+    }
+    if (echo_len > 0 && server_cookie_verify(peer, data + cookie_off,
+                                             (unsigned int)echo_len)) {
+        return 1; /* Verified resend - admit to the session handshake */
+    }
+    if (!server_cookie_generate(peer, cookie, &cookie_len)) {
+        return 0;
+    }
+    server_send_hello_verify(server, peer, data, datalen, cookie, cookie_len);
+    return 0;
+}
+
+static int server_synth_client_hello(const uint8_t *data, int datalen,
+                                     uint8_t *out, int *out_len) {
+    unsigned int rec_len, msg_len, frag_len;
+    int cookie_off, cookie_len, drop;
+
+    if (!server_client_hello_cookie(data, datalen, &cookie_off,
+                                    &cookie_len)) {
+        return 0;
+    }
+    rec_len = ((unsigned int)data[11] << 8) | (unsigned int)data[12];
+    msg_len = ((unsigned int)data[14] << 16) | ((unsigned int)data[15] << 8) |
+              (unsigned int)data[16];
+    frag_len = ((unsigned int)data[22] << 16) |
+               ((unsigned int)data[23] << 8) | (unsigned int)data[24];
+    if ((int)rec_len + 13 != datalen || msg_len != frag_len ||
+        frag_len != rec_len - 12) {
+        return 0;
+    }
+    drop = cookie_len + 1;
+    memcpy(out, data, (size_t)(cookie_off - 1));
+    memcpy(out + cookie_off - 1, data + cookie_off + cookie_len,
+           (size_t)(datalen - cookie_off - cookie_len));
+    memset(out + 5, 0, 6);
+    out[11] = (uint8_t)((rec_len - (unsigned int)drop) >> 8);
+    out[12] = (uint8_t)((rec_len - (unsigned int)drop) & 0xff);
+    out[14] = (uint8_t)(((msg_len - (unsigned int)drop) >> 16) & 0xff);
+    out[15] = (uint8_t)(((msg_len - (unsigned int)drop) >> 8) & 0xff);
+    out[16] = (uint8_t)((msg_len - (unsigned int)drop) & 0xff);
+    out[17] = 0;
+    out[18] = 0;
+    out[22] = out[14];
+    out[23] = out[15];
+    out[24] = out[16];
+    *out_len = datalen - drop;
+    return 1;
+}
+
+static void server_drain_wbio(DTLSSession *session) {
+    uint8_t sink[512];
+    while (BIO_read(session->wbio, sink, (int)sizeof(sink)) > 0) {}
+}
+
+static int dtls_server_admit_resend(DTLSSession *session, const uint8_t *data,
+                                    int datalen) {
+    uint8_t *synth;
+    int synth_len = 0;
+    BIO_ADDR *peer;
+    int ret;
+
+    /* Record sequence alignment: read the verified resend's wire
+     * record sequence (bytes 5..10, big-endian; epoch at bytes 3..4)
+     * and advance the session's epoch-0 write counter to it, so the
+     * ServerHello flight echoes that number on the wire. The write
+     * counter restarts at 1 for this session (the discarded
+     * in-session HelloVerifyRequest consumed sequence 0), so the
+     * alignment offset is wire_seq - 1. Zero offset keeps the
+     * single-round case byte-identical. */
+    if (datalen >= 11 && ((data[3] << 8) | data[4]) == 0) {
+        uint64_t wire_seq = 0;
+        int i;
+        for (i = 5; i < 11; i++) {
+            wire_seq = (wire_seq << 8) | data[i];
+        }
+        session->rec_seq_off = wire_seq - 1;
+    }
+
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        return 0;
+    }
+    peer = BIO_ADDR_new();
+    if (!peer) {
+        janet_free(synth);
+        return 0;
+    }
+    if (!server_synth_client_hello(data, datalen, synth, &synth_len) ||
+        BIO_write(session->rbio, synth, synth_len) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    if (ret != 0) {
+        BIO_ADDR_free(peer);
+        server_drain_wbio(session);
+        return 0;
+    }
+    server_drain_wbio(session);
+    synth = (uint8_t *)janet_malloc((size_t)datalen);
+    if (!synth) {
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    memcpy(synth, data, (size_t)datalen);
+    memset(synth + 5, 0, 5);
+    synth[10] = 1;
+    synth[17] = 0;
+    synth[18] = 1;
+    if (BIO_write(session->rbio, synth, datalen) <= 0) {
+        janet_free(synth);
+        BIO_ADDR_free(peer);
+        return 0;
+    }
+    janet_free(synth);
+    ERR_clear_error();
+    ret = DTLSv1_listen(session->ssl, peer);
+    BIO_ADDR_free(peer);
+    if (ret != 1) {
+        server_drain_wbio(session);
+        return 0;
+    }
+    return 1;
+}
 
 /*
  * Process received datagram, demultiplex to session.
  *
  * State transitions:
- *   New peer      -> Create session, start handshake
+ *   New peer      -> Cookie gate, then create session
  *   Handshaking   -> Continue handshake, send response if needed
  *   Established   -> Read application data
  *   Peer closes   -> Send close_notify, remove session
@@ -439,22 +951,42 @@ typedef struct {
  * data is placed in the provided buffer.
  */
 static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
-                              DTLSAddress *peer_addr, JanetBuffer *out_buf) {
+                              DTLSAddress *peer_addr, JanetBuffer *out_buf,
+                              int32_t nbytes) {
     /* Look up or create session for this peer */
-    DTLSSession *session = dtls_server_get_session(server, peer_addr);
+    int bucket = 0;
+    DTLSSession *session =
+        dtls_server_get_session_bucket(server, peer_addr, &bucket);
+
+    int fresh = 0;
 
     if (!session) {
-        /* New connection - create session */
-        session = dtls_server_create_session(server, peer_addr);
+        /* New connection - run the stateless cookie gate before any
+         * session state is allocated */
+        if (!dtls_server_cookie_gate(server, data, datalen, peer_addr)) {
+            return janet_wrap_nil();
+        }
+        session =
+            dtls_server_create_session_in_bucket(server, peer_addr, bucket);
         if (!session) {
+            ERR_clear_error();
             return janet_wrap_nil(); /* Out of memory or other error */
         }
+        session->flags |= JDTLS_SESS_COOKIE_VERIFIED;
         /* Store peer address in SSL ex_data for cookie generation */
-        SSL_set_ex_data(session->ssl, 0, &session->peer_addr);
+        SSL_set_ex_data(session->ssl, dtls_peer_addr_ex_index,
+                        &session->peer_addr);
+        if (!dtls_server_admit_resend(session, data, datalen)) {
+            dtls_server_remove_session(server, peer_addr);
+            return janet_wrap_nil();
+        }
+        fresh = 1;
     }
 
-    /* Feed incoming data to SSL via memory BIO */
-    if (BIO_write(session->rbio, data, datalen) <= 0) {
+    /* Feed incoming data to SSL via memory BIO (the verified resend is
+     * already consumed by dtls_server_admit_resend) */
+    if (!fresh && BIO_write(session->rbio, data, datalen) <= 0) {
+        ERR_clear_error();
         return janet_wrap_nil();
     }
 
@@ -471,8 +1003,10 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         } else {
             int err = SSL_get_error(session->ssl, ret);
             if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+                ERR_clear_error();
                 /* Handshake failed - clean up */
                 dtls_server_remove_session(server, peer_addr);
+                ERR_clear_error();
                 return janet_wrap_nil();
             }
         }
@@ -481,27 +1015,68 @@ static Janet process_datagram(DTLSServer *server, uint8_t *data, int datalen,
         send_dtls_packet(server->transport, session);
 
         if (session->state != DTLS_STATE_ESTABLISHED) {
+            /* Handshake still pending on WANT_READ/WANT_WRITE: arm the
+             * DTLS flight timer so a lost flight is retransmitted even
+             * when no peer datagram arrives. */
+            dtls_flight_timer_arm(&session->flight_timer, session->ssl,
+                                  session, server->transport,
+                                  dtls_session_flight_flush);
             return janet_wrap_nil(); /* Handshake still in progress */
         }
+        dtls_flight_timer_disarm(&session->flight_timer, 0);
         /* Fall through - handshake complete, may have application data */
     }
 
-    /* Read application data from established session */
+    /* Read application data from established session, sized from the
+     * datagram and capped at the caller's nbytes: SSL_peek runs before
+     * any buffer growth (nothing is reserved with no data available),
+     * and once a decrypted datagram is pending its exact size drives
+     * the growth and the read, so a datagram of any size is delivered
+     * intact up to the cap. A read capped below the datagram size, and
+     * a nbytes == 0 call, consume up to the cap and discard the rest
+     * of THAT record so the next call receives the next datagram - the
+     * net/recv-from datagram contract; nbytes == 0 therefore returns
+     * the peer address with 0 bytes appended (net/recv-from's
+     * address-returning shape) instead of the target buffer. */
     if (session->state == DTLS_STATE_ESTABLISHED) {
-        int nread = SSL_read(session->ssl, out_buf->data + out_buf->count,
-                             out_buf->capacity - out_buf->count);
-
-        if (nread > 0) {
-            out_buf->count += nread;
-            /* Return address (data is in buffer per Janet convention) */
-            DTLSAddress *ret_addr =
-                janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
-            memcpy(ret_addr, peer_addr, sizeof(DTLSAddress));
-            return janet_wrap_abstract(ret_addr);
+        uint8_t dummy;
+        ERR_clear_error();
+        int ret = SSL_peek(session->ssl, &dummy, 1);
+        if (ret > 0) {
+            int32_t avail = (int32_t)SSL_pending(session->ssl);
+            if (avail < 1) avail = 1;
+            int32_t to_copy = (nbytes < 0 || nbytes > avail) ? avail : nbytes;
+            if (to_copy > 0) {
+                janet_buffer_extra(out_buf, to_copy);
+                ERR_clear_error();
+                ret = SSL_read(session->ssl, out_buf->data + out_buf->count,
+                               to_copy);
+                if (ret > 0) {
+                    out_buf->count += ret;
+                }
+            } else {
+                ret = 1; /* nothing to copy: the record is discarded below */
+            }
+            /* Discard the unconsumed remainder of this record */
+            while (SSL_pending(session->ssl) > 0) {
+                uint8_t discard[512];
+                int drop =
+                    SSL_read(session->ssl, discard, (int)sizeof(discard));
+                if (drop <= 0) {
+                    break;
+                }
+            }
+            if (ret > 0) {
+                /* Return address (data is in buffer per Janet convention) */
+                DTLSAddress *ret_addr =
+                    janet_abstract(&dtls_address_type, sizeof(DTLSAddress));
+                memcpy(ret_addr, peer_addr, sizeof(DTLSAddress));
+                return janet_wrap_abstract(ret_addr);
+            }
         }
 
         /* Handle peer close */
-        if (SSL_get_error(session->ssl, nread) == SSL_ERROR_ZERO_RETURN) {
+        if (SSL_get_error(session->ssl, ret) == SSL_ERROR_ZERO_RETURN) {
             SSL_shutdown(session->ssl);
             send_dtls_packet(server->transport,
                              session); /* Send close_notify */
@@ -534,10 +1109,16 @@ static void dtls_recv_from_callback(JanetFiber *fiber, JanetAsyncEvent event);
 static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
                                    JanetFiber *fiber) {
     DTLSServer *server = state->server;
+    if (!server || !server->transport ||
+        server->transport->handle == JANET_HANDLE_NONE) {
+        WSASetLastError(WSAENOTSOCK);
+        return -1;
+    }
 
     /* Reset overlapped struct */
     memset(&state->overlapped, 0, sizeof(WSAOVERLAPPED));
     state->wsa_flags = 0;
+    memset(&state->peer_addr, 0, sizeof(state->peer_addr));
     state->peer_addrlen = sizeof(state->peer_addr);
     state->bytes_received = 0;
 
@@ -553,18 +1134,30 @@ static int dtls_start_wsa_recvfrom(DTLSRecvFromState *state,
 
     if (result == SOCKET_ERROR) {
         int err = WSAGetLastError();
-        if (err == WSA_IO_PENDING) {
-            /* Async recv started */
-            janet_async_in_flight(fiber);
-            return 0;
+        if (err != WSA_IO_PENDING) {
+            return -1;
         }
-        /* Real error */
-        return -1;
     }
-    /* Completed synchronously (rare) - will be handled in COMPLETE */
+    /* IOCP posts a completion packet on both synchronous 0 and
+     * WSA_IO_PENDING. */
+    janet_async_in_flight(fiber);
+    state->io_in_flight = 1;
     return 0;
 }
 #endif
+
+static int dtls_server_cancel_socket_error(JanetFiber *fiber,
+                                           int only_if_pending) {
+    char msg[JSEC_IO_ERROR_BUFSIZE];
+    int has_err = jutils_format_socket_error(msg, sizeof(msg), "DTLS:IO",
+                                             fiber->ev_stream);
+    if (only_if_pending && !has_err) {
+        return 0;
+    }
+    janet_cancel(fiber, janet_cstringv(msg));
+    janet_async_end(fiber);
+    return 1;
+}
 
 static void dtls_recv_from_callback(JanetFiber *fiber,
                                     JanetAsyncEvent event) {
@@ -577,6 +1170,13 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
     switch (event) {
         case JANET_ASYNC_EVENT_DEINIT:
+#ifdef JANET_WINDOWS
+            if (state) {
+                jutils_win_cancel_overlapped(
+                    fiber, state->server ? state->server->transport : NULL,
+                    &state->overlapped, &state->io_in_flight, 1u);
+            }
+#endif
             break;
 
         case JANET_ASYNC_EVENT_MARK:
@@ -589,39 +1189,98 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             break;
 
         case JANET_ASYNC_EVENT_CLOSE:
-        case JANET_ASYNC_EVENT_ERR:
         case JANET_ASYNC_EVENT_HUP:
-            janet_cancel(fiber, janet_cstringv("server closed"));
+            if (event == JANET_ASYNC_EVENT_HUP &&
+                dtls_server_cancel_socket_error(fiber, 1)) {
+                return;
+            }
+            /* A parked dtls/recv-from is a reader: a local close schedules
+             * nil for it (core ev.c:2473-2476) instead of cancelling it. */
+            janet_schedule(fiber, janet_wrap_nil());
             janet_async_end(fiber);
+            return;
+
+        case JANET_ASYNC_EVENT_ERR:
+            /* A genuine socket error raises under the DTLS category with
+             * the OS reason - never nil, never a hardcoded string. */
+            dtls_server_cancel_socket_error(fiber, 0);
             return;
 
 #ifdef JANET_WINDOWS
         case JANET_ASYNC_EVENT_INIT:
             /* Windows: Start async WSARecvFrom */
             if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
-                janet_cancel(fiber, janet_cstringv("WSARecvFrom failed"));
+                char msg[JSEC_IO_ERROR_BUFSIZE];
+                snprintf(msg, sizeof(msg), "[DTLS:IO] WSARecvFrom failed: %s",
+                         jsec_socket_strerror(WSAGetLastError()));
+                janet_cancel(fiber, janet_cstringv(msg));
                 janet_async_end(fiber);
                 return;
             }
             break;
 
-        case JANET_ASYNC_EVENT_COMPLETE:
         case JANET_ASYNC_EVENT_FAILED: {
+            state->io_in_flight = 0;
+            DTLSServer *server = state->server;
+            int err = jutils_overlapped_error(server->transport,
+                                              &state->overlapped);
+            if (err == WSA_OPERATION_ABORTED ||
+                err == ERROR_OPERATION_ABORTED) {
+                return;
+            }
+            if (err == WSAECONNRESET) {
+                /* Unconnected UDP listener may observe ICMP Port Unreachable;
+                 * keep serving other peers instead of cancelling recv-from.
+                 */
+                if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
+                    char msg[JSEC_IO_ERROR_BUFSIZE];
+                    snprintf(msg, sizeof(msg),
+                             "[DTLS:IO] WSARecvFrom restart failed: %s",
+                             jsec_socket_strerror(WSAGetLastError()));
+                    janet_cancel(fiber, janet_cstringv(msg));
+                    janet_async_end(fiber);
+                    return;
+                }
+                break;
+            }
+            char msg[JSEC_IO_ERROR_BUFSIZE];
+            jutils_format_overlapped_error(msg, sizeof(msg), "DTLS:IO",
+                                           server->transport,
+                                           &state->overlapped);
+            janet_cancel(fiber, janet_cstringv(msg));
+            janet_async_end(fiber);
+            return;
+        }
+
+        case JANET_ASYNC_EVENT_COMPLETE: {
+            state->io_in_flight = 0;
             DTLSServer *server = state->server;
 
             /* Get the number of bytes received from GetQueuedCompletionStatus
              */
-            DWORD bytes_transferred;
-            DWORD flags;
+            DWORD bytes_transferred = 0;
+            DWORD flags = 0;
             BOOL success = WSAGetOverlappedResult(
                 (SOCKET)server->transport->handle, &state->overlapped,
                 &bytes_transferred, FALSE, &flags);
 
-            if (!success || bytes_transferred == 0) {
-                /* Try to start another receive */
+            if (!success) {
+                char msg[JSEC_IO_ERROR_BUFSIZE];
+                snprintf(msg, sizeof(msg), "[DTLS:IO] WSARecvFrom failed: %s",
+                         jsec_socket_strerror(WSAGetLastError()));
+                janet_cancel(fiber, janet_cstringv(msg));
+                janet_async_end(fiber);
+                return;
+            }
+
+            if (bytes_transferred == 0) {
+                /* Ignore empty UDP datagram and wait for next */
                 if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
-                    janet_cancel(
-                        fiber, janet_cstringv("WSARecvFrom restart failed"));
+                    char msg[JSEC_IO_ERROR_BUFSIZE];
+                    snprintf(msg, sizeof(msg),
+                             "[DTLS:IO] WSARecvFrom restart failed: %s",
+                             jsec_socket_strerror(WSAGetLastError()));
+                    janet_cancel(fiber, janet_cstringv(msg));
                     janet_async_end(fiber);
                     return;
                 }
@@ -637,9 +1296,9 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                    sizeof(peer_addr.addr));
             peer_addr.addrlen = state->peer_addrlen;
 
-            Janet result = process_datagram(server, state->recv_buf,
-                                            (int)bytes_transferred,
-                                            &peer_addr, state->buffer);
+            Janet result = process_datagram(
+                server, state->recv_buf, (int)bytes_transferred, &peer_addr,
+                state->buffer, state->nbytes);
 
             if (janet_checktype(result, JANET_ABSTRACT)) {
                 /* Got application data - return to caller */
@@ -650,8 +1309,11 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
 
             /* Handshake packet processed - start next recv */
             if (dtls_start_wsa_recvfrom(state, fiber) < 0) {
-                janet_cancel(fiber,
-                             janet_cstringv("WSARecvFrom restart failed"));
+                char msg[JSEC_IO_ERROR_BUFSIZE];
+                snprintf(msg, sizeof(msg),
+                         "[DTLS:IO] WSARecvFrom restart failed: %s",
+                         jsec_socket_strerror(WSAGetLastError()));
+                janet_cancel(fiber, janet_cstringv(msg));
                 janet_async_end(fiber);
                 return;
             }
@@ -667,6 +1329,7 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
             while (1) {
                 uint8_t recv_buf[65536];
                 DTLSAddress peer_addr;
+                memset(&peer_addr, 0, sizeof(peer_addr));
                 peer_addr.addrlen = sizeof(peer_addr.addr);
 
                 ssize_t n = recvfrom((jsec_socket_t)server->transport->handle,
@@ -693,8 +1356,9 @@ static void dtls_recv_from_callback(JanetFiber *fiber,
                 dtls_server_cleanup_expired(server, get_current_time());
 
                 /* Process datagram - may be handshake or app data */
-                Janet result = process_datagram(server, recv_buf, (int)n,
-                                                &peer_addr, state->buffer);
+                Janet result =
+                    process_datagram(server, recv_buf, (int)n, &peer_addr,
+                                     state->buffer, state->nbytes);
 
                 if (janet_checktype(result, JANET_ABSTRACT)) {
                     /* Got application data - return to caller */
@@ -732,33 +1396,56 @@ static Janet cfun_dtls_recv_from(int32_t argc, Janet *argv) {
     JanetBuffer *buf = janet_getbuffer(argv, 2);
 
     if (server->closed) {
-        return janet_wrap_nil();
+        dtls_panic_io("server is closed");
     }
 
-    /* Ensure buffer capacity */
-    janet_buffer_ensure(buf, buf->count + nbytes, 2);
+    /* No pre-allocation: process_datagram grows buf by the datagram's
+     * own decrypted size, so nothing is reserved before data arrives */
 
-    /* Get timeout - can be number or table/struct with :timeout */
-    double timeout = -1;
-    if (argc > 3 && !janet_checktype(argv[3], JANET_NIL)) {
-        if (janet_checktype(argv[3], JANET_NUMBER)) {
-            timeout = janet_unwrap_number(argv[3]);
-        } else if (janet_checktype(argv[3], JANET_TABLE) ||
-                   janet_checktype(argv[3], JANET_STRUCT)) {
-            Janet t = janet_get(argv[3], janet_ckeywordv("timeout"));
-            if (!janet_checktype(t, JANET_NIL)) {
-                timeout = janet_unwrap_number(t);
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
+
+    /* Try non-blocking receive directly before suspending to the event loop
+     */
+#ifndef JANET_WINDOWS
+    while (1) {
+        uint8_t recv_buf[65536];
+        DTLSAddress peer_addr;
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        peer_addr.addrlen = sizeof(peer_addr.addr);
+
+        ssize_t n =
+            recvfrom((jsec_socket_t)server->transport->handle, recv_buf,
+                     sizeof(recv_buf), MSG_DONTWAIT,
+                     (struct sockaddr *)&peer_addr.addr, &peer_addr.addrlen);
+        if (n < 0) {
+            int sock_err = jsec_socket_errno;
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
+                break;
             }
+            dtls_panic_io("%s", jsec_socket_strerror(sock_err));
+        }
+
+        dtls_server_cleanup_expired(server, get_current_time());
+
+        Janet result = process_datagram(server, recv_buf, (int)n, &peer_addr,
+                                        buf, nbytes);
+        if (janet_checktype(result, JANET_ABSTRACT)) {
+            return result;
         }
     }
+#endif
 
-    /* Add timeout if specified */
+    /* Add timeout if specified (only when actually suspending) */
     if (timeout >= 0) {
         janet_addtimeout(timeout);
     }
 
     /* Start async receive */
     DTLSRecvFromState *state = janet_malloc(sizeof(DTLSRecvFromState));
+    if (!state) {
+        dtls_panic_io("out of memory");
+    }
+    memset(state, 0, sizeof(DTLSRecvFromState));
     state->server = server;
     state->buffer = buf;
     state->nbytes = nbytes;
@@ -844,7 +1531,7 @@ static Janet cfun_dtls_close_server(int32_t argc, Janet *argv) {
                 SSL_shutdown(session->ssl);
                 send_dtls_packet(server->transport, session);
             }
-            dtls_session_free(session);
+            dtls_session_free(session, 0);
             session = next;
         }
         server->sessions[i] = NULL;
@@ -870,6 +1557,7 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
     DTLSServer *server = janet_getabstract(argv, 0, &dtls_server_type);
 
     struct sockaddr_storage addr;
+    memset(&addr, 0, sizeof(addr));
     socklen_t addrlen = sizeof(addr);
 
     if (getsockname((jsec_socket_t)server->transport->handle,
@@ -901,6 +1589,28 @@ static Janet cfun_dtls_server_localname(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (dtls/localname client-or-server)
+ *
+ * One module entry for the dtls/localname name, dispatching on the
+ * abstract type of its argument: both a DTLSClient and a DTLSServer
+ * return their local address as a [host port] tuple (or [unix-path]
+ * for AF_UNIX), matching net/localname. Any other argument raises a
+ * type error naming both accepted types.
+ */
+static Janet cfun_dtls_localname_dispatch(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    if (janet_checkabstract(argv[0], &dtls_client_type)) {
+        return cfun_dtls_localname(argc, argv);
+    }
+    if (janet_checkabstract(argv[0], &dtls_server_type)) {
+        return cfun_dtls_server_localname(argc, argv);
+    }
+    janet_panicf("bad slot #%d, expected %s or %s, got %v", 0,
+                 dtls_client_type.name, dtls_server_type.name, argv[0]);
+}
+
+/*
  * Method dispatch
  */
 /*
@@ -919,7 +1629,9 @@ static const JanetReg server_cfuns[] = {
      "  :key - Server private key (required)\n"
      "  :verify - Require client certificates (default false)\n"
      "  :ca - CA certificates for client verification\n"
-     "  :session-timeout - Session timeout in seconds (default 300)"},
+     "  :session-timeout - Session timeout in seconds (default 300)\n"
+     "  :max-sessions - Maximum peer sessions in the table (default 1024)\n"
+     "  :mtu - Link MTU in bytes (256-65535; auto-detected by default)"},
     {"recv-from", cfun_dtls_recv_from,
      "(dtls/recv-from server nbytes buf &opt timeout-or-opts)\n\n"
      "Receive a datagram from any peer.\n"
@@ -938,13 +1650,16 @@ static const JanetReg server_cfuns[] = {
      "Close the DTLS server and all sessions.\n"
      "Sends close_notify to all established sessions unless force is true.\n"
      "Close notifications are non-blocking (best effort)."},
-    {"localname", cfun_dtls_server_localname,
-     "(dtls/localname server)\n\n"
-     "Get the local address the server is bound to.\n"
-     "Returns [host port] tuple."},
+    {"localname", cfun_dtls_localname_dispatch,
+     "(dtls-stream/localname client-or-server)\n\n"
+     "Get the local address as a [host port] tuple (or [unix-path] for\n"
+     "AF_UNIX), matching net/localname, whether the argument is a\n"
+     "DTLSClient or a DTLSServer. Raises [DTLS:IO] when the stream is "
+     "closed."},
     {NULL, NULL, NULL}};
 
 void jdtls_register_server(JanetTable *env) {
     janet_register_abstract_type(&dtls_server_type);
+    dtls_peer_addr_ex_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
     janet_cfuns(env, "jsec/dtls", server_cfuns);
 }

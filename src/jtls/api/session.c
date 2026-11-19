@@ -21,8 +21,8 @@ static void check_handshake(TLSStream *tls) {
     if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
         SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
-            tls->ts_handshake.tv_nsec == 0) {
+        if ((tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) &&
+            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }

@@ -22,11 +22,16 @@
 4. Update version in ~project.janet~
 5. Update [[file:NEWS.org][NEWS.org]] with changes since last release
 6. Review and update documentation
-7. Format all code:
+7. Regenerate tracked =.md= mirrors from =.org= sources on demand:
+   #+begin_src sh
+   jpm run regen-docs
+   #+end_src
+   (Or run ~janet scripts/regen-docs.janet [FILE.org ...]~ directly.)
+8. Format all code:
    #+begin_src sh
    jpm run format
    #+end_src
-8. Build clean and test:
+9. Build clean and test:
    #+begin_src sh
    jpm clean && jpm build && jpm install
    janet test/runner.janet -f '{unit,regression,coverage}'
@@ -67,7 +72,8 @@ refined during this time period.
    #+begin_src sh
    jpm run release
    #+end_src
-   This runs ~clean~ and ~format~ targets.
+   This runs ~clean~, ~format/all~, and ~regen-docs~ (~scripts/regen-docs.janet~)
+   to refresh tracked =.md= mirrors with stable heading anchors.
 
 4. *Final Testing*
    #+begin_src sh
@@ -138,17 +144,18 @@ For critical security fixes:
 
 * Available Build Targets
 
-| Target           | Description                         |
-|------------------+-------------------------------------|
-| ~format~         | Format all code (C and Janet)       |
-| ~format-c~       | Format C code with astyle           |
-| ~format-janet~   | Format Janet code with janet-format |
-| ~release~        | Clean and format for release        |
-| ~leak-check~     | Run valgrind memory leak detection  |
-| ~tidy~           | Run clang-tidy static analysis      |
-| ~tidy-fix~       | Run clang-tidy with auto-fix        |
-| ~test-sanitized~ | Build and test with ASan/UBSan      |
-| ~clean~          | Remove build artifacts              |
+| Target           | Description                               |
+|------------------+-------------------------------------------|
+| ~format~         | Format all code (C and Janet)             |
+| ~format-c~       | Format C code with clang-format           |
+| ~format-janet~   | Format Janet code with janet-format       |
+| ~regen-docs~     | Regenerate =.md= mirrors from =.org= docs |
+| ~release~        | Clean, format, and regenerate docs        |
+| ~leak-check~     | Run valgrind memory leak detection        |
+| ~tidy~           | Run clang-tidy static analysis            |
+| ~tidy-fix~       | Run clang-tidy with auto-fix              |
+| ~test-sanitized~ | Build and test with ASan/UBSan            |
+| ~clean~          | Remove build artifacts                    |
 
 * Distribution
 
@@ -189,7 +196,7 @@ jpm install
 
 ** Dependencies
 
-- Janet 1.40+
+- Janet 1.41.1+
 - OpenSSL 3.0+, LibreSSL 3.6+
 - spork (Janet package)
 

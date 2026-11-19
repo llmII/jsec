@@ -430,8 +430,8 @@
   (eachp [proto group] by-proto
     (print-stats (string proto) (compute-stats group)))
 
-  # Group by TLS version (for TLS tests)
-  (def tls-results (filter |(or (= ($ :protocol) :tls) (= ($ :protocol) :unix-tls)) results))
+  # Group by TLS/DTLS version
+  (def tls-results (filter |(or (= ($ :protocol) :tls) (= ($ :protocol) :unix-tls) (= ($ :protocol) :dtls)) results))
   (when (> (length tls-results) 0)
     (print-header "Results by TLS Version")
     (def by-version (group-by-key tls-results :tls-version))

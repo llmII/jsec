@@ -60,6 +60,11 @@ static Janet cfun_bio_write(int32_t argc, Janet *argv) {
     return janet_wrap_integer(written);
 }
 
+/* Cap on bytes read per slice, matching the JSEC_READ_CHUNK shape of
+ * commit 40f34a5677 (src/jtls/state_machine.c:88). Bounds buffer growth
+ * to the data actually read, not the request size. */
+#define JSEC_READ_CHUNK 4096
+
 static Janet cfun_bio_read(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
     BIO **box = (BIO **)janet_getabstract(argv, 0, &jbio_type);
@@ -68,18 +73,32 @@ static Janet cfun_bio_read(int32_t argc, Janet *argv) {
 
     int32_t len = janet_getinteger(argv, 1);
     if (len < 0) crypto_panic_param("length must be non-negative");
+    if (len == 0) return janet_wrap_buffer(janet_buffer(0));
 
-    uint8_t *buf = janet_malloc(len);
-    int read = BIO_read(bio, buf, len);
+    uint8_t chunk[JSEC_READ_CHUNK];
+    int32_t remaining = len;
+    JanetBuffer *buf = NULL;
 
-    if (read <= 0) {
-        janet_free(buf);
-        return janet_wrap_nil();
+    while (remaining > 0) {
+        int to_read = remaining < (int32_t)JSEC_READ_CHUNK
+                          ? (int)remaining
+                          : (int)JSEC_READ_CHUNK;
+        int n = BIO_read(bio, chunk, to_read);
+        if (n <= 0) {
+            if (!BIO_should_retry(bio)) crypto_panic_ssl("BIO read failed");
+            break;
+        }
+        if (!buf) {
+            if (n == len || BIO_ctrl_pending(bio) == 0)
+                return janet_stringv(chunk, n);
+            buf = janet_buffer(n);
+        }
+        janet_buffer_push_bytes(buf, chunk, n);
+        remaining -= n;
     }
 
-    Janet result = janet_stringv(buf, read);
-    janet_free(buf);
-    return result;
+    if (!buf) return janet_wrap_nil();
+    return janet_stringv(buf->data, buf->count);
 }
 
 static Janet cfun_bio_close(int32_t argc, Janet *argv) {
@@ -135,7 +154,11 @@ static const JanetReg cfuns[] = {
 
     {"read", cfun_bio_read,
      "(jsec/bio/read bio len)\n\n"
-     "Read up to len bytes from BIO. Returns string or nil if no data."},
+     "Read up to len bytes from BIO in bounded chunks. A large len never "
+     "allocates a request-sized buffer.\n"
+     "Returns string, or nil if no data is available. A zero-length request "
+     "returns the empty buffer; a failed read raises with its OpenSSL "
+     "cause."},
 
     {"close", cfun_bio_close,
      "(jsec/bio/close bio)\n\n"

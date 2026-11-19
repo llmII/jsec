@@ -19,6 +19,8 @@
 (use assay)
 (import jsec/tls :as tls)
 (import jsec/tls-stream :as tls-stream)
+(import jsec/cert :as cert)
+(import jsec/crypto :as crypto)
 (import ../helpers :prefix "")
 
 # =============================================================================
@@ -79,6 +81,184 @@
 # =============================================================================
 
 (def-suite :name "TLS Stream Suite"
+
+  # ===========================================================================
+  # Non-Matrix Tests (Basic Functionality)
+  # ===========================================================================
+
+  (def-test "flush returns the stream itself and raises on closed stream"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          done (ev/chan 1)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def conn (:accept server))
+                (def s (tls/wrap conn {:cert (certs :cert) :key (certs :key)}))
+                (:read s 1024)
+                (:write s "Pong")
+                (forever
+                  (def b (:read s 1024))
+                  (when (or (not b) (empty? b)) (break))))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (def s (tls/wrap raw {:verify false}))
+        (:write s "Ping")
+        (assert (:read s 1024) "setup: client should receive the Pong reply")
+
+        # flush returns the stream itself, matching net/flush
+        (assert (= s (:flush s))
+                ":flush must return the stream itself like net/flush")
+        (assert (= s (tls-stream/flush s))
+                "tls-stream/flush must return the stream itself")
+
+        # Negative shapes: a closed stream raises [TLS:IO]
+        (:close s true)
+        (assert-error (:flush s)
+                      "closed stream :flush must raise [TLS:IO]")
+        (assert-error (tls-stream/flush s)
+                      "closed stream tls-stream/flush must raise [TLS:IO]")
+
+        (ev/take done))))
+
+  (def-test "buffer configuration inspection and structured per-connection options"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          done (ev/chan 1)]
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def conn (:accept server))
+                (def s (tls/wrap conn {:cert (certs :cert) :key (certs :key)}))
+                (assert (= (:buffer s) {:read 65536 :write 65536}))
+                (:read s 1024)
+                (:write s "ack"))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (def s (tls/wrap raw {:verify false}))
+        # Default buffer configuration: both read and write default to 65536
+        (assert (= (:buffer s) {:read 65536 :write 65536})
+                "default buffer should be {:read 65536 :write 65536}")
+        (assert (= (tls-stream/buffer s) {:read 65536 :write 65536})
+                "tls-stream/buffer should return {:read 65536 :write 65536}")
+        (:write s "hello")
+        (:read s 1024)
+        (:close s)
+        (ev/take done))
+
+      # Test various buffer option combinations on wrapping
+      (let [[s1 _] (make-server :tcp)
+            s1-addr (get-server-addr s1 :tcp nil)]
+        (defer (:close s1)
+          (ev/go
+            (fn []
+              (try
+                (forever
+                  (def conn (:accept s1))
+                  (when (nil? conn) (break))
+                  (ev/go
+                    (fn []
+                      (try
+                        (with [sc (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                          (:read sc 1))
+                        ([_] nil)))))
+                ([_] nil))))
+
+          # Structured :buffer {:read ... :write ...}
+          (let [r1 (make-client-conn :tcp s1-addr)
+                c1 (tls/wrap r1 {:verify false :buffer {:read false :write false}})]
+            (defer (:close c1 true)
+              (assert (= (:buffer c1) {:read false :write false})
+                      ":buffer {:read false :write false} should disable both")))
+
+          (let [r2 (make-client-conn :tcp s1-addr)
+                c2 (tls/wrap r2 {:verify false :buffer {:read 32768 :write false}})]
+            (defer (:close c2 true)
+              (assert (= (:buffer c2) {:read 32768 :write false})
+                      ":buffer {:read 32768 :write false} should set read and disable write")))
+
+          (let [r3 (make-client-conn :tcp s1-addr)
+                c3 (tls/wrap r3 {:verify false :buffer {:read false :write 131072}})]
+            (defer (:close c3 true)
+              (assert (= (:buffer c3) {:read false :write 131072})
+                      ":buffer {:read false :write 131072} should disable read and set write")))
+
+          (let [r4 (make-client-conn :tcp s1-addr)
+                c4 (tls/wrap r4 {:verify false :buffer false})]
+            (defer (:close c4 true)
+              (assert (= (:buffer c4) {:read false :write false})
+                      ":buffer false should disable both")))
+
+          (let [r5 (make-client-conn :tcp s1-addr)
+                c5 (tls/wrap r5 {:verify false :buffer 32768})]
+            (defer (:close c5 true)
+              (assert (= (:buffer c5) {:read 32768 :write 32768})
+                      ":buffer 32768 should set both to 32768")))
+
+          # Validation errors
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer {:read -1}})
+                            "negative read buffer must raise error")))
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer {:write -1}})
+                            "negative write buffer must raise error")))
+          (let [r (make-client-conn :tcp s1-addr)]
+            (defer (:close r)
+              (assert-error (tls/wrap r {:verify false :buffer "bad"})
+                            "invalid buffer option type must raise error")))))))
+
+  (def-test "bounded write buffer coalescing transfers multi-record payload correctly"
+    :timeout 30
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server socket-path] (make-server :tcp)
+          addr (get-server-addr server :tcp socket-path)
+          payload-size (* 256 1024) # 256 KB payload across multiple 64 KB coalesced chunks
+          payload (string/repeat "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" (/ payload-size 32))
+          received (buffer/new payload-size)
+          done (ev/chan 1)]
+      (var server-err nil)
+      (defer (do (:close server) (cleanup-socket socket-path))
+        (ev/go
+          (fn []
+            (try
+              (with [conn (:accept server)]
+                (with [s (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                  (while (< (length received) payload-size)
+                    (def chunk (:read s 65536))
+                    (if (or (not chunk) (empty? chunk))
+                      (break)
+                      (buffer/push-string received chunk)))
+                  (:write s "ACK")))
+              ([err] (set server-err err)))
+            (ev/give done true)))
+
+        (def raw (make-client-conn :tcp addr))
+        (with [s (tls/wrap raw {:verify false :buffer {:read true :write 65536}})]
+          (:write s payload)
+          (:flush s)
+          (def ack (:read s 3))
+          (assert (= (string ack) "ACK") "server should acknowledge payload receipt"))
+
+        (ev/take done)
+        (assert (nil? server-err) (string "server error: " server-err))
+        (assert (= (length received) payload-size)
+                "server should receive all bytes of multi-record payload")
+        (assert (= (string received) payload)
+                "payload content integrity must match perfectly"))))
 
   # ===========================================================================
   # Main Test Matrix - Socket Type x TLS Version x Verify Mode x Options
@@ -737,6 +917,163 @@
           (cleanup-socket socket-path2))))
 
     # -------------------------------------------------------------------------
+    # peer-cert - Export peer certificate DER after handshake
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert"
+      (var server-peer-cert :not-run)
+      (let [ctx-opts (build-ctx-opts tls-version tcp-nodelay cipher-group)
+            client-opts (build-client-opts verify-mode ctx-opts certs)
+            [server socket-path] (make-server socket-type)
+            addr (get-server-addr server socket-type socket-path)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (try
+                   (ev/with-deadline 10
+                     (with [conn (:accept server)]
+                       (let [opts (merge {:cert (certs :cert) :key (certs :key)} ctx-opts)]
+                         (with [tls-conn (tls/wrap conn opts)]
+                           (:read tls-conn 100)
+                           (set server-peer-cert (:peer-cert tls-conn))
+                           (:write tls-conn "ACK")))))
+                   ([err] (set server-peer-cert (string "server error: " err))))
+                 (ev/give done true)))
+
+        (ev/sleep 0.1)
+
+        (with [conn (make-client-conn socket-type addr)]
+          (with [tls-conn (tls/wrap conn client-opts)]
+            (:write tls-conn "ping")
+            (let [resp (:read tls-conn 100)]
+              (assert (= (string resp) "ACK") "handshake completed via echo"))
+            (let [peer-der (:peer-cert tls-conn)
+                  fn-der (tls-stream/get-peer-cert tls-conn)]
+              (assert (string? peer-der) ":peer-cert returns a string")
+              (assert (= peer-der fn-der) "method and function agree")
+              (assert (= peer-der (crypto/convert-cert (certs :cert) :der))
+                      "DER is byte-identical to the known test certificate")
+              (let [parsed (cert/parse (crypto/convert-cert peer-der :pem))
+                    known (cert/parse (certs :cert))]
+                (assert (= (parsed :serial) (known :serial))
+                        "returned DER parses to the test certificate (serial)")
+                (assert (= (parsed :fingerprint-sha256) (known :fingerprint-sha256))
+                        "returned DER parses to the test certificate (fingerprint)")
+                (assert (= (get-in parsed [:subject :dn])
+                           (get-in known [:subject :dn]))
+                        "returned DER parses to the test certificate (subject)")))))
+
+        (ev/take done)
+        (assert (nil? server-peer-cert)
+                (string "server sees nil without client auth, got: " server-peer-cert))
+        (:close server)
+        (cleanup-socket socket-path)))
+
+    # -------------------------------------------------------------------------
+    # peer-cert mTLS - Server side sees the client certificate DER
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert mTLS"
+      (var server-peer-cert :not-run)
+      (let [ctx-opts (build-ctx-opts tls-version tcp-nodelay cipher-group)
+            client-certs (generate-certs-for-matrix @{:cert-type cert-type :common-name "client"})
+            [server socket-path] (make-server socket-type)
+            addr (get-server-addr server socket-type socket-path)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (try
+                   (ev/with-deadline 10
+                     (with [conn (:accept server)]
+                       (let [opts (merge {:cert (certs :cert) :key (certs :key)
+                                          :verify true :trusted-cert (client-certs :cert)} ctx-opts)]
+                         (with [tls-conn (tls/wrap conn opts)]
+                           (:read tls-conn 100)
+                           (set server-peer-cert (:peer-cert tls-conn))
+                           (:write tls-conn "ACK")))))
+                   ([err] (set server-peer-cert (string "server error: " err))))
+                 (ev/give done true)))
+
+        (ev/sleep 0.1)
+
+        (with [conn (make-client-conn socket-type addr)]
+          (let [client-opts (merge {:cert (client-certs :cert)
+                                    :key (client-certs :key)
+                                    :verify false} ctx-opts)]
+            (with [tls-conn (tls/wrap conn "127.0.0.1" client-opts)]
+              (:write tls-conn "ping")
+              (let [resp (:read tls-conn 100)]
+                (assert (= (string resp) "ACK") "mTLS echo")))))
+
+        (ev/take done)
+        (assert (string? server-peer-cert)
+                (string "server received client cert DER, got: " server-peer-cert))
+        (assert (= server-peer-cert (crypto/convert-cert (client-certs :cert) :der))
+                "server-side DER is byte-identical to the client certificate")
+        (let [parsed (cert/parse (crypto/convert-cert server-peer-cert :pem))
+              known (cert/parse (client-certs :cert))]
+          (assert (= (parsed :serial) (known :serial))
+                  "server-side DER parses to the client certificate (serial)")
+          (assert (= (parsed :fingerprint-sha256) (known :fingerprint-sha256))
+                  "server-side DER parses to the client certificate (fingerprint)"))
+        (:close server)
+        (cleanup-socket socket-path)))
+
+    # -------------------------------------------------------------------------
+    # peer-cert failure shapes - Each failure path raises
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert failure shapes"
+      (let [ctx-opts (build-ctx-opts tls-version tcp-nodelay cipher-group)
+            client-opts (build-client-opts verify-mode ctx-opts certs)
+            [server socket-path] (make-server socket-type)
+            addr (get-server-addr server socket-type socket-path)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (try
+                   (ev/with-deadline 10
+                     (with [conn (:accept server)]
+                       (let [opts (merge {:cert (certs :cert) :key (certs :key)} ctx-opts)]
+                         (with [tls-conn (tls/wrap conn opts)]
+                           (:write tls-conn "ACK")
+                           (:read tls-conn 100)))))
+                   ([err] nil))
+                 (ev/give done true)))
+
+        (ev/sleep 0.1)
+
+        # Arity mismatch raises
+        (assert-error (tls-stream/get-peer-cert) "0-arity raises")
+        # Wrong argument type raises
+        (assert-error (tls-stream/get-peer-cert "not-a-stream")
+                      "non-stream argument raises")
+        (assert-error (tls-stream/get-peer-cert 42)
+                      "non-stream argument raises")
+        (assert-error (:peer-cert 42) "method dispatch on non-stream raises")
+
+        (with [conn (make-client-conn socket-type addr)]
+          # Wrong abstract type: a raw net stream is not a jsec/tls-stream
+          (assert-error (tls-stream/get-peer-cert conn)
+                        "raw net stream raises")
+
+          (with [tls-conn (tls/wrap conn client-opts)]
+            (:write tls-conn "ping")
+            (:read tls-conn 100)
+            (let [der (:peer-cert tls-conn)]
+              (assert (string? der) "live stream returns DER before close"))
+            # Arity mismatch raises with a live stream too
+            (assert-error (tls-stream/get-peer-cert tls-conn tls-conn)
+                          "2-arity raises")
+            (:close tls-conn)
+            # Closed stream raises
+            (assert-error (tls-stream/get-peer-cert tls-conn)
+                          "closed stream raises")
+            (assert-error (:peer-cert tls-conn)
+                          "closed stream raises via method")))
+
+        (ev/take done)
+        (:close server)
+        (cleanup-socket socket-path)))
+
+    # -------------------------------------------------------------------------
     # hostname mismatch rejection - Verify bad hostname is rejected
     # -------------------------------------------------------------------------
     (def-test "hostname mismatch rejection"
@@ -923,6 +1260,87 @@
 
       (ev/take done)
       (:close server)))
+
+  (def-test "listener localname via method and function"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (defer (:close listener)
+        (let [[host port] (net/localname listener)
+              via-method (:localname listener)
+              via-fn (tls-stream/localname listener)]
+          (assert (= (length via-method) 2)
+                  "(:localname listener) returns a 2-tuple")
+          (assert (= (via-method 0) host)
+                  "(:localname listener) host matches net/localname")
+          (assert (= (via-method 1) port)
+                  "(:localname listener) port matches net/localname")
+          (assert (= (length via-fn) 2)
+                  "(tls-stream/localname listener) returns a 2-tuple")
+          (assert (= (via-fn 0) host)
+                  "(tls-stream/localname listener) host matches net/localname")
+          (assert (= (via-fn 1) port)
+                  "(tls-stream/localname listener) port matches net/localname")))))
+
+  (def-test "localname and peername method and function parity"
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          [server _] (make-server :tcp)
+          [host port] (net/localname server)
+          done (ev/chan 1)]
+
+      (ev/go (fn []
+               (try
+                 (with [conn (:accept server)]
+                   (with [tls-conn (tls/wrap conn {:cert (certs :cert) :key (certs :key)})]
+                     (let [sln (:localname tls-conn)
+                           spn (:peername tls-conn)]
+                       (assert (= (tls-stream/localname tls-conn) sln)
+                               "server localname function/method parity")
+                       (assert (= (tls-stream/peername tls-conn) spn)
+                               "server peername function/method parity"))
+                     (ev/sleep 0.1)))
+                 ([err] nil))
+               (ev/give done true)))
+
+      (ev/sleep 0.1)
+
+      (with [tls-conn (tls/connect host (string port) {:verify false})]
+        (let [cln (:localname tls-conn)
+              cpn (:peername tls-conn)]
+          (assert (= (tls-stream/localname tls-conn) cln)
+                  "client localname function/method parity")
+          (assert (= (tls-stream/peername tls-conn) cpn)
+                  "client peername function/method parity"))
+        (:read tls-conn 100))
+
+      (ev/take done)
+      (:close server)))
+
+  (def-test "peername raises on listen listener"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (defer (:close listener)
+        (assert-error (tls-stream/peername listener)
+                      "peername function raises on listener")
+        (assert-error (:peername listener)
+                      "peername method raises on listener"))))
+
+  (def-test "localname raises TLS:IO after listener close"
+    (let [listener (tls/listen "127.0.0.1" "0")]
+      (:close listener)
+
+      (var method-err nil)
+      (try
+        (:localname listener)
+        ([err] (set method-err err)))
+      (assert method-err "(:localname listener) raises after close")
+      (assert (string/find "[TLS:IO]" (string method-err))
+              "method localname raises a [TLS:IO] error")
+
+      (var fn-err nil)
+      (try
+        (tls-stream/localname listener)
+        ([err] (set fn-err err)))
+      (assert fn-err "(tls-stream/localname listener) raises after close")
+      (assert (string/find "[TLS:IO]" (string fn-err))
+              "function localname raises a [TLS:IO] error")))
 
   (def-test "trust-cert with explicit context"
     (let [certs (generate-temp-certs {:common-name "127.0.0.1"})

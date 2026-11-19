@@ -70,20 +70,27 @@
   "Skip invalid protocol/config combinations with descriptive reason."
   [combo]
   (let [proto (combo :protocol)
-        tls-ver (combo :tls-version)]
+        tls-ver (combo :tls-version)
+        chunk-sz (or (combo :chunk-size) 65536)]
     (cond
       # Unix sockets not supported on Windows
       (and (= (os/which) :windows)
            (or (= proto :unix) (= proto :unix-tls)))
       "Unix sockets not supported on Windows"
 
-      # TLS version specified on non-TLS protocol - skip
+      # TLS version specified on non-TLS/non-DTLS protocol - skip
       (and tls-ver
-           (not (or (= proto :tls) (= proto :unix-tls))))
-      "TLS version only applies to TLS protocols"
+           (not (or (= proto :tls) (= proto :unix-tls) (= proto :dtls))))
+      "TLS version only applies to TLS/DTLS protocols"
 
-      # TLS protocol WITHOUT tls-version - skip (use nil combo separately)
-      # Actually no - nil tls-version means "default" for TLS tests
+      # DTLS does not support TLS 1.3
+      (and (= proto :dtls) (= tls-ver "1.3"))
+      "DTLS does not support TLS 1.3"
+
+      # UDP/DTLS chunk size limit: IP datagram limit is 65507 bytes
+      (and (or (= proto :udp) (= proto :dtls))
+           (> chunk-sz 65507))
+      "Datagram chunk size exceeds UDP limit (65507 bytes)"
 
       # High client count needs adequate duration
       (and (>= (or (combo :client-count) 1) 500)
@@ -94,16 +101,16 @@
       false)))
 
 # --------------------------------------------------------------------------
-# Unified Echo Test - Same code path for TCP and TLS
+# Unified Echo Test - Same code path for TCP, TLS, UDP, and DTLS
 # --------------------------------------------------------------------------
 # 
-# The key insight: TCP and TLS use IDENTICAL code paths after initialization.
+# The key insight: TCP, TLS, UDP, and DTLS use unified code paths after initialization.
 # Only the make-server/make-client calls differ. This ensures we're measuring
 # jsec performance, not Janet performance.
 #
 
 (defn make-server-config
-  "Build server config table for either TCP or TLS.
+  "Build server config table for TCP, TLS, UDP, or DTLS.
    Only initialization differs - rest of code is identical."
   [protocol tls-version chunk-size scratch-dir server-index]
   (def config
@@ -113,8 +120,8 @@
       :host "127.0.0.1"
       :port "0"}) # Ephemeral port - OS assigns
 
-  # Add TLS-specific config
-  (when (or (= protocol :tls) (= protocol :unix-tls))
+  # Add TLS/DTLS-specific config
+  (when (or (= protocol :tls) (= protocol :unix-tls) (= protocol :dtls))
     (put config :cert (test-certs :cert))
     (put config :key (test-certs :key))
     (put config :handshake-timing true)
@@ -130,7 +137,7 @@
   config)
 
 (defn make-client-config
-  "Build client config table for either TCP or TLS.
+  "Build client config table for TCP, TLS, UDP, or DTLS.
    Only initialization differs - rest of code is identical."
   [protocol tls-version chunk-size duration server-info]
   (def config
@@ -149,7 +156,20 @@
       (when (server-info :ciphers) (put config :ciphers (server-info :ciphers)))
       (when (server-info :ciphersuites) (put config :ciphersuites (server-info :ciphersuites))))
 
+    :dtls
+    (do
+      (put config :host (server-info :host))
+      (put config :port (server-info :port))
+      (put config :handshake-timing true)
+      (when (server-info :ciphers) (put config :ciphers (server-info :ciphers)))
+      (when (server-info :ciphersuites) (put config :ciphersuites (server-info :ciphersuites))))
+
     :tcp
+    (do
+      (put config :host (server-info :host))
+      (put config :port (server-info :port)))
+
+    :udp
     (do
       (put config :host (server-info :host))
       (put config :port (server-info :port)))
@@ -174,7 +194,7 @@
   :category "performance"
 
   # --------------------------------------------------------------------------
-  # Unified Echo Performance Test - TCP and TLS use same code path
+  # Unified Echo Performance Test - TCP, TLS, UDP, and DTLS
   # --------------------------------------------------------------------------
   (def-test "echo"
     :type :coordinated
@@ -184,9 +204,9 @@
     # Matrix dimensions - protocol is just another parameter
     # Server participant count and client-host participant count are
     # controlled by assay's coordinated filter, not matrix
-    :matrix {:protocol [:tcp :tls]
+    :matrix {:protocol [:tcp :tls :udp :dtls]
              :tls-version [nil "1.2" "1.3"]
-             :chunk-size [65536 131072 262144]
+             :chunk-size [1024 4096 16384 65536]
              :client-count [10 50 100 500 1000]
              :duration [10 30 45]} # Added 10s and 30s for quick tests
 
@@ -209,8 +229,9 @@
       # Create metrics collector for raw data only
       (def server-metrics (metrics/new-metrics))
 
-      # Build server config - same function for TCP and TLS
+      # Build server config - unified function
       (def server-config (make-server-config proto tls-ver chunk-sz scratch-dir 0))
+      (put server-config :metrics server-metrics)
 
       # Start server using unified factory
       (def server (echo-tcp/make-server server-config
@@ -225,6 +246,16 @@
           (put server-info :port (get name 1)))
 
         :tcp
+        (when-let [name (net/localname server)]
+          (put server-info :host "127.0.0.1")
+          (put server-info :port (get name 1)))
+
+        :dtls
+        (when-let [name (:localname server)]
+          (put server-info :host "127.0.0.1")
+          (put server-info :port (get name 1)))
+
+        :udp
         (when-let [name (net/localname server)]
           (put server-info :host "127.0.0.1")
           (put server-info :port (get name 1)))

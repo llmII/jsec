@@ -11,6 +11,148 @@
 #include "internal.h"
 
 /*============================================================================
+ * PARSE BUFFER OPTIONS
+ *============================================================================
+ * Parse per-connection buffer configuration from options.
+ *
+ * Supported formats:
+ *   :buffer {:read <bool|int> :write <bool|int>}
+ *   :buffer <bool> (shorthand to enable/disable both)
+ *   :buffer <int>  (shorthand to set both; 0 disables)
+ *   :buffer-size <int> (legacy fallback)
+ *
+ * Validation:
+ *   - 0 disables buffering in that direction (unbuffered)
+ *   - positive integers set bounded sizes
+ *   - negative integers raise a parameter error
+ *   - invalid types raise a parameter error
+ */
+void jtls_parse_buffer_opts(Janet opts, int32_t *read_buf_size,
+                            int32_t *write_buf_size) {
+    *read_buf_size = DEFAULT_TLS_BUFFER_SIZE;
+    *write_buf_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
+
+    if (janet_checktype(opts, JANET_NIL)) {
+        return;
+    }
+    if (!janet_checktype(opts, JANET_TABLE) &&
+        !janet_checktype(opts, JANET_STRUCT)) {
+        return;
+    }
+
+    /* 1. Check legacy :buffer-size first if present */
+    Janet legacy_buf = janet_get(opts, janet_ckeywordv("buffer-size"));
+    if (!janet_checktype(legacy_buf, JANET_NIL)) {
+        if (!janet_checktype(legacy_buf, JANET_NUMBER)) {
+            tls_panic_param("buffer-size must be a number");
+        }
+        int32_t size = (int32_t)janet_unwrap_integer(legacy_buf);
+        if (size < 0) {
+            tls_panic_param("buffer-size must be non-negative");
+        } else if (size == 0) {
+            *read_buf_size = 0;
+            *write_buf_size = 0;
+        } else {
+            if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
+            if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
+            *read_buf_size = size;
+            *write_buf_size = size;
+        }
+    }
+
+    /* 2. Structured :buffer option takes precedence */
+    Janet buf_opt = janet_get(opts, janet_ckeywordv("buffer"));
+    if (janet_checktype(buf_opt, JANET_NIL)) {
+        return;
+    }
+
+    /* :buffer can be boolean */
+    if (janet_checktype(buf_opt, JANET_BOOLEAN)) {
+        int enable = janet_unwrap_boolean(buf_opt);
+        if (!enable) {
+            *read_buf_size = 0;
+            *write_buf_size = 0;
+        } else {
+            *read_buf_size = DEFAULT_TLS_BUFFER_SIZE;
+            *write_buf_size = JSEC_DEFAULT_WRITE_BUFFER_SIZE;
+        }
+        return;
+    }
+
+    /* :buffer can be numeric */
+    if (janet_checktype(buf_opt, JANET_NUMBER)) {
+        int32_t size = (int32_t)janet_unwrap_integer(buf_opt);
+        if (size < 0) {
+            tls_panic_param("buffer size must be non-negative");
+        } else if (size == 0) {
+            *read_buf_size = 0;
+            *write_buf_size = 0;
+        } else {
+            if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
+            if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
+            *read_buf_size = size;
+            *write_buf_size = size;
+        }
+        return;
+    }
+
+    /* Dictionary: must be struct or table */
+    if (!janet_checktype(buf_opt, JANET_TABLE) &&
+        !janet_checktype(buf_opt, JANET_STRUCT)) {
+        tls_panic_param(
+            "buffer option must be a table, struct, boolean, or number");
+    }
+
+    /* :read option */
+    Janet r_opt = janet_get(buf_opt, janet_ckeywordv("read"));
+    if (!janet_checktype(r_opt, JANET_NIL)) {
+        if (janet_checktype(r_opt, JANET_BOOLEAN)) {
+            *read_buf_size =
+                janet_unwrap_boolean(r_opt) ? DEFAULT_TLS_BUFFER_SIZE : 0;
+        } else if (janet_checktype(r_opt, JANET_NUMBER)) {
+            int32_t size = (int32_t)janet_unwrap_integer(r_opt);
+            if (size < 0) {
+                tls_panic_param("buffer :read size must be non-negative");
+            } else if (size == 0) {
+                *read_buf_size = 0;
+            } else {
+                if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
+                if (size > MAX_TLS_BUFFER_SIZE) size = MAX_TLS_BUFFER_SIZE;
+                *read_buf_size = size;
+            }
+        } else {
+            tls_panic_param(
+                "buffer :read option must be a boolean or integer");
+        }
+    }
+
+    /* :write option */
+    Janet w_opt = janet_get(buf_opt, janet_ckeywordv("write"));
+    if (!janet_checktype(w_opt, JANET_NIL)) {
+        if (janet_checktype(w_opt, JANET_BOOLEAN)) {
+            *write_buf_size = janet_unwrap_boolean(w_opt)
+                                  ? JSEC_DEFAULT_WRITE_BUFFER_SIZE
+                                  : 0;
+        } else if (janet_checktype(w_opt, JANET_NUMBER)) {
+            int32_t size = (int32_t)janet_unwrap_integer(w_opt);
+            if (size < 0) {
+                tls_panic_param("buffer :write size must be non-negative");
+            } else if (size == 0) {
+                *write_buf_size = 0;
+            } else {
+                if (size < MIN_TLS_BUFFER_SIZE) size = MIN_TLS_BUFFER_SIZE;
+                if (size > JSEC_MAX_WRITE_BUFFER_BOUND)
+                    size = JSEC_MAX_WRITE_BUFFER_BOUND;
+                *write_buf_size = size;
+            }
+        } else {
+            tls_panic_param(
+                "buffer :write option must be a boolean or integer");
+        }
+    }
+}
+
+/*============================================================================
  * SETUP TLS STREAM
  *============================================================================
  * Create and initialize a TLSStream object.
@@ -20,7 +162,8 @@
  *   ctx         - SSL_CTX for this connection
  *   is_server   - True for server-side connections
  *   owns_ctx    - True if we should free ctx when stream is GC'd
- *   buffer_size - Size for I/O buffers
+ *   read_buffer_size  - Size for read ahead/batching buffer (0 if disabled)
+ *   write_buffer_size - Size for write coalescing buffer (0 if disabled)
  *   tcp_nodelay - Whether to enable TCP_NODELAY (1=yes, 0=no, -1=default yes)
  *   track_handshake_time - Whether to record handshake timing (0=no, 1=yes)
  *
@@ -28,8 +171,10 @@
  *   Newly created TLSStream, ready for handshake
  */
 TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
-                             int is_server, int owns_ctx, int32_t buffer_size,
-                             int tcp_nodelay, int track_handshake_time) {
+                             int is_server, int owns_ctx,
+                             int32_t read_buffer_size,
+                             int32_t write_buffer_size, int tcp_nodelay,
+                             int track_handshake_time) {
     TLSStream *tls =
         (TLSStream *)janet_abstract(&tls_stream_type, sizeof(TLSStream));
     memset(tls, 0, sizeof(TLSStream));
@@ -50,11 +195,12 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
 
     /* Initialize TLS-specific fields */
     tls->ctx = ctx;
-    tls->owns_ctx = owns_ctx;
-    tls->is_server = is_server;
+    if (is_server) tls->flags |= JTLS_FLAG_SERVER;
+    if (owns_ctx) tls->flags |= JTLS_FLAG_OWNS_CTX;
     tls->transport = transport;
     tls->conn_state = TLS_CONN_INIT;
-    tls->buffer_size = buffer_size;
+    tls->read_buffer_size = read_buffer_size;
+    tls->write_buffer_size = write_buffer_size;
 
     /* Create SSL object */
     tls->ssl = SSL_new(ctx);
@@ -87,28 +233,67 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     /* Connect SSL to our custom BIO */
     SSL_set_bio(tls->ssl, tls->bio, tls->bio);
 
-    /* Enable read-ahead for better performance with non-blocking I/O.
-     * This tells OpenSSL to read more data than strictly needed,
-     * reducing the number of syscalls. */
-    SSL_set_read_ahead(tls->ssl, 1);
-
-    /* Allocate BIO read-ahead buffer.
-     * Use buffer_size if specified and reasonable, otherwise default to
-     * 128KB. Testing showed 128KB provides best balance of throughput and
-     * memory. Minimum is 16KB (one TLS record), maximum capped at 256KB. */
-    size_t bio_ahead_size = 131072; /* Default: 128KB (eight TLS records) */
-    if (buffer_size >= 16384 && buffer_size <= 262144) {
-        bio_ahead_size = (size_t)buffer_size;
-    }
-    tls->bio_ahead.capacity = bio_ahead_size;
-    tls->bio_ahead.data =
-        (unsigned char *)janet_malloc(tls->bio_ahead.capacity);
-    if (tls->bio_ahead.data) {
-        tls->bio_ahead.p = tls->bio_ahead.data;
-        tls->bio_ahead.pe = tls->bio_ahead.data; /* Empty initially */
+    /* Configure read-ahead buffer if enabled */
+    if (read_buffer_size > 0) {
+        SSL_set_read_ahead(tls->ssl, 1);
+        size_t plaintext_size = (size_t)read_buffer_size;
+        if (plaintext_size > MAX_TLS_BUFFER_SIZE) {
+            plaintext_size = MAX_TLS_BUFFER_SIZE;
+        }
+        size_t num_records = (plaintext_size + 16383) / 16384;
+        if (num_records == 0) num_records = 1;
+        size_t read_ahead_size = plaintext_size + num_records * 325;
+        if (read_ahead_size < 16709) {
+            read_ahead_size = 16709;
+        }
+#if JSEC_LIBRESSL
+        tls->bio_ahead.capacity = read_ahead_size;
+        tls->bio_ahead.data =
+            (unsigned char *)janet_malloc(tls->bio_ahead.capacity);
+        if (tls->bio_ahead.data) {
+            tls->bio_ahead.p = tls->bio_ahead.data;
+            tls->bio_ahead.pe = tls->bio_ahead.data;
+        } else {
+            tls->bio_ahead.capacity = 0;
+        }
+#else
+        SSL_set_default_read_buffer_len(tls->ssl, read_ahead_size);
+#endif
     } else {
-        /* Non-fatal: we'll just do direct reads without buffering */
+        SSL_set_read_ahead(tls->ssl, 0);
+#if JSEC_LIBRESSL
         tls->bio_ahead.capacity = 0;
+        tls->bio_ahead.data = NULL;
+        tls->bio_ahead.p = NULL;
+        tls->bio_ahead.pe = NULL;
+#endif
+    }
+
+    /* Configure write coalescing buffer if enabled */
+    if (write_buffer_size > 0) {
+        size_t target_size = (size_t)write_buffer_size;
+        if (target_size > JSEC_MAX_WRITE_BUFFER_BOUND) {
+            target_size = JSEC_MAX_WRITE_BUFFER_BOUND;
+        }
+        size_t num_records = (target_size + 16383) / 16384;
+        if (num_records == 0) num_records = 1;
+        size_t write_capacity = target_size + num_records * 325;
+        tls->write_buffer.data =
+            (unsigned char *)janet_malloc(write_capacity);
+        if (tls->write_buffer.data) {
+            tls->write_buffer.capacity = write_capacity;
+            tls->write_buffer.head = 0;
+            tls->write_buffer.tail = 0;
+        } else {
+            tls->write_buffer.capacity = 0;
+            tls->write_buffer.head = 0;
+            tls->write_buffer.tail = 0;
+        }
+    } else {
+        tls->write_buffer.data = NULL;
+        tls->write_buffer.capacity = 0;
+        tls->write_buffer.head = 0;
+        tls->write_buffer.tail = 0;
     }
 
     /* Set handshake mode */
@@ -138,16 +323,10 @@ TLSStream *jtls_setup_stream(JanetStream *transport, SSL_CTX *ctx,
     /* Handshake timing - only record if explicitly enabled.
      * Uses CLOCK_MONOTONIC which is fast (vDSO on Linux) and doesn't
      * suffer from time adjustments. */
-    tls->track_handshake_time = track_handshake_time;
     if (track_handshake_time) {
+        tls->flags |= JTLS_FLAG_TRACK_HANDSHAKE;
         clock_gettime(CLOCK_MONOTONIC, &tls->ts_connect);
-    } else {
-        tls->ts_connect.tv_sec = 0;
-        tls->ts_connect.tv_nsec = 0;
     }
-    /* Zero out handshake timestamp - will be set when handshake completes */
-    tls->ts_handshake.tv_sec = 0;
-    tls->ts_handshake.tv_nsec = 0;
 
     return tls;
 }

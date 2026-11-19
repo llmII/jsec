@@ -41,6 +41,7 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
     /* Create SSL object */
     session->ssl = SSL_new(ctx);
     if (!session->ssl) {
+        ERR_clear_error();
         janet_free(session);
         return NULL;
     }
@@ -55,13 +56,23 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
         if (session->rbio) BIO_free(session->rbio);
         if (session->wbio) BIO_free(session->wbio);
         SSL_free(session->ssl);
+        ERR_clear_error();
         janet_free(session);
         return NULL;
     }
 
-    /* Set non-blocking mode on BIOs */
-    BIO_set_nbio(session->rbio, 1);
-    BIO_set_nbio(session->wbio, 1);
+    /* Set non-blocking mode on BIOs. A memory BIO never blocks and
+     * reports the control as unhandled (0), so only a negative return
+     * is a real failure. */
+    if (BIO_set_nbio(session->rbio, 1) < 0 ||
+        BIO_set_nbio(session->wbio, 1) < 0) {
+        BIO_free(session->rbio);
+        BIO_free(session->wbio);
+        SSL_free(session->ssl);
+        ERR_clear_error();
+        janet_free(session);
+        return NULL;
+    }
 
     /* Attach BIOs to SSL - SSL takes ownership */
     SSL_set_bio(session->ssl, session->rbio, session->wbio);
@@ -71,7 +82,7 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
 
     session->state = DTLS_STATE_IDLE;
     session->last_activity = get_current_time();
-    session->cookie_verified = 0;
+    session->flags = 0;
     session->next = NULL;
 
     return session;
@@ -81,8 +92,11 @@ DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer) {
  * Free a DTLS session.
  * SSL_free also frees the BIOs since they're attached.
  */
-void dtls_session_free(DTLSSession *session) {
+void dtls_session_free(DTLSSession *session, int in_gc) {
     if (!session) return;
+
+    /* The flight timer must not touch the session after this point. */
+    dtls_flight_timer_disarm(&session->flight_timer, in_gc);
 
     if (session->ssl) {
         /* SSL_free frees the attached BIOs too */
@@ -99,12 +113,14 @@ void dtls_session_free(DTLSSession *session) {
  */
 
 /*
- * Look up a session by peer address.
+ * Look up a session by peer address, optionally returning bucket index.
  * Returns NULL if not found.
  */
-DTLSSession *dtls_server_get_session(DTLSServer *server,
-                                     const DTLSAddress *addr) {
+DTLSSession *dtls_server_get_session_bucket(DTLSServer *server,
+                                            const DTLSAddress *addr,
+                                            int *out_bucket) {
     int bucket = session_bucket(addr);
+    if (out_bucket) *out_bucket = bucket;
     DTLSSession *session = server->sessions[bucket];
 
     while (session) {
@@ -117,30 +133,77 @@ DTLSSession *dtls_server_get_session(DTLSServer *server,
     return NULL;
 }
 
+DTLSSession *dtls_server_get_session(DTLSServer *server,
+                                     const DTLSAddress *addr) {
+    return dtls_server_get_session_bucket(server, addr, NULL);
+}
+
 /*
- * Create a new session and add to server's table.
+ * Create a new session in a known bucket without duplicate lookup.
  * Returns the new session or NULL on failure.
  */
-DTLSSession *dtls_server_create_session(DTLSServer *server,
-                                        const DTLSAddress *addr) {
-    /* Check if session already exists */
-    DTLSSession *existing = dtls_server_get_session(server, addr);
-    if (existing) {
-        existing->last_activity = get_current_time();
-        return existing;
+DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
+                                                  const DTLSAddress *addr,
+                                                  int bucket) {
+    if (server->session_count >= server->max_sessions) {
+        dtls_server_cleanup_expired(server, get_current_time());
+        if (server->session_count >= server->max_sessions) {
+            DTLSSession **victim_link = NULL;
+            double victim_activity = 0.0;
+            for (int i = 0; i < DTLS_SESSION_TABLE_SIZE; i++) {
+                DTLSSession **pp = &server->sessions[i];
+                while (*pp) {
+                    DTLSSession *cur = *pp;
+                    if (cur->state == DTLS_STATE_IDLE ||
+                        cur->state == DTLS_STATE_HANDSHAKING) {
+                        if (!victim_link ||
+                            cur->last_activity < victim_activity) {
+                            victim_link = pp;
+                            victim_activity = cur->last_activity;
+                        }
+                    }
+                    pp = &cur->next;
+                }
+            }
+            if (!victim_link) {
+                return NULL;
+            }
+            DTLSSession *victim = *victim_link;
+            *victim_link = victim->next;
+            dtls_session_free(victim, 0);
+            server->session_count--;
+        }
     }
 
     /* Create new session */
     DTLSSession *session = dtls_session_new(server->ctx, addr);
     if (!session) return NULL;
 
+    jdtls_configure_session_mtu(session->ssl, server->link_mtu);
+
     /* Add to hash table (prepend to bucket) */
-    int bucket = session_bucket(addr);
     session->next = server->sessions[bucket];
     server->sessions[bucket] = session;
     server->session_count++;
 
     return session;
+}
+
+/*
+ * Create a new session and add to server's table.
+ * Returns the existing/new session or NULL on failure.
+ */
+DTLSSession *dtls_server_create_session(DTLSServer *server,
+                                        const DTLSAddress *addr) {
+    int bucket = 0;
+    DTLSSession *existing =
+        dtls_server_get_session_bucket(server, addr, &bucket);
+    if (existing) {
+        existing->last_activity = get_current_time();
+        return existing;
+    }
+
+    return dtls_server_create_session_in_bucket(server, addr, bucket);
 }
 
 /*
@@ -154,7 +217,7 @@ void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr) {
         DTLSSession *session = *pp;
         if (dtls_address_equal(&session->peer_addr, addr)) {
             *pp = session->next;
-            dtls_session_free(session);
+            dtls_session_free(session, 0);
             server->session_count--;
             return;
         }
@@ -167,6 +230,12 @@ void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr) {
  * Called periodically to clean up idle connections.
  */
 void dtls_server_cleanup_expired(DTLSServer *server, double now) {
+    if (server->session_count < server->max_sessions &&
+        server->last_cleanup > 0.0 && (now - server->last_cleanup) < 1.0) {
+        return;
+    }
+    server->last_cleanup = now;
+
     for (int i = 0; i < DTLS_SESSION_TABLE_SIZE; i++) {
         DTLSSession **pp = &server->sessions[i];
 
@@ -177,7 +246,7 @@ void dtls_server_cleanup_expired(DTLSServer *server, double now) {
             if (age > server->session_timeout) {
                 /* Remove expired session */
                 *pp = session->next;
-                dtls_session_free(session);
+                dtls_session_free(session, 0);
                 server->session_count--;
             } else {
                 pp = &session->next;

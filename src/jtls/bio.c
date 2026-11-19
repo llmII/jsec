@@ -51,6 +51,9 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 
     BIO_clear_retry_flags(bio);
 
+    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
+
+#if JSEC_LIBRESSL
     /* First, check if we have data in the read-ahead buffer */
     if (tls->bio_ahead.p < tls->bio_ahead.pe) {
         size_t avail = (size_t)(tls->bio_ahead.pe - tls->bio_ahead.p);
@@ -60,9 +63,6 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         return (int)count;
     }
 
-    /* Ahead buffer is empty - read from socket */
-    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-
     /* If request is small and we have a buffer, read ahead */
     if (tls->bio_ahead.data && (size_t)len < tls->bio_ahead.capacity) {
         /* Reset buffer pointers */
@@ -70,12 +70,11 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
         tls->bio_ahead.pe = tls->bio_ahead.data;
 
         /* Read as much as we can into the buffer */
-#ifdef JANET_WINDOWS
-        int n = recv(fd, (char *)tls->bio_ahead.data,
-                     (int)tls->bio_ahead.capacity, 0);
-#else
-        ssize_t n = read(fd, tls->bio_ahead.data, tls->bio_ahead.capacity);
-#endif
+        ssize_t n;
+        do {
+            n = (ssize_t)jsec_socket_read(fd, tls->bio_ahead.data,
+                                          tls->bio_ahead.capacity);
+        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 
         if (n > 0) {
             tls->bio_ahead.pe = tls->bio_ahead.data + n;
@@ -94,13 +93,13 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
             return -1;
         }
     }
-
-    /* No buffer or large request - read directly */
-#ifdef JANET_WINDOWS
-    int n = recv(fd, dst, len, 0);
-#else
-    ssize_t n = read(fd, dst, (size_t)len);
 #endif
+
+    /* Direct socket read into caller's destination buffer */
+    ssize_t n;
+    do {
+        n = (ssize_t)jsec_socket_read(fd, dst, len);
+    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 
     if (n > 0) {
         return (int)n;
@@ -118,9 +117,76 @@ static int jtls_bio_read(BIO *bio, char *dst, int len) {
 }
 
 /*============================================================================
+ * BIO FLUSH
+ *============================================================================
+ * Drain the bounded write buffer to the network socket.
+ *
+ * Tracks head and tail offsets: on partial sends, head advances with zero
+ * memmove overhead. When all bytes are transmitted (head == tail), both
+ * reset to 0.
+ *
+ * Returns:
+ *   1: All buffered data sent (or nothing buffered / unbuffered)
+ *   0: Incomplete flush due to EAGAIN / EWOULDBLOCK (BIO retry flag set)
+ *  -1: Socket error (errno preserved)
+ */
+int jtls_bio_flush(TLSStream *tls) {
+    if (!tls || !tls->transport || !tls->write_buffer.data ||
+        tls->write_buffer.capacity == 0) {
+        return 1;
+    }
+
+    if (tls->write_buffer.head == tls->write_buffer.tail) {
+        tls->write_buffer.head = 0;
+        tls->write_buffer.tail = 0;
+        return 1;
+    }
+
+    jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
+    while (tls->write_buffer.head < tls->write_buffer.tail) {
+        size_t to_send = tls->write_buffer.tail - tls->write_buffer.head;
+        ssize_t n;
+        do {
+            n = (ssize_t)jsec_socket_send(
+                fd,
+                (const char *)(tls->write_buffer.data +
+                               tls->write_buffer.head),
+                to_send);
+        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
+
+        if (n > 0) {
+            tls->write_buffer.head += (size_t)n;
+            if (tls->write_buffer.head == tls->write_buffer.tail) {
+                tls->write_buffer.head = 0;
+                tls->write_buffer.tail = 0;
+                return 1;
+            }
+        } else {
+            if (jsec_socket_errno == JSEC_EAGAIN ||
+                jsec_socket_errno == JSEC_EWOULDBLOCK) {
+                if (tls->bio) {
+                    BIO_set_retry_write(tls->bio);
+                }
+                return 0;
+            }
+            return -1;
+        }
+    }
+
+    tls->write_buffer.head = 0;
+    tls->write_buffer.tail = 0;
+    return 1;
+}
+
+/*============================================================================
  * BIO WRITE CALLBACK
  *============================================================================
  * Called by OpenSSL when it needs to write encrypted data to the network.
+ *
+ * Coalesces records into the bounded write buffer. When the buffer fills,
+ * it attempts to flush to the socket. If write buffering is disabled, or
+ * if a record exceeds the entire buffer capacity, writes go directly to
+ * the socket.
  *
  * Returns:
  *   > 0: Number of bytes written
@@ -136,13 +202,73 @@ static int jtls_bio_write(BIO *bio, const char *src, int len) {
 
     BIO_clear_retry_flags(bio);
 
+    /* Unbuffered mode and non-write operations (handshake, shutdown, close):
+     * direct socket write without record coalescing */
+    if (!tls->write_buffer.data || tls->write_buffer.capacity == 0 ||
+        JTLS_STATE_OP(&tls->write_state) != TLS_OP_WRITE) {
+        /* If write buffer still holds pending ciphertext from an earlier
+         * write, drain it before writing fresh data directly to socket */
+        if (tls->write_buffer.head < tls->write_buffer.tail) {
+            int flush_res = jtls_bio_flush(tls);
+            if (flush_res < 0) {
+                return -1;
+            }
+            if (flush_res == 0) {
+                BIO_set_retry_write(bio);
+                return -1;
+            }
+        }
+
+        jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
+        ssize_t n;
+        do {
+            n = (ssize_t)jsec_socket_send(fd, src, len);
+        } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
+
+        if (n > 0) {
+            return (int)n;
+        } else {
+            if (jsec_socket_errno == JSEC_EAGAIN ||
+                jsec_socket_errno == JSEC_EWOULDBLOCK) {
+                BIO_set_retry_write(bio);
+            }
+            return -1;
+        }
+    }
+
+    /* Buffered mode: if record doesn't fit in remaining capacity, flush
+     * pending data */
+    if (tls->write_buffer.tail + (size_t)len > tls->write_buffer.capacity) {
+        int flush_res = jtls_bio_flush(tls);
+        if (flush_res < 0) {
+            return -1;
+        }
+        if (flush_res == 0) {
+            /* Socket blocked: cannot drain buffer to make room */
+            BIO_set_retry_write(bio);
+            return -1;
+        }
+    }
+
+    /* If it fits in write_buffer, copy into buffer (zero memmove, coalescing
+     * records) */
+    if (tls->write_buffer.tail + (size_t)len <= tls->write_buffer.capacity) {
+        memcpy(tls->write_buffer.data + tls->write_buffer.tail, src,
+               (size_t)len);
+        tls->write_buffer.tail += (size_t)len;
+        return len;
+    }
+
+    /* Record alone exceeds write buffer capacity: write directly to socket */
     jsec_socket_t fd = (jsec_socket_t)tls->transport->handle;
-    ssize_t n = send(fd, src, len, MSG_NOSIGNAL);
+    ssize_t n;
+    do {
+        n = (ssize_t)jsec_socket_send(fd, src, len);
+    } while (n < 0 && jsec_socket_errno == JSEC_EINTR);
 
     if (n > 0) {
         return (int)n;
     } else {
-        /* Error - check if it's a retryable error */
         if (jsec_socket_errno == JSEC_EAGAIN ||
             jsec_socket_errno == JSEC_EWOULDBLOCK) {
             BIO_set_retry_write(bio);
@@ -166,13 +292,31 @@ static int jtls_bio_puts(BIO *bio, const char *src) {
  * Handle BIO control operations. Most are no-ops for socket BIOs.
  */
 static long jtls_bio_ctrl(BIO *bio, int cmd, long num, void *ptr) {
-    (void)bio;
     (void)num;
+    TLSStream *tls = (TLSStream *)BIO_get_data(bio);
 
     switch (cmd) {
         case BIO_CTRL_FLUSH:
-            /* No buffering, so flush is a no-op */
+            if (tls) {
+                int res = jtls_bio_flush(tls);
+                return res > 0 ? 1 : 0;
+            }
             return 1;
+
+        case BIO_CTRL_WPENDING:
+            if (tls && tls->write_buffer.data) {
+                return (long)(tls->write_buffer.tail -
+                              tls->write_buffer.head);
+            }
+            return 0;
+
+        case BIO_CTRL_PENDING:
+#if JSEC_LIBRESSL
+            if (tls && tls->bio_ahead.data) {
+                return (long)(tls->bio_ahead.pe - tls->bio_ahead.p);
+            }
+#endif
+            return 0;
 
         case BIO_CTRL_DUP:
             /* Allow duplication but don't copy state */

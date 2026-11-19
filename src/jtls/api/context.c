@@ -13,6 +13,27 @@
 #include "../internal.h"
 
 /*============================================================================
+ * HELPER: EXTRACT OCSP RESPONSE BYTES
+ *============================================================================
+ * Read a DER OCSP response option (byte string or buffer).
+ */
+static int extract_ocsp_response(Janet value, const unsigned char **out_data,
+                                 int32_t *out_len) {
+    if (janet_checktype(value, JANET_STRING)) {
+        const uint8_t *s = janet_unwrap_string(value);
+        *out_data = s;
+        *out_len = janet_string_length(s);
+        return 1;
+    } else if (janet_checktype(value, JANET_BUFFER)) {
+        JanetBuffer *b = janet_unwrap_buffer(value);
+        *out_data = b->data;
+        *out_len = b->count;
+        return 1;
+    }
+    return 0;
+}
+
+/*============================================================================
  * NEW-CONTEXT - Create a reusable TLS context
  *============================================================================
  */
@@ -41,6 +62,14 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
 
         if (has_cert && has_key) {
             is_server = 1;
+        } else {
+            Janet sni = janet_get(opts, janet_ckeywordv("sni"));
+            if (!janet_checktype(sni, JANET_NIL)) {
+                tls_panic_param(
+                    ":sni is server-side only (the server virtual-host "
+                    "map on tls/new-context); use :hostname for the "
+                    "client name");
+            }
         }
     }
 
@@ -56,7 +85,26 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
         ctx = jtls_create_server_ctx(cert, key, security_opts, alpn_opt,
                                      use_cache);
         if (!ctx) {
-            tls_panic_ssl("failed to create server context");
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to create server context: %s",
+                       jutils_cert_load_error());
+        }
+
+        /* A top-level :ocsp-response staples on this context and is the
+         * response per-name contexts fall back to when they carry none
+         * of their own */
+        Janet ocsp_resp = janet_get(opts, janet_ckeywordv("ocsp-response"));
+        if (!janet_checktype(ocsp_resp, JANET_NIL)) {
+            const unsigned char *resp_data = NULL;
+            int32_t resp_len = 0;
+            if (!extract_ocsp_response(ocsp_resp, &resp_data, &resp_len)) {
+                SSL_CTX_free(ctx);
+                tls_panic_config(":ocsp-response must be a string or buffer");
+            }
+            if (!jtls_store_ocsp_response(ctx, resp_data, resp_len)) {
+                SSL_CTX_free(ctx);
+                tls_panic_config("out of memory");
+            }
         }
 
         /* Handle SNI */
@@ -78,9 +126,33 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             data->hostnames = malloc(sizeof(char *) * (size_t)len);
             data->contexts = malloc(sizeof(SSL_CTX *) * (size_t)len);
 
+            int parent_ocsp_stapling = 0;
+            Janet parent_ocsp_opt =
+                janet_get(security_opts, janet_ckeywordv("ocsp-stapling"));
+            if (!janet_checktype(parent_ocsp_opt, JANET_NIL)) {
+                parent_ocsp_stapling = janet_truthy(parent_ocsp_opt);
+            }
+
             int idx = 0;
             for (int32_t i = 0; i < cap; i++) {
                 if (!janet_checktype(kvs[i].key, JANET_NIL)) {
+                    if (!janet_checktypes(kvs[i].key,
+                                          JANET_TFLAG_STRING |
+                                              JANET_TFLAG_KEYWORD |
+                                              JANET_TFLAG_SYMBOL)) {
+                        for (int j = 0; j < idx; j++) {
+                            free(data->hostnames[j]);
+                            SSL_CTX_free(data->contexts[j]);
+                        }
+                        free(data->hostnames);
+                        free(data->contexts);
+                        free(data);
+                        SSL_CTX_free(ctx);
+                        tls_panic_config(
+                            "sni map key must be a string, keyword, or "
+                            "symbol, got %v",
+                            kvs[i].key);
+                    }
                     const char *hostname =
                         (const char *)janet_unwrap_string(kvs[i].key);
                     Janet sub_opts = kvs[i].value;
@@ -93,9 +165,33 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                         janet_get(sub_opts, janet_ckeywordv("security"));
                     Janet sub_alpn =
                         janet_get(sub_opts, janet_ckeywordv("alpn"));
+                    Janet sub_ocsp_resp =
+                        janet_get(sub_opts, janet_ckeywordv("ocsp-response"));
 
+                    const unsigned char *resp_data = NULL;
+                    int32_t resp_len = 0;
+                    int has_ocsp_resp =
+                        !janet_checktype(sub_ocsp_resp, JANET_NIL);
+                    if (has_ocsp_resp &&
+                        !extract_ocsp_response(sub_ocsp_resp, &resp_data,
+                                               &resp_len)) {
+                        for (int j = 0; j < idx; j++) {
+                            free(data->hostnames[j]);
+                            SSL_CTX_free(data->contexts[j]);
+                        }
+                        free(data->hostnames);
+                        free(data->contexts);
+                        free(data);
+                        SSL_CTX_free(ctx);
+                        tls_panic_config(
+                            ":ocsp-response must be a string or buffer");
+                    }
+
+                    /* Each name keeps a context of its own: the shared
+                     * context cache would otherwise let one name's
+                     * staple and one parent's fallback leak to another */
                     SSL_CTX *sub_ctx = jtls_create_server_ctx(
-                        sub_cert, sub_key, sub_sec, sub_alpn, 1);
+                        sub_cert, sub_key, sub_sec, sub_alpn, 0);
                     if (!sub_ctx) {
                         for (int j = 0; j < idx; j++) {
                             free(data->hostnames[j]);
@@ -106,8 +202,37 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
                         free(data);
                         SSL_CTX_free(ctx);
                         tls_panic_config(
-                            "failed to create SNI context for %s", hostname);
+                            "failed to create SNI context for %s: %s",
+                            hostname, jutils_cert_load_error());
                     }
+
+                    if (has_ocsp_resp && !jtls_store_ocsp_response(
+                                             sub_ctx, resp_data, resp_len)) {
+                        SSL_CTX_free(sub_ctx);
+                        for (int j = 0; j < idx; j++) {
+                            free(data->hostnames[j]);
+                            SSL_CTX_free(data->contexts[j]);
+                        }
+                        free(data->hostnames);
+                        free(data->contexts);
+                        free(data);
+                        SSL_CTX_free(ctx);
+                        tls_panic_config("out of memory");
+                    }
+
+                    /* Stapling: a name's handshakes serve its own
+                     * response and otherwise the initial context's, so
+                     * the status arg carries the initial context; a name
+                     * without its own :ocsp-stapling setting inherits the
+                     * status callback from the parent options */
+                    Janet sub_ocsp_stapling =
+                        janet_get(sub_sec, janet_ckeywordv("ocsp-stapling"));
+                    if (janet_checktype(sub_ocsp_stapling, JANET_NIL) &&
+                        parent_ocsp_stapling) {
+                        SSL_CTX_set_tlsext_status_cb(sub_ctx,
+                                                     jtls_ocsp_status_cb);
+                    }
+                    SSL_CTX_set_tlsext_status_arg(sub_ctx, ctx);
 
                     data->hostnames[idx] = jsec_strdup(hostname);
                     data->contexts[idx] = sub_ctx;
@@ -128,6 +253,7 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             }
             SSL_CTX_set_tlsext_servername_callback(ctx, jtls_sni_callback);
             SSL_CTX_set_tlsext_servername_arg(ctx, data);
+            SSL_CTX_set_client_hello_cb(ctx, jtls_client_hello_cb, data);
         }
     } else {
         int verify = 1;
@@ -136,15 +262,50 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
             verify = janet_truthy(verify_opt);
         }
         Janet security_opts = janet_get(opts, janet_ckeywordv("security"));
+        Janet ca_opt = janet_get(opts, janet_ckeywordv("ca"));
 
-        ctx = jtls_create_client_ctx(verify, security_opts);
+        ctx = jtls_create_client_ctx(verify, security_opts, ca_opt, 0);
         if (!ctx) {
-            tls_panic_ssl("failed to create client context");
+            jsec_panic(JSEC_MOD_TLS, "SSL",
+                       "failed to create client context: %s",
+                       jutils_cert_load_error());
+        }
+
+        /* Trust specific certificate (:trusted-cert) */
+        Janet trusted_cert = janet_get(opts, janet_ckeywordv("trusted-cert"));
+        if (!janet_checktype(trusted_cert, JANET_NIL)) {
+            if (!jtls_add_trusted_cert(ctx, trusted_cert)) {
+                SSL_CTX_free(ctx);
+                jsec_panic(JSEC_MOD_TLS, "SSL",
+                           "failed to add trusted certificate: %s",
+                           jutils_cert_load_error());
+            }
+        }
+
+        /* Cipher suites (:ciphers) */
+        Janet ciphers = janet_get(opts, janet_ckeywordv("ciphers"));
+        if (!janet_checktype(ciphers, JANET_NIL)) {
+            if (!janet_checktype(ciphers, JANET_STRING)) {
+                SSL_CTX_free(ctx);
+                tls_panic_param("ciphers must be a string");
+            }
+            const char *cipher_str =
+                (const char *)janet_unwrap_string(ciphers);
+            if (SSL_CTX_set_cipher_list(ctx, cipher_str) != 1) {
+                SSL_CTX_free(ctx);
+                tls_panic_config("failed to set ciphers: %s", cipher_str);
+            }
+        }
+
+        /* Top-level :ocsp-stapling opts in status requests on the wire */
+        Janet ocsp_opt = janet_get(opts, janet_ckeywordv("ocsp-stapling"));
+        if (!janet_checktype(ocsp_opt, JANET_NIL) && janet_truthy(ocsp_opt)) {
+            SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp);
         }
     }
 
-    TLSContext *tls_ctx =
-        (TLSContext *)janet_abstract(&tls_context_type, sizeof(TLSContext));
+    TLSContext *tls_ctx = (TLSContext *)janet_abstract(
+        jutils_get_context_type(), sizeof(TLSContext));
     tls_ctx->ctx = ctx;
     tls_ctx->is_dtls = 0; /* This is a TLS context */
     return janet_wrap_abstract(tls_ctx);
@@ -156,31 +317,21 @@ Janet cfun_new_context(int32_t argc, Janet *argv) {
  */
 Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
-    TLSContext *tls_ctx = janet_getabstract(argv, 0, &tls_context_type);
+    TLSContext *tls_ctx =
+        janet_getabstract(argv, 0, jutils_get_context_type());
     JanetByteView response = janet_getbytes(argv, 1);
 
-    OCSPData *data = malloc(sizeof(OCSPData));
-    if (!data) tls_panic_config("out of memory");
-
-    data->len = response.len;
-    data->data = malloc((size_t)response.len);
-    if (!data->data) {
-        free(data);
+    if (!jtls_store_ocsp_response(tls_ctx->ctx, response.bytes,
+                                  response.len)) {
         tls_panic_config("out of memory");
     }
-    memcpy(data->data, response.bytes, (size_t)response.len);
 
-    OCSPData *old_data = SSL_CTX_get_ex_data(tls_ctx->ctx, ocsp_idx);
-    if (old_data) {
-        if (old_data->data) free(old_data->data);
-        free(old_data);
-    }
-
-    if (!SSL_CTX_set_ex_data(tls_ctx->ctx, ocsp_idx, data)) {
-        free(data->data);
-        free(data);
-        tls_panic_ssl("failed to set OCSP data");
-    }
+    /* Arm stapling with the store: setting the response must be enough
+     * for it to staple when a client requests status, with no separate
+     * context option. Contexts that never set a response keep no
+     * callback. */
+    SSL_CTX_set_tlsext_status_cb(tls_ctx->ctx, jtls_ocsp_status_cb);
+    SSL_CTX_set_tlsext_status_arg(tls_ctx->ctx, NULL);
 
     return janet_wrap_nil();
 }
@@ -201,10 +352,13 @@ Janet cfun_set_ocsp_response(int32_t argc, Janet *argv) {
  */
 Janet cfun_trust_cert(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 2);
-    TLSContext *tls_ctx = janet_getabstract(argv, 0, &tls_context_type);
+    TLSContext *tls_ctx =
+        janet_getabstract(argv, 0, jutils_get_context_type());
 
     if (!jtls_add_trusted_cert(tls_ctx->ctx, argv[1])) {
-        tls_panic_ssl("failed to add trusted certificate");
+        jsec_panic(JSEC_MOD_TLS, "SSL",
+                   "failed to add trusted certificate: %s",
+                   jutils_cert_load_error());
     }
 
     return janet_wrap_nil();

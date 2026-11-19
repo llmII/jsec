@@ -16,6 +16,9 @@
 
 (use assay)
 (import jsec/tls :as tls)
+(import jsec/dtls-stream :as dtls-stream)
+(import jsec/cert :as cert)
+(import jsec/crypto :as crypto)
 (import ../helpers :prefix "")
 
 # =============================================================================
@@ -53,6 +56,25 @@
       :aes-gcm (put opts :ciphersuites "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384")
       :chacha20 (put opts :ciphersuites "TLS_CHACHA20_POLY1305_SHA256"))
     opts))
+
+(defn- make-connected-udp-pair
+  ``Create two mutually connected UDP sockets.
+   dtls/upgrade needs a connected socket on both ends (it reads the peer
+   address with getpeername), and the datagram server exposes no per-peer
+   stream, so server-side stream tests drive a pair of connected sockets and
+   upgrade each end - one in server mode. Two throwaway listeners reserve
+   free ports; each outgoing socket then binds one of them and connects to
+   the other, so each socket is the other's peer. Returns [sock-a sock-b].``
+  []
+  (let [tmp1 (net/listen "127.0.0.1" 0 :datagram)
+        tmp2 (net/listen "127.0.0.1" 0 :datagram)
+        p1 (get (net/localname tmp1) 1)
+        p2 (get (net/localname tmp2) 1)]
+    (:close tmp1)
+    (:close tmp2)
+    (def a (net/connect "127.0.0.1" (string p2) :datagram "127.0.0.1" (string p1)))
+    (def b (net/connect "127.0.0.1" (string p1) :datagram "127.0.0.1" (string p2)))
+    [a b]))
 
 # =============================================================================
 # Suite Definition
@@ -116,6 +138,42 @@
                                    {:datagram true :verify true :trusted-cert (other-certs :cert)}))
           (:write client "test")))))
 
+  (def-test "flush returns the client itself and raises on closed client"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          server (tls/listen "127.0.0.1" 0
+                             {:datagram true :cert (certs :cert) :key (certs :key)})
+          [_ port] (:localname server)
+          done (ev/chan 1)]
+      (defer (:close server)
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def buf (buffer/new 1024))
+                (def addr (:recv-from server 1024 buf))
+                (when addr (:send-to server addr "Pong")))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def client (tls/connect "127.0.0.1" port {:datagram true :verify false}))
+        (:write client "Ping")
+        (assert (:read client 1024) "setup: client should receive the Pong reply")
+        (ev/take done)
+
+        # flush returns the client itself, matching net/flush
+        (assert (= client (:flush client))
+                ":flush must return the client itself like net/flush")
+        (assert (= client (dtls-stream/flush client))
+                "dtls-stream/flush must return the client itself")
+
+        # Negative shapes: a closed client raises [DTLS:IO]
+        (:close client true)
+        (assert-error (:flush client)
+                      "closed client :flush must raise [DTLS:IO]")
+        (assert-error (dtls-stream/flush client)
+                      "closed client dtls-stream/flush must raise [DTLS:IO]"))))
+
   (def-test "Server localname"
     (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
           server (tls/listen "127.0.0.1" 0
@@ -124,6 +182,56 @@
       (:close server)
       (assert (= host "127.0.0.1") "Host is localhost")
       (assert (> port 0) "Port was assigned")))
+
+  (def-test "Client localname and peername return [host port] tuples"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})
+          server (tls/listen "127.0.0.1" 0
+                             {:datagram true :cert (certs :cert) :key (certs :key)})
+          [_ port] (:localname server)
+          done (ev/chan 1)]
+      (defer (:close server)
+        (ev/go
+          (fn []
+            (try
+              (do
+                (def buf (buffer/new 1024))
+                (def addr (:recv-from server 1024 buf))
+                (when addr (:send-to server addr "Pong")))
+              ([_] nil))
+            (ev/give done true)))
+
+        (def client (tls/connect "127.0.0.1" port {:datagram true :verify false}))
+        (:write client "Ping")
+        (def reply (:read client 1024))
+        (assert reply "setup: client should receive the Pong reply")
+        (ev/take done)
+
+        # All four call shapes return [host port] tuples on an open client
+        (each [label f] [["method :localname" |(:localname $)]
+                         ["module localname" |(dtls-stream/localname $)]
+                         ["method :peername" |(:peername $)]
+                         ["module peername" |(dtls-stream/peername $)]]
+          (def v (f client))
+          (assert (tuple? v)
+                  (string/format "%s must return a [host port] tuple, got %q"
+                                 label v))
+          (def [h pnum] v)
+          (assert (= h "127.0.0.1")
+                  (string/format "%s host must be 127.0.0.1, got %q" label h))
+          (assert (number? pnum)
+                  (string/format "%s port must be a number, got %q" label pnum)))
+
+        # Closed client: both names raise [DTLS:IO] instead of returning nil
+        (:close client true)
+        (assert-error (:localname client)
+                      "closed client :localname must raise [DTLS:IO]")
+        (assert-error (:peername client)
+                      "closed client :peername must raise [DTLS:IO]")
+        (assert-error (dtls-stream/localname client)
+                      "closed client dtls-stream/localname must raise [DTLS:IO]")
+        (assert-error (dtls-stream/peername client)
+                      "closed client dtls-stream/peername must raise [DTLS:IO]"))))
 
   (def-test "DTLS verify-hostname option"
     (let [certs (generate-temp-certs {:common-name "localhost"})
@@ -155,6 +263,79 @@
 
       (ev/take done)
       (:close server)))
+
+  (def-test "DTLS :mtu option validation and wildcard/explicit MTU echo"
+    :timeout 20
+    (let [certs (generate-temp-certs {:common-name "127.0.0.1"})]
+      # Invalid :mtu values must raise [DTLS:PARAM] before socket work on
+      # dtls/listen, dtls/connect, and dtls/upgrade.
+      (each bad [0 -1 255 65536 1400.5 "1400" true (math/sqrt -1) math/inf]
+        (assert-error
+          (tls/listen "127.0.0.1" "0"
+                      {:datagram true :cert (certs :cert) :key (certs :key) :mtu bad})
+          (string/format "dtls/listen must reject invalid :mtu %q" bad))
+        (assert-error
+          (tls/connect "127.0.0.1" "9" {:datagram true :verify false :mtu bad})
+          (string/format "dtls/connect must reject invalid :mtu %q" bad))
+        (let [raw (net/connect "127.0.0.1" "9" :datagram)]
+          (defer (:close raw)
+            (assert-error
+              (dtls-stream/upgrade raw {:verify false :mtu bad})
+              (string/format "dtls/upgrade must reject invalid :mtu %q" bad)))))
+
+      # Wildcard bind (0.0.0.0) + explicit :mtu 1400 on dtls/listen & dtls/connect.
+      (let [server (tls/listen "0.0.0.0" "0"
+                               {:datagram true
+                                :cert (certs :cert)
+                                :key (certs :key)
+                                :mtu 1400})
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+        (defer (:close server)
+          (ev/go
+            (fn []
+              (def buf (buffer/new 1024))
+              (try
+                (ev/with-deadline 5
+                  (when-let [addr (:recv-from server 1024 buf)]
+                    (:send-to server addr "mtu-ok")))
+                ([_] nil))
+              (ev/give done true)))
+          (ev/sleep 0.1)
+          (def client (tls/connect "127.0.0.1" port
+                                   {:datagram true :verify false :mtu 1400}))
+          (defer (:close client true)
+            (:write client "Ping")
+            (def reply (:read client 1024 nil 5))
+            (assert (= (string reply) "mtu-ok") "DTLS explicit :mtu echo succeeds"))
+          (ev/take done)))
+
+      # Auto-resolved wildcard listen (0.0.0.0) + dtls/upgrade explicit :mtu 1400.
+      (let [server (tls/listen "0.0.0.0" "0"
+                               {:datagram true
+                                :cert (certs :cert)
+                                :key (certs :key)})
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+        (defer (:close server)
+          (ev/go
+            (fn []
+              (def buf (buffer/new 1024))
+              (try
+                (ev/with-deadline 5
+                  (when-let [addr (:recv-from server 1024 buf)]
+                    (:send-to server addr "upgrade-mtu-ok")))
+                ([_] nil))
+              (ev/give done true)))
+          (ev/sleep 0.1)
+          (def raw (net/connect "127.0.0.1" (string port) :datagram))
+          (def client (dtls-stream/upgrade raw {:verify false :mtu 1400}))
+          (defer (:close client true)
+            (:write client "Ping")
+            (def reply (:read client 1024 nil 5))
+            (assert (= (string reply) "upgrade-mtu-ok")
+                    "DTLS upgrade explicit :mtu echo succeeds"))
+          (ev/take done)))))
 
   # ===========================================================================
   # Matrix Tests - Comprehensive DTLS Testing
@@ -392,6 +573,178 @@
         (:write client "test")
         (:read client 1024)
         (:close client true)
+
+        (ev/take done)
+        (:close server)))
+
+    # -------------------------------------------------------------------------
+    # peer-cert - Export peer certificate DER after handshake
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert"
+      (let [server-opts (make-dtls-server-opts dtls-version cipher-group certs)
+            client-opts (make-dtls-client-opts verify-mode cipher-group certs)
+            server (tls/listen "127.0.0.1" 0 server-opts)
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (def buf (buffer/new 1024))
+                 (try
+                   (ev/with-deadline 5
+                     (when-let [addr (:recv-from server 1024 buf)]
+                       (:send-to server addr "Pong")))
+                   ([_] nil))
+                 (ev/give done true)))
+
+        (ev/sleep 0.2)
+
+        (def client (tls/connect "127.0.0.1" port client-opts))
+        (:write client "Ping")
+        (def reply (:read client 1024))
+        (assert (= (string reply) "Pong") "handshake completed via echo")
+
+        (let [peer-der (:peer-cert client)
+              fn-der (dtls-stream/get-peer-cert client)]
+          (assert (string? peer-der) ":peer-cert returns a string")
+          (assert (= peer-der fn-der) "method and function agree")
+          (assert (= peer-der (crypto/convert-cert (certs :cert) :der))
+                  "DER is byte-identical to the known test certificate")
+          (let [parsed (cert/parse (crypto/convert-cert peer-der :pem))
+                known (cert/parse (certs :cert))]
+            (assert (= (parsed :serial) (known :serial))
+                    "returned DER parses to the test certificate (serial)")
+            (assert (= (parsed :fingerprint-sha256) (known :fingerprint-sha256))
+                    "returned DER parses to the test certificate (fingerprint)")
+            (assert (= (get-in parsed [:subject :dn])
+                       (get-in known [:subject :dn]))
+                    "returned DER parses to the test certificate (subject)")))
+
+        (:close client true)
+        (ev/take done)
+        (:close server))
+
+      # Server side sees nil without client auth. The datagram server has no
+      # per-peer stream, so the server side rides dtls/upgrade in server mode
+      # over a connected UDP pair.
+      (let [pair (make-connected-udp-pair)
+            sock-s (pair 0)
+            sock-c (pair 1)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (try
+                   (do
+                     (def srv (dtls-stream/upgrade sock-s
+                                                   {:server true
+                                                    :cert (certs :cert)
+                                                    :key (certs :key)}))
+                     (ev/give done [:ok srv]))
+                   ([err] (ev/give done [:err err])))))
+
+        (def cli (dtls-stream/upgrade sock-c {:verify false}))
+        (def res (ev/take done))
+        (assert (= (res 0) :ok) (string "server-side upgrade: " (res 1)))
+        (def srv (res 1))
+        (assert (nil? (:peer-cert srv))
+                (string "server sees nil without client auth, got: " (:peer-cert srv)))
+        (:close cli true)
+        (:close srv true)))
+
+    # -------------------------------------------------------------------------
+    # peer-cert mTLS - Server side sees the client certificate DER
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert mTLS"
+      (let [client-certs (generate-certs-for-matrix
+                           @{:cert-type cert-type :common-name "client"})
+            pair (make-connected-udp-pair)
+            sock-s (pair 0)
+            sock-c (pair 1)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (try
+                   (do
+                     (def srv (dtls-stream/upgrade sock-s
+                                                   {:server true
+                                                    :cert (certs :cert)
+                                                    :key (certs :key)
+                                                    :verify true
+                                                    :trusted-cert (client-certs :cert)}))
+                     (ev/give done [:ok srv]))
+                   ([err] (ev/give done [:err err])))))
+
+        (def cli (dtls-stream/upgrade sock-c {:cert (client-certs :cert)
+                                              :key (client-certs :key)
+                                              :verify false}))
+        (def res (ev/take done))
+        (assert (= (res 0) :ok) (string "mTLS server-side upgrade: " (res 1)))
+        (def srv (res 1))
+
+        (def server-peer-cert (:peer-cert srv))
+        (assert (string? server-peer-cert)
+                (string "server received client cert DER, got: " server-peer-cert))
+        (assert (= server-peer-cert (crypto/convert-cert (client-certs :cert) :der))
+                "server-side DER is byte-identical to the client certificate")
+        (let [parsed (cert/parse (crypto/convert-cert server-peer-cert :pem))
+              known (cert/parse (client-certs :cert))]
+          (assert (= (parsed :serial) (known :serial))
+                  "server-side DER parses to the client certificate (serial)")
+          (assert (= (parsed :fingerprint-sha256) (known :fingerprint-sha256))
+                  "server-side DER parses to the client certificate (fingerprint)"))
+
+        (:close cli true)
+        (:close srv true)))
+
+    # -------------------------------------------------------------------------
+    # peer-cert failure shapes - Each failure path raises
+    # -------------------------------------------------------------------------
+    (def-test "peer-cert failure shapes"
+      (let [server-opts (make-dtls-server-opts dtls-version cipher-group certs)
+            client-opts (make-dtls-client-opts verify-mode cipher-group certs)
+            server (tls/listen "127.0.0.1" 0 server-opts)
+            [_ port] (:localname server)
+            done (ev/chan 1)]
+
+        (ev/go (fn []
+                 (def buf (buffer/new 1024))
+                 (try
+                   (ev/with-deadline 5
+                     (when-let [addr (:recv-from server 1024 buf)]
+                       (:send-to server addr "Pong")))
+                   ([_] nil))
+                 (ev/give done true)))
+
+        (ev/sleep 0.2)
+
+        # Arity mismatch raises
+        (assert-error (dtls-stream/get-peer-cert) "0-arity raises")
+        # Wrong argument type raises
+        (assert-error (dtls-stream/get-peer-cert "not-a-stream")
+                      "non-stream argument raises")
+        (assert-error (dtls-stream/get-peer-cert 42)
+                      "non-stream argument raises")
+        (assert-error (:peer-cert 42) "method dispatch on non-stream raises")
+
+        (let [raw (net/connect "127.0.0.1" (string port) :datagram)]
+          # Wrong abstract type: a raw net stream is not a jsec/dtls-client
+          (assert-error (dtls-stream/get-peer-cert raw)
+                        "raw net stream raises")
+          (:close raw))
+
+        (let [client (tls/connect "127.0.0.1" port client-opts)]
+          (:write client "Ping")
+          (:read client 1024)
+          (let [der (:peer-cert client)]
+            (assert (string? der) "live stream returns DER before close"))
+          # Arity mismatch raises with a live stream too
+          (assert-error (dtls-stream/get-peer-cert client client)
+                        "2-arity raises")
+          (:close client true)
+          # Closed stream raises
+          (assert-error (dtls-stream/get-peer-cert client)
+                        "closed stream raises")
+          (assert-error (:peer-cert client)
+                        "closed stream raises via method"))
 
         (ev/take done)
         (:close server)))))

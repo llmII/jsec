@@ -40,10 +40,6 @@ static int get_rsa_padding(const char *name, const EVP_MD **oaep_md) {
         *oaep_md = EVP_sha512();
         return RSA_PKCS1_OAEP_PADDING;
     }
-    if (strcmp(name, "pkcs1") == 0) {
-        return RSA_PKCS1_PADDING;
-    }
-
     return -1; /* Invalid */
 }
 
@@ -83,7 +79,7 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
     if (padding < 0) {
         crypto_panic_param(
             "unsupported padding mode: %s (supported: oaep-sha256, "
-            "oaep-sha1, oaep-sha384, oaep-sha512, pkcs1)",
+            "oaep-sha384, oaep-sha512, oaep-sha1)",
             padding_name);
     }
 
@@ -156,31 +152,26 @@ Janet cfun_rsa_encrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Allocate output buffer */
-    uint8_t *outbuf = janet_malloc(outlen);
-    if (!outbuf) {
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        crypto_panic_resource("out of memory");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
+    uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Encrypt */
     if (EVP_PKEY_encrypt(ctx, outbuf, &outlen, plaintext.bytes,
                          plaintext.len) <= 0) {
-        janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         crypto_panic_ssl(
             "encryption failed (plaintext may be too large for key size)");
     }
 
-    Janet result = janet_stringv(outbuf, (int32_t)outlen);
+    janet_string_head(outbuf)->length = (int32_t)outlen;
+    outbuf[outlen] = 0;
 
-    janet_free(outbuf);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
-    return result;
+    return janet_wrap_string(janet_string_end(outbuf));
 }
 
 /*
@@ -217,7 +208,10 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
     const EVP_MD *oaep_md = NULL;
     int padding = get_rsa_padding(padding_name, &oaep_md);
     if (padding < 0) {
-        crypto_panic_param("unsupported padding mode: %s", padding_name);
+        crypto_panic_param(
+            "unsupported padding mode: %s (supported: oaep-sha256, "
+            "oaep-sha384, oaep-sha512, oaep-sha1)",
+            padding_name);
     }
 
     /* Load private key */
@@ -282,31 +276,26 @@ Janet cfun_rsa_decrypt(int32_t argc, Janet *argv) {
         crypto_panic_ssl("failed to determine output size");
     }
 
-    /* Allocate output buffer */
-    uint8_t *outbuf = janet_malloc(outlen);
-    if (!outbuf) {
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        crypto_panic_resource("out of memory");
-    }
+    /* Write directly into Janet string memory - no intermediate buffer copy
+     */
+    uint8_t *outbuf = janet_string_begin((int32_t)outlen);
 
     /* Decrypt */
     if (EVP_PKEY_decrypt(ctx, outbuf, &outlen, ciphertext.bytes,
                          ciphertext.len) <= 0) {
-        janet_free(outbuf);
         EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         crypto_panic_ssl("decryption failed (wrong key, corrupted data, or "
                          "padding mismatch)");
     }
 
-    Janet result = janet_stringv(outbuf, (int32_t)outlen);
+    janet_string_head(outbuf)->length = (int32_t)outlen;
+    outbuf[outlen] = 0;
 
-    janet_free(outbuf);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
-    return result;
+    return janet_wrap_string(janet_string_end(outbuf));
 }
 
 /*
@@ -378,11 +367,11 @@ Janet cfun_rsa_max_plaintext(int32_t argc, Janet *argv) {
     } else if (strcmp(padding_name, "oaep-sha512") == 0) {
         /* OAEP overhead = 2 * 64 + 2 = 130 bytes */
         max_plaintext = key_size - 130;
-    } else if (strcmp(padding_name, "pkcs1") == 0) {
-        /* PKCS#1 v1.5 overhead = 11 bytes */
-        max_plaintext = key_size - 11;
     } else {
-        crypto_panic_param("unsupported padding mode: %s", padding_name);
+        crypto_panic_param(
+            "unsupported padding mode: %s (supported: oaep-sha256, "
+            "oaep-sha384, oaep-sha512, oaep-sha1)",
+            padding_name);
     }
 
     if (max_plaintext < 0) max_plaintext = 0;

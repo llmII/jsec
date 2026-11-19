@@ -21,6 +21,16 @@
 extern Janet cfun_cert_verify_chain(int32_t argc, Janet *argv);
 extern Janet cfun_cert_build_chain(int32_t argc, Janet *argv);
 
+/* Free one self-signed builder's OpenSSL state (NULL-safe) before an
+ * early raise. */
+static void self_signed_cleanup(X509 *x509, EVP_PKEY *pkey, BIO *cert_bio,
+                                BIO *key_bio) {
+    if (x509) X509_free(x509);
+    if (pkey) EVP_PKEY_free(pkey);
+    if (cert_bio) BIO_free(cert_bio);
+    if (key_bio) BIO_free(key_bio);
+}
+
 /* Generate self-signed certificate
  * Returns a struct {:cert "PEM..." :key "PEM..."}
  * Options:
@@ -148,8 +158,9 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2);                        /* Version 3 */
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
+    X509_set_version(x509, 2); /* Version 3 */
+    /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
+    if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
@@ -170,62 +181,40 @@ static Janet cfun_generate_self_signed_cert(int32_t argc, Janet *argv) {
 
     X509_EXTENSION *ext;
 
-    /* Basic Constraints */
+    /* Basic Constraints - a failing build or add raises naming the
+     * extension instead of silently dropping it */
     ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_basic_constraints,
                               "critical,CA:TRUE");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add basicConstraints extension");
     }
+    X509_EXTENSION_free(ext);
 
     /* Key Usage */
     ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_key_usage,
                               "digitalSignature,keyCertSign,cRLSign");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add keyUsage extension");
     }
+    X509_EXTENSION_free(ext);
 
-    /* Subject Alternative Name (SAN) - Required for modern TLS hostname
-     * verification We add both DNS and IP entries for the common name, as it
-     * might be either */
-    {
-        char san_value[512];
-        /* Check if cn looks like an IP address (contains only digits and dots
-         * for IPv4) */
-        int is_ip = 1;
-        for (const char *p = cn; *p; p++) {
-            if (*p != '.' && (*p < '0' || *p > '9')) {
-                is_ip = 0;
-                break;
-            }
-        }
-        /* Also check for IPv6 (contains colons) */
-        if (!is_ip) {
-            is_ip = (strchr(cn, ':') != NULL);
-        }
-
-        if (is_ip) {
-            snprintf(san_value, sizeof(san_value), "IP:%s", cn);
-        } else {
-            snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
-        }
-
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-                                  san_value);
-        if (ext) {
-            X509_add_ext(x509, ext, -1);
-            X509_EXTENSION_free(ext);
-        }
-    }
+    /* Subject Alternative Name (SAN) - the common name becomes exactly one
+     * literal entry (GENERAL_NAMES, never an X509V3 config splice) */
+    if (!jutils_add_common_name_san(x509, cn)) goto cleanup;
 
     /* Subject Key Identifier */
     ext =
         X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add subjectKeyIdentifier extension");
     }
+    X509_EXTENSION_free(ext);
 
     /* Ed25519/Ed448 don't use a digest, pass NULL; others use SHA256 */
     const EVP_MD *md = (pkey_type == EVP_PKEY_ED25519) ? NULL : EVP_sha256();
@@ -337,8 +326,9 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
     x509 = X509_new();
     if (!x509) goto cleanup;
 
-    X509_set_version(x509, 2);                        /* Version 3 */
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1); /* Serial 1 */
+    X509_set_version(x509, 2); /* Version 3 */
+    /* Fresh random serial, at least 64 bits of entropy (was hardcoded 1) */
+    if (!jutils_set_random_serial(x509)) goto cleanup;
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), (long)60 * 60 * 24 * days);
     X509_set_pubkey(x509, pkey);
@@ -359,59 +349,45 @@ static Janet cfun_generate_self_signed_from_key(int32_t argc, Janet *argv) {
 
     X509_EXTENSION *ext;
 
-    /* Basic Constraints */
+    /* Basic Constraints - a failing build or add raises naming the
+     * extension instead of silently dropping it */
     ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_basic_constraints,
                               "critical,CA:TRUE");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add basicConstraints extension");
     }
+    X509_EXTENSION_free(ext);
 
     /* Key Usage */
     ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_key_usage,
                               "digitalSignature,keyCertSign,cRLSign");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add keyUsage extension");
     }
+    X509_EXTENSION_free(ext);
 
-    /* Subject Alternative Name (SAN) */
-    {
-        char san_value[512];
-        int is_ip = 1;
-        for (const char *p = cn; *p; p++) {
-            if (*p != '.' && (*p < '0' || *p > '9')) {
-                is_ip = 0;
-                break;
-            }
-        }
-        if (!is_ip) {
-            is_ip = (strchr(cn, ':') != NULL);
-        }
-
-        if (is_ip) {
-            snprintf(san_value, sizeof(san_value), "IP:%s", cn);
-        } else {
-            snprintf(san_value, sizeof(san_value), "DNS:%s", cn);
-        }
-
-        ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-                                  san_value);
-        if (ext) {
-            X509_add_ext(x509, ext, -1);
-            X509_EXTENSION_free(ext);
-        }
-    }
+    /* Subject Alternative Name (SAN) - the common name becomes exactly one
+     * literal entry (GENERAL_NAMES, never an X509V3 config splice) */
+    if (!jutils_add_common_name_san(x509, cn)) goto cleanup;
 
     /* Subject Key Identifier */
     ext =
         X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_key_identifier, "hash");
-    if (ext) {
-        X509_add_ext(x509, ext, -1);
-        X509_EXTENSION_free(ext);
+    if (!ext || !X509_add_ext(x509, ext, -1)) {
+        if (ext) X509_EXTENSION_free(ext);
+        self_signed_cleanup(x509, pkey, cert_bio, key_bio);
+        cert_panic_ssl("failed to add subjectKeyIdentifier extension");
     }
+    X509_EXTENSION_free(ext);
 
-    if (!X509_sign(x509, pkey, EVP_sha256())) goto cleanup;
+    /* Ed25519 is a pure signature scheme and takes no digest */
+    const EVP_MD *from_key_md =
+        (EVP_PKEY_base_id(pkey) == EVP_PKEY_ED25519) ? NULL : EVP_sha256();
+    if (!X509_sign(x509, pkey, from_key_md)) goto cleanup;
 
     /* Write to PEM */
     cert_bio = BIO_new(BIO_s_mem());
@@ -447,11 +423,15 @@ cleanup:
 /* Helper: Format serial number as hex string with colons */
 static Janet format_serial(ASN1_INTEGER *serial) {
     BIGNUM *bn = ASN1_INTEGER_to_BN(serial, NULL);
-    if (!bn) return janet_wrap_nil();
+    if (!bn) {
+        cert_panic_parse("failed to convert certificate serial number");
+    }
 
     char *hex = BN_bn2hex(bn);
     BN_free(bn);
-    if (!hex) return janet_wrap_nil();
+    if (!hex) {
+        cert_panic_parse("failed to convert certificate serial number");
+    }
 
     /* Format with colons (AB:CD:EF...) */
     size_t hex_len = strlen(hex);
@@ -459,7 +439,7 @@ static Janet format_serial(ASN1_INTEGER *serial) {
     char *result = janet_smalloc(result_len + 1);
     if (!result) {
         OPENSSL_free(hex);
-        return janet_wrap_nil();
+        cert_panic_resource("failed to format certificate serial number");
     }
 
     size_t j = 0;
@@ -582,7 +562,8 @@ static int64_t asn1_time_to_unix(const ASN1_TIME *time) {
     memset(&t, 0, sizeof(t));
 
     if (ASN1_TIME_to_tm(time, &t) != 1) {
-        return 0;
+        janet_panicf("[CERT:PARSE] failed to convert certificate validity "
+                     "time");
     }
 
     /* Convert to Unix timestamp - portable implementation */
@@ -615,9 +596,18 @@ static int64_t asn1_time_to_unix(const ASN1_TIME *time) {
 
 /* Helper: Extract Subject Alternative Names */
 static Janet extract_san(X509 *cert) {
+    /* Absent and undecodable are different outcomes: absent is omitted,
+     * undecodable raises */
+    if (X509_get_ext_by_NID(cert, NID_subject_alt_name, -1) < 0) {
+        return janet_wrap_nil();
+    }
     GENERAL_NAMES *names =
         X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
-    if (!names) return janet_wrap_nil();
+    if (!names) {
+        X509_free(cert);
+        cert_panic_parse(
+            "failed to decode subject alternative name extension");
+    }
 
     int count = sk_GENERAL_NAME_num(names);
     JanetArray *arr = janet_array(count);
@@ -664,6 +654,14 @@ static Janet extract_san(X509 *cert) {
                              ip->data[12], ip->data[13], ip->data[14],
                              ip->data[15]);
                     janet_array_push(arr, janet_cstringv(buf));
+                } else {
+                    int bad_len = ip->length;
+                    GENERAL_NAMES_free(names);
+                    X509_free(cert);
+                    janet_panicf("[CERT:PARSE] subject alternative name "
+                                 "holds an IP address entry of length %d "
+                                 "that cannot be represented",
+                                 bad_len);
                 }
                 break;
             }
@@ -678,9 +676,15 @@ static Janet extract_san(X509 *cert) {
 
 /* Helper: Extract key usage bits */
 static Janet extract_key_usage(X509 *cert) {
+    if (X509_get_ext_by_NID(cert, NID_key_usage, -1) < 0) {
+        return janet_wrap_nil();
+    }
     ASN1_BIT_STRING *usage =
         X509_get_ext_d2i(cert, NID_key_usage, NULL, NULL);
-    if (!usage) return janet_wrap_nil();
+    if (!usage) {
+        X509_free(cert);
+        cert_panic_parse("failed to decode key usage extension");
+    }
 
     JanetArray *arr = janet_array(9);
 
@@ -709,9 +713,15 @@ static Janet extract_key_usage(X509 *cert) {
 
 /* Helper: Extract extended key usage */
 static Janet extract_ext_key_usage(X509 *cert) {
+    if (X509_get_ext_by_NID(cert, NID_ext_key_usage, -1) < 0) {
+        return janet_wrap_nil();
+    }
     EXTENDED_KEY_USAGE *eku =
         X509_get_ext_d2i(cert, NID_ext_key_usage, NULL, NULL);
-    if (!eku) return janet_wrap_nil();
+    if (!eku) {
+        X509_free(cert);
+        cert_panic_parse("failed to decode extended key usage extension");
+    }
 
     int count = sk_ASN1_OBJECT_num(eku);
     JanetArray *arr = janet_array(count);
@@ -832,12 +842,16 @@ static Janet calc_fingerprint(X509 *cert, const EVP_MD *md) {
     unsigned int digest_len;
 
     if (!X509_digest(cert, md, digest, &digest_len)) {
-        return janet_wrap_nil();
+        X509_free(cert);
+        cert_panic_ssl("failed to compute certificate fingerprint");
     }
 
     /* Format as hex with colons */
     char *result = janet_smalloc((size_t)digest_len * 3);
-    if (!result) return janet_wrap_nil();
+    if (!result) {
+        X509_free(cert);
+        cert_panic_resource("failed to format certificate fingerprint");
+    }
 
     for (unsigned int i = 0; i < digest_len; i++) {
         snprintf(result + (size_t)i * 3, 4, "%02X%s", digest[i],
@@ -1082,11 +1096,17 @@ static Janet cfun_verify_signature(int32_t argc, Janet *argv) {
         cert_panic_ssl("failed to get issuer public key");
     }
 
-    /* Verify signature */
+    /* Verify signature: 1 valid, 0 well-formed invalid signature,
+     * negative a verification error that must raise, never fold into
+     * the false verdict */
     int result = X509_verify(cert, pkey);
 
     EVP_PKEY_free(pkey);
     X509_free(cert);
+
+    if (result < 0) {
+        cert_panic_ssl("failed to evaluate certificate signature");
+    }
 
     return janet_wrap_boolean(result == 1);
 }

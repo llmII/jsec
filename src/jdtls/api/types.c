@@ -12,12 +12,18 @@ static int dtls_client_gc(void *p, size_t s) {
     (void)s;
     DTLSClient *client = (DTLSClient *)p;
 
+    /* The flight timer must not touch the client after this point.
+     * GC finalizers cannot schedule and may run after the teardown
+     * sweep has freed the helper fiber, so the disarm only marks the
+     * arm canceled and the wake step retires it. */
+    dtls_flight_timer_disarm(&client->flight_timer, 1);
+
     if (client->ssl) {
         SSL_free(client->ssl);
         client->ssl = NULL;
     }
     /* Only free ctx if we own it (not from a shared DTLSContext) */
-    if (client->ctx && client->owns_ctx) {
+    if (client->ctx && (client->flags & JDTLS_CLIENT_OWNS_CTX)) {
         SSL_CTX_free(client->ctx);
         client->ctx = NULL;
     }
@@ -42,6 +48,7 @@ const JanetMethod dtls_client_methods[] = {
     {"read", cfun_dtls_read},
     {"chunk", cfun_dtls_chunk},
     {"write", cfun_dtls_write},
+    {"flush", cfun_dtls_flush},
     {"close", cfun_dtls_close},
     {"shutdown", cfun_dtls_shutdown},
     {"version", cfun_dtls_get_version},
@@ -50,6 +57,7 @@ const JanetMethod dtls_client_methods[] = {
     {"connection-info", cfun_dtls_get_connection_info},
     {"session-reused?", cfun_dtls_session_reused},
     {"session", cfun_dtls_get_session},
+    {"peer-cert", cfun_dtls_get_peer_cert},
     {"set-session", cfun_dtls_set_session},
     {"localname", cfun_dtls_localname},
     {"peername", cfun_dtls_peername},

@@ -41,8 +41,8 @@ X509_REQ *ca_pem_to_csr(Janet pem) {
 }
 
 /* Parse SAN entries from Janet array */
-static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
-    if (!san_arr || san_arr->count == 0) return;
+static int add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
+    if (!san_arr || san_arr->count == 0) return 1;
 
     JanetBuffer *san_buf = janet_buffer(256);
 
@@ -51,14 +51,103 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
             janet_buffer_push_cstring(san_buf, ",");
         }
         const char *entry = janet_to_string_or_keyword(san_arr->data[i]);
+        if (!entry) {
+            return -1;
+        }
         janet_buffer_push_cstring(san_buf, entry);
     }
 
     /* Null-terminate */
     janet_buffer_push_u8(san_buf, 0);
 
-    ca_add_extension(cert, issuer, NID_subject_alt_name,
-                     (const char *)san_buf->data);
+    return ca_add_extension(cert, issuer, NID_subject_alt_name,
+                            (const char *)san_buf->data);
+}
+
+static void strip_extension(X509 *cert, int nid) {
+    int idx;
+    while ((idx = X509_get_ext_by_NID(cert, nid, -1)) >= 0) {
+        X509_EXTENSION *old = X509_delete_ext(cert, idx);
+        X509_EXTENSION_free(old);
+    }
+}
+
+/* True when the Unix timestamp in seconds can be carried by an ASN1_TIME. */
+static int unix_time_fits_asn1(time_t ts) {
+    ASN1_TIME *t = ASN1_TIME_set(NULL, ts);
+    if (!t) {
+        return 0;
+    }
+    ASN1_TIME_free(t);
+    return 1;
+}
+
+/* Resolve the requested validity window from :not-before / :not-after (Unix
+ * timestamps in seconds) and :days-valid. Returns 1 with begin/end set when
+ * either option was given, 0 when the caller should stamp the default
+ * signing-time window. A timestamp pair that does not fit an ASN1_TIME and a
+ * window whose end is not later than its start raise [CA:PARAM] before
+ * anything is issued. */
+static int ca_resolve_validity_window(Janet opts, int days_valid,
+                                      time_t *begin, time_t *end) {
+    int has_begin = 0;
+    int has_end = 0;
+    time_t b = 0;
+    time_t e = 0;
+
+    if (ca_opts_valid(opts)) {
+        Janet v = ca_opts_get(opts, "not-before");
+        if (!janet_checktype(v, JANET_NIL)) {
+            if (!janet_checkint64(v)) {
+                ca_panic_param(
+                    ":not-before must be an integer Unix timestamp");
+            }
+            b = (time_t)janet_unwrap_s64(v);
+            has_begin = 1;
+        }
+        v = ca_opts_get(opts, "not-after");
+        if (!janet_checktype(v, JANET_NIL)) {
+            if (!janet_checkint64(v)) {
+                ca_panic_param(
+                    ":not-after must be an integer Unix timestamp");
+            }
+            e = (time_t)janet_unwrap_s64(v);
+            has_end = 1;
+        }
+    }
+
+    if (!has_begin && !has_end) {
+        return 0;
+    }
+    if (!has_begin) {
+        b = time(NULL);
+    }
+    if (!has_end) {
+        e = b + (time_t)days_valid * 24 * 60 * 60;
+    }
+    if (e <= b) {
+        ca_panic_param(":not-after must be later than :not-before");
+    }
+    if (!unix_time_fits_asn1(b) || !unix_time_fits_asn1(e)) {
+        ca_panic_param("validity window timestamp out of range");
+    }
+    *begin = b;
+    *end = e;
+    return 1;
+}
+
+/* Stamp the resolved validity window onto the certificate. Returns 0 on
+ * OpenSSL failure, leaving the error queue to the caller's raise. */
+static int ca_set_validity_window(X509 *cert, time_t begin, time_t end) {
+    ASN1_TIME *nb = ASN1_TIME_set(NULL, begin);
+    ASN1_TIME *na = ASN1_TIME_set(NULL, end);
+    int ok = 0;
+    if (nb && na) {
+        ok = X509_set1_notBefore(cert, nb) && X509_set1_notAfter(cert, na);
+    }
+    ASN1_TIME_free(nb);
+    ASN1_TIME_free(na);
+    return ok;
 }
 
 /*
@@ -72,9 +161,13 @@ static void add_san_entries(X509 *cert, X509 *issuer, JanetArray *san_arr) {
     "(:sign-csr ca csr-pem &opt opts) or (ca/sign ca csr-pem &opt opts)\n\n" \
     "Sign a Certificate Signing Request (CSR) to issue a certificate.\n\n"   \
     "Options:\n"                                                             \
-    "  :days-valid <number>      - Validity period in days (default: 365)\n" \
-    "  :not-before <time>        - Custom start time\n"                      \
-    "  :not-after <time>         - Custom end time\n"                        \
+    "  :days-valid <number>      - Validity period in days (default: 365;\n" \
+    "                              :not-before and :not-after win)\n"        \
+    "  :not-before <time>        - Custom start time (Unix timestamp\n"      \
+    "                              seconds)\n"                               \
+    "  :not-after <time>         - Custom end time (Unix timestamp\n"        \
+    "                              seconds; end must be later than\n"        \
+    "                              start)\n"                                 \
     "  :serial <number>          - Override serial (default: "               \
     "auto-increment)\n"                                                      \
     "  :copy-extensions <bool>   - Copy extensions from CSR (default: "      \
@@ -100,6 +193,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     const char *extended_key_usage = NULL;
     JanetArray *san_arr = NULL;
     const char *basic_constraints = "CA:FALSE";
+    time_t window_begin = 0;
+    time_t window_end = 0;
+    int custom_window = 0;
 
     if (ca_opts_valid(opts)) {
         Janet v = ca_opts_get(opts, "days-valid");
@@ -120,11 +216,18 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             key_usage = janet_to_string_or_keyword(v);
+            if (!key_usage) {
+                ca_panic_param(":key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "extended-key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             extended_key_usage = janet_to_string_or_keyword(v);
+            if (!extended_key_usage) {
+                ca_panic_param(
+                    ":extended-key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "san");
@@ -143,8 +246,15 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "basic-constraints");
         if (!janet_checktype(v, JANET_NIL)) {
             basic_constraints = janet_to_string_or_keyword(v);
+            if (!basic_constraints) {
+                ca_panic_param(
+                    ":basic-constraints must be a string or keyword");
+            }
         }
     }
+
+    custom_window = ca_resolve_validity_window(opts, days_valid,
+                                               &window_begin, &window_end);
 
     /* Load CSR */
     X509_REQ *csr = ca_pem_to_csr(csr_pem);
@@ -171,27 +281,79 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Set version to v3 */
-    X509_set_version(cert, 2);
-
-    /* Set serial number */
-    if (serial < 0) {
-        serial = ca_next_serial(ca);
+    if (!X509_set_version(cert, 2)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set certificate version");
     }
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
 
-    /* Set validity */
-    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert),
-                    (long)days_valid * 24 * 60 * 60);
+    /* Set serial number: explicit :serial override, else fresh random of at
+     * least 64 bits of entropy (issuance no longer walks the counter) */
+    if (serial < 0) {
+        if (!jutils_set_random_serial(cert)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set random serial");
+        }
+    } else {
+        if (!ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set serial number");
+        }
+    }
+
+    /* Set validity: the :not-before / :not-after window when requested,
+     * else the signing time through :days-valid seconds */
+    if (custom_window) {
+        if (!ca_set_validity_window(cert, window_begin, window_end)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set certificate validity window");
+        }
+    } else {
+        if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set notBefore");
+        }
+        if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                             (long)days_valid * 24 * 60 * 60)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to set notAfter");
+        }
+    }
 
     /* Copy subject from CSR */
-    X509_set_subject_name(cert, X509_REQ_get_subject_name(csr));
+    if (!X509_set_subject_name(cert, X509_REQ_get_subject_name(csr))) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set subject name");
+    }
 
     /* Set issuer from CA */
-    X509_set_issuer_name(cert, X509_get_subject_name(ca->cert));
+    if (!X509_set_issuer_name(cert, X509_get_subject_name(ca->cert))) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set issuer name");
+    }
 
     /* Set public key from CSR */
-    X509_set_pubkey(cert, csr_key);
+    if (!X509_set_pubkey(cert, csr_key)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to set public key");
+    }
 
     /* Copy extensions from CSR if requested */
     if (copy_extensions) {
@@ -199,6 +361,9 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
         if (exts) {
             for (int i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
                 X509_EXTENSION *ext = sk_X509_EXTENSION_value(exts, i);
+                int nid = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
+                if (nid != NID_subject_alt_name && nid != NID_ext_key_usage)
+                    continue;
                 X509_add_ext(cert, ext, -1);
             }
             sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
@@ -206,30 +371,79 @@ Janet cfun_ca_sign_csr(int32_t argc, Janet *argv) {
     }
 
     /* Add standard extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints,
-                     basic_constraints);
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    strip_extension(cert, NID_basic_constraints);
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                          basic_constraints)) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    strip_extension(cert, NID_subject_key_identifier);
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    strip_extension(cert, NID_authority_key_identifier);
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(csr_key);
+        X509_REQ_free(csr);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
     /* Add key usage if specified */
+    strip_extension(cert, NID_key_usage);
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
-        /* Default for end-entity cert */
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        /* Default for end-entity cert: keyEncipherment is meaningless for
+         * EC keys (RFC 5480) */
+        const char *default_ku = (EVP_PKEY_base_id(csr_key) == EVP_PKEY_EC)
+                                     ? "digitalSignature"
+                                     : "digitalSignature,keyEncipherment";
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Add extended key usage if specified */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        strip_extension(cert, NID_ext_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
     /* Add SAN if specified */
     if (san_arr && san_arr->count > 0) {
-        add_san_entries(cert, ca->cert, san_arr);
+        strip_extension(cert, NID_subject_alt_name);
+        int san_rc = add_san_entries(cert, ca->cert, san_arr);
+        if (san_rc <= 0) {
+            X509_free(cert);
+            EVP_PKEY_free(csr_key);
+            X509_REQ_free(csr);
+            if (san_rc < 0) {
+                ca_panic_param(":san entry must be a string or keyword");
+            }
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
     }
 
     /* Sign with CA key */
@@ -271,7 +485,13 @@ static const char *cfun_ca_issue_docstring =
     "Options:\n"
     "  :common-name <string>     - Certificate common name (required)\n"
     "  :san [\"DNS:...\" ...]    - Subject Alternative Names\n"
-    "  :days-valid <number>      - Validity period (default: 365)\n"
+    "  :days-valid <number>      - Validity period (default: 365;\n"
+    "                              :not-before and :not-after win)\n"
+    "  :not-before <time>        - Custom start time (Unix timestamp\n"
+    "                              seconds)\n"
+    "  :not-after <time>         - Custom end time (Unix timestamp\n"
+    "                              seconds; end must be later than\n"
+    "                              start)\n"
     "  :key-type <keyword>       - Key type (default: :ec-p256)\n"
     "  :key-usage <string>       - Key usage extension\n"
     "  :extended-key-usage <string> - e.g., \"serverAuth\"\n"
@@ -294,11 +514,17 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     const char *extended_key_usage = NULL;
     const char *organization = NULL;
     const char *country = NULL;
+    time_t window_begin = 0;
+    time_t window_end = 0;
+    int custom_window = 0;
 
     if (ca_opts_valid(opts)) {
         Janet v = ca_opts_get(opts, "common-name");
         if (!janet_checktype(v, JANET_NIL)) {
             common_name = janet_to_string_or_keyword(v);
+            if (!common_name) {
+                ca_panic_param(":common-name must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "san");
@@ -326,27 +552,43 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
         v = ca_opts_get(opts, "key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             key_usage = janet_to_string_or_keyword(v);
+            if (!key_usage) {
+                ca_panic_param(":key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "extended-key-usage");
         if (!janet_checktype(v, JANET_NIL)) {
             extended_key_usage = janet_to_string_or_keyword(v);
+            if (!extended_key_usage) {
+                ca_panic_param(
+                    ":extended-key-usage must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "organization");
         if (!janet_checktype(v, JANET_NIL)) {
             organization = janet_to_string_or_keyword(v);
+            if (!organization) {
+                ca_panic_param(":organization must be a string or keyword");
+            }
         }
 
         v = ca_opts_get(opts, "country");
         if (!janet_checktype(v, JANET_NIL)) {
             country = janet_to_string_or_keyword(v);
+            if (!country) {
+                ca_panic_param(":country must be a string or keyword");
+            }
         }
     }
 
     if (!common_name) {
         ca_panic_param(":common-name is required for ca/issue");
     }
+
+    custom_window = ca_resolve_validity_window(opts, days_valid,
+                                               &window_begin, &window_end);
 
     /* Generate keypair */
     EVP_PKEY *key = ca_generate_keypair(key_type);
@@ -359,59 +601,146 @@ Janet cfun_ca_issue(int32_t argc, Janet *argv) {
     }
 
     /* Set version to v3 */
-    X509_set_version(cert, 2);
+    if (!X509_set_version(cert, 2)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set certificate version");
+    }
 
-    /* Set serial number */
-    int64_t serial = ca_next_serial(ca);
-    ASN1_INTEGER_set_int64(X509_get_serialNumber(cert), serial);
+    /* Set serial number: fresh random of at least 64 bits of entropy
+     * (issuance no longer walks the counter) */
+    if (!jutils_set_random_serial(cert)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set random serial");
+    }
 
-    /* Set validity */
-    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert),
-                    (long)days_valid * 24 * 60 * 60);
+    /* Set validity: the :not-before / :not-after window when requested,
+     * else the signing time through :days-valid seconds */
+    if (custom_window) {
+        if (!ca_set_validity_window(cert, window_begin, window_end)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set certificate validity window");
+        }
+    } else {
+        if (!X509_gmtime_adj(X509_getm_notBefore(cert), 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set notBefore");
+        }
+        if (!X509_gmtime_adj(X509_getm_notAfter(cert),
+                             (long)days_valid * 24 * 60 * 60)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to set notAfter");
+        }
+    }
 
     /* Set subject name */
     X509_NAME *name = X509_get_subject_name(cert);
     if (country) {
-        X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, OSSL_STR(country),
-                                   -1, -1, 0);
+        if (!X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+                                        OSSL_STR(country), -1, -1, 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add country entry");
+        }
     }
     if (organization) {
-        X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                   OSSL_STR(organization), -1, -1, 0);
+        if (!X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                                        OSSL_STR(organization), -1, -1, 0)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add organization entry");
+        }
     }
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               OSSL_STR(common_name), -1, -1, 0);
+    if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                    OSSL_STR(common_name), -1, -1, 0)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add common name entry");
+    }
 
     /* Set issuer from CA */
-    X509_set_issuer_name(cert, X509_get_subject_name(ca->cert));
+    if (!X509_set_issuer_name(cert, X509_get_subject_name(ca->cert))) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set issuer name");
+    }
 
     /* Set public key */
-    X509_set_pubkey(cert, key);
+    if (!X509_set_pubkey(cert, key)) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to set public key");
+    }
 
     /* Add extensions */
-    ca_add_extension(cert, ca->cert, NID_basic_constraints, "CA:FALSE");
-    ca_add_extension(cert, ca->cert, NID_subject_key_identifier, "hash");
-    ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
-                     "keyid:always");
+    if (!ca_add_extension(cert, ca->cert, NID_basic_constraints,
+                          "CA:FALSE")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add basicConstraints extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_subject_key_identifier,
+                          "hash")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add subjectKeyIdentifier extension");
+    }
+    if (!ca_add_extension(cert, ca->cert, NID_authority_key_identifier,
+                          "keyid:always")) {
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        ca_panic_ssl("failed to add authorityKeyIdentifier extension");
+    }
 
-    /* Key usage */
+    /* Key usage (keyEncipherment is meaningless for EC keys, RFC 5480) */
     if (key_usage) {
-        ca_add_extension(cert, ca->cert, NID_key_usage, key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     } else {
-        ca_add_extension(cert, ca->cert, NID_key_usage,
-                         "digitalSignature,keyEncipherment");
+        const char *default_ku = (EVP_PKEY_base_id(key) == EVP_PKEY_EC)
+                                     ? "digitalSignature"
+                                     : "digitalSignature,keyEncipherment";
+        if (!ca_add_extension(cert, ca->cert, NID_key_usage, default_ku)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add keyUsage extension");
+        }
     }
 
     /* Extended key usage */
     if (extended_key_usage) {
-        ca_add_extension(cert, ca->cert, NID_ext_key_usage,
-                         extended_key_usage);
+        if (!ca_add_extension(cert, ca->cert, NID_ext_key_usage,
+                              extended_key_usage)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add extendedKeyUsage extension");
+        }
     }
 
-    /* SAN */
+    /* SAN - default to the CN when :san is not supplied */
     if (san_arr && san_arr->count > 0) {
-        add_san_entries(cert, ca->cert, san_arr);
+        int san_rc = add_san_entries(cert, ca->cert, san_arr);
+        if (san_rc <= 0) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            if (san_rc < 0) {
+                ca_panic_param(":san entry must be a string or keyword");
+            }
+            ca_panic_ssl("failed to add subjectAltName extension");
+        }
+    } else if (common_name) {
+        if (!jutils_add_common_name_san(cert, common_name)) {
+            X509_free(cert);
+            EVP_PKEY_free(key);
+            ca_panic_ssl("failed to add subject alternative name");
+        }
     }
 
     /* Sign with CA key */

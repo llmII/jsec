@@ -8,14 +8,9 @@
 #ifndef JUTILS_H
 #define JUTILS_H
 
-/* Enable POSIX features for clock_gettime, strdup, etc. */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-
+#include "compat.h"
 #include <errno.h>
 #include <janet.h>
-#include "compat.h"
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
@@ -52,18 +47,130 @@
  */
 #define OSSL_STR(s) ((unsigned char *)(uintptr_t)(s))
 
+/* Set/clear bit(s) in a uint8_t flags field without constant ~ truncation
+ * (MSVC C4310). */
+#define jsec_set_u8_flag(field, bit) ((field) |= (uint8_t)(bit))
+#define jsec_clear_u8_flag(field, bit)                                       \
+    ((field) &= (uint8_t)(0xFFu ^ (unsigned)(bit)))
+
 /*============================================================================
  * PUBLIC API - Utility Functions
  *============================================================================
  */
 
-/* Get SSL error string - returns static buffer, not thread-safe
- * Use immediately or copy if needed across multiple calls. */
+/* Get SSL error string - returns static buffer (thread-local).
+ * Reports every queued error, separated. When no error is queued,
+ * reports the recorded failure detail (if any), or "No SSL error"
+ * when both are empty. Use immediately or copy if needed across
+ * multiple calls. */
 const char *get_ssl_error_string(void);
+
+/* Human-readable cause recorded by the cert-loading helpers and the
+ * security-option validation on failure. Returns the recorded detail;
+ * when nothing is recorded, reports the OpenSSL error queue (drained),
+ * or "No SSL error" when the queue is empty. */
+const char *jutils_cert_load_error(void);
+
+/* Forget the recorded detail. The cert-loading helpers and
+ * apply_security_options clear it on entry and context creation
+ * clears it before building, so a raise never reports a stale cause. */
+void jutils_cert_load_error_clear(void);
+
+/* Record a failure detail (printf-style) for jutils_cert_load_error.
+ * The record-and-return helpers use this instead of raising. */
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((format(printf, 1, 2)))
+#endif
+void jutils_cert_load_errorf(const char *fmt, ...);
+
+/*
+ * The one documented error for a peer close without close_notify. A peer
+ * that ends the connection without the TLS shutdown alert has truncated
+ * the stream: jsec raises this error on every read surface instead of
+ * reporting a clean end of data, on every supported TLS library, so a
+ * truncated stream can never look like a complete one. It is raised
+ * identically for both library shapes of the same condition: the
+ * SSL_ERROR_SYSCALL ret-0 surface of OpenSSL 1.1.1 and LibreSSL, and the
+ * SSL_ERROR_SSL surface of OpenSSL 3.x.
+ */
+#define JSEC_UNEXPECTED_EOF_ERROR                                            \
+    "unexpected EOF without close_notify: the peer closed the connection "   \
+    "without completing the TLS shutdown"
+
+/*
+ * True when the OpenSSL error queue holds the OpenSSL 3.x shape of an
+ * unexpected EOF: SSL_ERROR_SSL with reason
+ * SSL_R_UNEXPECTED_EOF_WHILE_READING. The 1.1.1/LibreSSL shape (SSL_ERROR_
+ * SYSCALL with ret 0) carries no queue entry and is classified by the
+ * callers from the ret/errno pair instead. Peek only - the queue is left
+ * for the caller to consume or clear.
+ */
+int jutils_is_unexpected_eof(void);
+
+/* Stack buffer capacity for formatted "[MOD:CAT] ...: <reason>" strings:
+ * holds an OS or single OpenSSL detail (JSEC_STRERROR_BUFSIZE) plus the
+ * module/category and operation prefix. */
+#define JSEC_IO_ERROR_BUFSIZE (JSEC_STRERROR_BUFSIZE + 64)
+
+/* Query pending SO_ERROR on stream; returns non-zero socket error code when
+ * present, or 0 when absent or unqueryable. */
+int jutils_pending_socket_error(JanetStream *stream);
+
+/* Format "[<category>] socket error: <reason>" (or "[<category>] socket
+ * error" when SO_ERROR is zero) into buf. Returns non-zero if SO_ERROR was
+ * non-zero. */
+int jutils_format_socket_error(char *buf, size_t buflen, const char *category,
+                               JanetStream *stream);
+
+#ifdef JANET_WINDOWS
+/* Query overlapped IOCP failure via WSAGetOverlappedResult with SO_ERROR
+ * fallback. */
+int jutils_overlapped_error(JanetStream *stream, WSAOVERLAPPED *ov);
+
+/* Format "[<category>] socket error: <reason>" from overlapped completion
+ * failure. */
+void jutils_format_overlapped_error(char *buf, size_t buflen,
+                                    const char *category, JanetStream *stream,
+                                    WSAOVERLAPPED *ov);
+
+/* Cancel a still-in-flight IOCP operation during DEINIT so a timed-out or
+ * cancelled wait does not linger in the kernel and consume later events.
+ * Also detaches fiber->ev_state on the JANET_FIBER_EV_FLAG_IN_FLIGHT path
+ * where janet_async_end defers janet_free(overlapped) to IOCP completion. */
+void jutils_win_cancel_overlapped(JanetFiber *fiber, JanetStream *stream,
+                                  WSAOVERLAPPED *ov, uint8_t *flags,
+                                  uint8_t in_flight_bit);
+
+/* Resume callback invoked on the Janet event loop when WSAPoll reports
+ * readiness on a socket wait started by jutils_win_poll_start. */
+typedef void (*JsecWinPollResumeFn)(JanetFiber *fiber, void *ctx);
+
+/* Wait for Winsock readiness (POLLOUT/POLLIN) on Janet's worker thread pool
+ * so IOCP avoids zero-byte WSASend immediate-completion busy spins. */
+int jutils_win_poll_start(JanetStream *stream, JanetFiber *fiber,
+                          short events, void *ctx, void **slot,
+                          JsecWinPollResumeFn resume_fn);
+
+/* Cancel an active WSAPoll wait during DEINIT. */
+void jutils_win_poll_cancel(void **slot);
+#endif
 
 /* Helper to convert Janet string or keyword to C string
  * Returns NULL if the value is neither a string nor keyword. */
 const char *janet_to_string_or_keyword(Janet value);
+
+/*
+ * Parse the optional timeout/opts argument at argv[idx].
+ *
+ * Accepts absent or nil (no deadline), a non-negative non-NaN number of
+ * seconds, or a table/struct whose :timeout key (if non-nil) is such a
+ * number; anything else raises "[mod:PARAM] timeout must be a
+ * non-negative number". Returns the deadline in seconds, or no_deadline
+ * when the argument carries none (INFINITY for jtls, -1 for the dtls
+ * janet_addtimeout sentinel); an infinite value counts as no deadline.
+ */
+double parse_timeout_opt(int32_t argc, Janet *argv, int32_t idx,
+                         const char *mod, double no_deadline);
 
 /*============================================================================
  * PUBLIC API - Certificate Loading
@@ -91,6 +198,16 @@ int jutils_load_key(SSL_CTX *ctx, Janet key);
  */
 int jutils_load_ca(SSL_CTX *ctx, Janet ca);
 
+/* Set a fresh CSPRNG random serial of at least 64 bits (BN_rand) on the
+ * certificate. Returns 1 on success, 0 on failure. */
+int jutils_set_random_serial(X509 *x509);
+
+/* Attach exactly one SAN entry for the common name: a GEN_IPADD entry when
+ * a2i_IPADDRESS accepts the name, a GEN_DNS entry with the literal bytes
+ * otherwise. The name is never parsed as X509V3 config syntax. Returns 1 on
+ * success, 0 on failure. */
+int jutils_add_common_name_san(X509 *cert, const char *cn);
+
 /*
  * Load credentials (cert, key, ca) from Janet values into SSL_CTX.
  * All parameters are optional (pass janet_wrap_nil() to skip).
@@ -99,6 +216,27 @@ int jutils_load_ca(SSL_CTX *ctx, Janet ca);
  * jutils_load_key, and jutils_load_ca with consistent error messages.
  */
 void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca);
+
+/* One shared client SSL setup for every connection entry point (D-01):
+ * rank the client name (the :hostname option wins over the positional host;
+ * the :sni key never supplies it), install the SNI extension (never for an
+ * IP literal - RFC 6066 section 3), bind certificate name verification
+ * (:verify-hostname wins over the client name) when verify is set, and
+ * attach :session resumption bytes. Every OpenSSL return is checked
+ * (E-20, E-21, E-22). Returns NULL on success, else a static string
+ * naming the failure: either the failed OpenSSL call, or one of the
+ * :session audit strings "session must be a byte string or buffer",
+ * "failed to parse session data", "failed to set session". The caller
+ * raises with its own module's panic family - jutils_raise_client_setup
+ * maps every string to the ruled raise. */
+const char *jutils_client_setup(SSL *ssl, Janet opts,
+                                const char *positional_host, int verify);
+
+/* Raise a jutils_client_setup failure string under the caller's module
+ * family: the :session audit strings raise their ruled [mod:PARAM] /
+ * [mod:SSL] messages (queue drained), anything else raises the
+ * [mod:VERIFY] client SSL setup message. Never returns. */
+void jutils_raise_client_setup(const char *fail, const char *mod);
 
 /*============================================================================
  * PUBLIC API - Low-level Memory Loading
@@ -109,7 +247,8 @@ void jutils_load_credentials(SSL_CTX *ctx, Janet cert, Janet key, Janet ca);
  */
 
 /* Load certificate chain from PEM data in memory
- * Returns 1 on success, 0 on failure */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises */
 int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /* Load private key from PEM data in memory
@@ -117,7 +256,9 @@ int load_cert_chain_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 int load_key_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /* Load CA certificates from PEM data in memory
- * Returns 1 on success, 0 on failure */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises. A duplicate
+ * trust-anchor add is idempotent success */
 int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
 
 /*============================================================================
@@ -126,19 +267,44 @@ int load_ca_mem(SSL_CTX *ctx, const unsigned char *data, int len);
  */
 
 /* Apply security options to SSL_CTX
- * Accepts a Janet table with the following optional keys:
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises.
+ * Accepts nil, a Janet table, or a Janet struct with the following optional
+ * keys:
  *   :min-version - Minimum TLS/DTLS version (e.g., :TLS1.2, :TLS1.3,
  * :DTLS1.2) :max-version - Maximum TLS/DTLS version :ciphers - Cipher suite
  * string (OpenSSL format) :curves - EC curves for ECDHE (e.g., :prime256v1 or
  * "prime256v1:secp384r1") :ca-file - CA file path or PEM string/buffer
  *   :ca-path - CA directory path
+ *   :session-cache - Boolean, cache sessions (default true)
+ *   :session-tickets - Boolean, stateless session tickets (default true)
+ *   :session-cache-size - Number, maximum cached sessions (default 1000)
+ *   :ocsp-stapling - Arm OCSP response stapling on server contexts
+ * A non-dictionary opts value is rejected: jutils_validate_security_options
+ * raises a parameter error before any SSL_CTX exists.
  */
-int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls);
+int apply_security_options(SSL_CTX *ctx, Janet opts, int is_dtls,
+                           int is_server);
+
+/* Validate the :security option value before any SSL_CTX is allocated or
+ * ctx_cache_lock is taken (cleanup safety: never let a validation
+ * raise run while resources are held). Accepts nil, table, or struct;
+ * raises [UTILS:PARAM] on any other type and on a non-number or negative
+ * :session-cache-size. */
+void jutils_validate_security_options(Janet opts);
+
+/* Apply the session options shared by every context builder:
+ * :session-cache, :session-tickets, :session-cache-size. Accepts nil,
+ * table, or struct (same contract as apply_security_options). */
+void jutils_apply_session_cache_options(SSL_CTX *ctx, Janet opts,
+                                        int is_server);
 
 /* Add a trusted certificate to SSL_CTX's certificate store
  * Used for certificate pinning (trust specific cert without full CA chain)
  * Accepts PEM-encoded certificate as string or buffer
- */
+ * Returns 1 on success, 0 on failure; records the cause of a failure
+ * (see jutils_cert_load_error) and never raises. A certificate already
+ * in the store is idempotent success */
 int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem);
 
 /*============================================================================
@@ -152,7 +318,7 @@ int add_trusted_cert(SSL_CTX *ctx, Janet cert_pem);
  */
 typedef struct {
     SSL_CTX *ctx;
-    int is_dtls; /* 0 = TLS, 1 = DTLS */
+    uint8_t is_dtls; /* 0 = TLS, 1 = DTLS */
 } SSLContext;
 
 /* Unified context abstract type - shared between TLS and DTLS modules */
@@ -167,6 +333,15 @@ int ssl_context_get(void *p, Janet key, Janet *out);
 /* Method table for SSLContext */
 extern const JanetMethod ssl_context_methods[];
 
+/*
+ * Canonical context type object for janet_abstract / janet_getabstract /
+ * janet_checkabstract. ssl_context_type is a per-.so copy; only the
+ * registered copy carries one identity across module boundaries, so type
+ * checks and creation go through this lookup, never through
+ * &ssl_context_type.
+ */
+const JanetAbstractType *jutils_get_context_type(void);
+
 /* Initialize the shared context type (call once at module init) */
 void jutils_init_context_type(void);
 
@@ -174,9 +349,6 @@ void jutils_init_context_type(void);
  * Returns SSLContext* allocated via janet_abstract, or panics on error
  */
 SSLContext *jutils_create_context(Janet opts, int is_dtls);
-
-/* Helper to get SSLContext from Janet value */
-SSLContext *jutils_get_context(Janet val);
 
 /* Add trusted cert to unified context */
 Janet cfun_ssl_context_trust_cert(int32_t argc, Janet *argv);
@@ -284,6 +456,8 @@ static inline const char *jsec_err_category_str(JsecErrorCategory cat) {
 #define dtls_panic_ssl(msg) jsec_panic_ssl(JSEC_MOD_DTLS, "SSL", msg)
 #define dtls_panic_socket(msg) jsec_panic_errno(JSEC_MOD_DTLS, "SOCKET", msg)
 #define dtls_panic_param(...) jsec_panic(JSEC_MOD_DTLS, "PARAM", __VA_ARGS__)
+#define dtls_panic_verify(...)                                               \
+    jsec_panic(JSEC_MOD_DTLS, "VERIFY", __VA_ARGS__)
 
 /* CRYPTO module */
 #define crypto_panic_config(...)                                             \

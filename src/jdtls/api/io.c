@@ -3,19 +3,79 @@
  */
 
 #include "../internal.h"
+#include <math.h>
 #include <string.h>
 
 /* External declarations */
 extern void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                         int32_t nbytes, int mode);
-extern void dtls_client_start_async_write(DTLSClient *client,
-                                          JanetByteView data, int mode);
+                                         int32_t nbytes, int32_t buf_start,
+                                         int mode, double timeout);
+extern void dtls_client_start_async_write(DTLSClient *client, Janet src,
+                                          int mode, double timeout);
+
+/*
+ * Raise a synchronous operation failure as a [DTLS:IO] error carrying
+ * the SSL/socket error detail via dtls_format_io_error.
+ */
+static void dtls_raise_sync_io_error(const char *op_name, int sock_err,
+                                     JanetStream *stream) {
+    char msg[JSEC_IO_ERROR_BUFSIZE];
+    dtls_format_io_error(msg, sizeof(msg), op_name, sock_err, stream);
+    janet_panic(msg);
+}
+
+/*
+ * dtls_do_read_ex / dtls_do_read - read one datagram into buf, sized from the
+ * datagram, optionally capturing jsec_socket_errno before SSL_get_error runs.
+ */
+DTLSResult dtls_do_read_ex(SSL *ssl, JanetBuffer *buf, int32_t n,
+                           int *out_sock_err) {
+    uint8_t dummy;
+    ERR_clear_error();
+    int pk = SSL_peek(ssl, &dummy, 1);
+    if (pk <= 0) {
+        return dtls_ssl_result_errno(ssl, pk, out_sock_err);
+    }
+    int32_t avail = (int32_t)SSL_pending(ssl);
+    if (avail < 1) avail = 1;
+    int32_t to_read = (n < 0 || n > avail) ? avail : n;
+    janet_buffer_extra(buf, to_read);
+    ERR_clear_error();
+    int ret = SSL_read(ssl, buf->data + buf->count, to_read);
+    if (ret > 0) {
+        if (out_sock_err) *out_sock_err = 0;
+        buf->count += ret;
+        /* A read capped below the datagram size consumes up to n bytes
+         * and discards the rest of THAT record, so the next call
+         * receives the next datagram - the net/read datagram contract.
+         * The drain reads the remainder out of OpenSSL's record buffer;
+         * SSL_pending drops to 0 once this record is exhausted, before
+         * any later datagram is processed. */
+        while (SSL_pending(ssl) > 0) {
+            uint8_t discard[512];
+            int drop = SSL_read(ssl, discard, (int)sizeof(discard));
+            if (drop <= 0) break;
+        }
+        return DTLS_RESULT_OK;
+    }
+    return dtls_ssl_result_errno(ssl, ret, out_sock_err);
+}
+
+DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n) {
+    return dtls_do_read_ex(ssl, buf, n, NULL);
+}
 
 /*
  * (dtls/read client n &opt buf timeout)
  *
  * Read up to n bytes from DTLS client.
  * For datagrams, returns after first complete datagram received.
+ *
+ * The optional timeout is the deadline in seconds (a number, or a
+ * table/struct with a :timeout key). It is an absolute deadline from the
+ * call - one deadline for the whole read, not one per wait - and expiry
+ * cancels the fiber with a "timeout" error. A negative timeout raises a
+ * parameter error.
  */
 Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 4);
@@ -23,57 +83,8 @@ Janet cfun_dtls_read(int32_t argc, Janet *argv) {
     DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
     int32_t n = janet_getinteger(argv, 1);
 
-    if (client->closed || client->state == DTLS_STATE_CLOSED) {
-        return janet_wrap_nil();
-    }
-
-    if (client->state != DTLS_STATE_ESTABLISHED) {
-        dtls_panic_io("DTLS client not connected");
-    }
-
-    /* Get or create buffer */
-    JanetBuffer *buf;
-    if (argc > 2 && janet_checktype(argv[2], JANET_BUFFER)) {
-        buf = janet_getbuffer(argv, 2);
-        janet_buffer_ensure(buf, buf->count + n, 2);
-    } else {
-        buf = janet_buffer(n);
-    }
-
-    /* Try initial read */
-    int32_t nread = 0;
-    DTLSResult result =
-        dtls_do_read(client->ssl, buf->data + buf->count, n, &nread);
-
-    if (nread > 0) {
-        buf->count += nread;
-        return janet_wrap_buffer(buf);
-    }
-
-    if (result == DTLS_RESULT_EOF) {
-        return buf->count > 0 ? janet_wrap_buffer(buf) : janet_wrap_nil();
-    }
-
-    /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
-                                                  : JANET_ASYNC_LISTEN_READ;
-    dtls_client_start_async_read(client, buf, n, mode);
-    return janet_wrap_nil(); /* Will be replaced by async result */
-}
-
-/*
- * (dtls/write client data &opt timeout)
- *
- * Write data to DTLS client.
- * Data should fit in a single datagram (typically < 64KB).
- */
-Janet cfun_dtls_write(int32_t argc, Janet *argv) {
-    janet_arity(argc, 2, 3);
-
-    DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
-    JanetByteView data = janet_getbytes(argv, 1);
-
-    if (client->closed || client->state == DTLS_STATE_CLOSED) {
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
         dtls_panic_io("DTLS client is closed");
     }
 
@@ -81,19 +92,180 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
         dtls_panic_io("DTLS client not connected");
     }
 
-    /* Try initial write */
-    int32_t nwritten = 0;
-    DTLSResult result =
-        dtls_do_write(client->ssl, data.bytes, data.len, &nwritten);
+    /* Get or create buffer; an omitted user buffer starts at capacity 0
+     * so nothing is reserved before SSL_peek succeeds */
+    JanetBuffer *buf = janet_optbuffer(argv, argc, 2, 0);
 
-    if (result == DTLS_RESULT_OK) {
-        return janet_wrap_integer(nwritten);
+    /* buffer->count when the read op began; n is relative to this,
+     * matching ev/read append semantics (never treat n as buffer total) */
+    int32_t buf_start = buf->count;
+
+    double timeout = parse_timeout_opt(argc, argv, 3, JSEC_MOD_DTLS, -1.0);
+
+    /* n == 0 appends nothing and returns the buffer immediately with
+     * no I/O - the pending datagram is not consumed and no
+     * SSL_read(..., 0) runs (which would be misclassified as EOF). */
+    if (n == 0) {
+        return janet_wrap_buffer(buf);
+    }
+
+    /* Try initial read */
+    int32_t before = buf->count;
+    int sock_err = 0;
+    DTLSResult result = dtls_do_read_ex(client->ssl, buf, n, &sock_err);
+    if (dtls_client_flush_wbio_to_peer(client) == -1) {
+        int err = jsec_socket_errno;
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Read", err, client->transport);
+    }
+
+    if (result == DTLS_RESULT_UNEXPECTED_EOF) {
+        /* A peer close without close_notify truncates the stream and
+         * raises the one documented error - it must never look like a
+         * clean end of data */
+        janet_panic(JSEC_UNEXPECTED_EOF_ERROR);
+    }
+
+    if (buf->count > before) {
+        return janet_wrap_buffer(buf);
+    }
+
+    if (result == DTLS_RESULT_EOF) {
+        /* Clean EOF: what this call appended or nil */
+        return buf->count > buf_start ? janet_wrap_buffer(buf)
+                                      : janet_wrap_nil();
+    }
+
+    if (result == DTLS_RESULT_ERROR) {
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Read", sock_err, client->transport);
     }
 
     /* Need to wait */
-    int mode = (result == DTLS_RESULT_WANT_READ) ? JANET_ASYNC_LISTEN_READ
-                                                 : JANET_ASYNC_LISTEN_WRITE;
-    dtls_client_start_async_write(client, data, mode);
+    int mode = (result == DTLS_RESULT_WANT_WRITE) ? JANET_ASYNC_LISTEN_WRITE
+                                                  : JANET_ASYNC_LISTEN_READ;
+    dtls_client_start_async_read(client, buf, n, buf_start, mode, timeout);
+    return janet_wrap_nil(); /* Will be replaced by async result */
+}
+
+/*
+ * (dtls/flush client)
+ *
+ * Flush buffered transport output on the DTLS client, matching Janet's
+ * net/flush: returns the client itself so calls chain. Raises
+ * [DTLS:IO] when the client is closed. Safe when there is nothing
+ * buffered.
+ */
+Janet cfun_dtls_flush(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
+
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
+        dtls_panic_io("DTLS client is closed");
+    }
+
+    if (dtls_client_flush_wbio_to_peer(client) == -1) {
+        dtls_raise_sync_io_error("Flush", jsec_socket_errno,
+                                 client->transport);
+    }
+
+    return argv[0];
+}
+
+/*
+ * (dtls/write client data &opt timeout)
+ *
+ * Write data to DTLS client.
+ * Data should fit in a single datagram (typically < 64KB).
+ * Returns nil on success, matching tls/write and ev/write.
+ *
+ * The optional timeout is the deadline in seconds (a number, or a
+ * table/struct with a :timeout key). It is an absolute deadline from the
+ * call - one deadline for the whole write, not one per wait - and expiry
+ * cancels the fiber with a "timeout" error. A negative timeout raises a
+ * parameter error.
+ */
+Janet cfun_dtls_write(int32_t argc, Janet *argv) {
+    janet_arity(argc, 2, 3);
+
+    DTLSClient *client = janet_getabstract(argv, 0, &dtls_client_type);
+    JanetByteView data = janet_getbytes(argv, 1);
+
+    if ((client->flags & JDTLS_CLIENT_CLOSED) ||
+        client->state == DTLS_STATE_CLOSED) {
+        dtls_panic_io("DTLS client is closed");
+    }
+
+    if (client->state != DTLS_STATE_ESTABLISHED) {
+        dtls_panic_io("DTLS client not connected");
+    }
+
+    double timeout = parse_timeout_opt(argc, argv, 2, JSEC_MOD_DTLS, -1.0);
+
+    if (client->wbio && BIO_ctrl_pending(client->wbio) > 0) {
+        ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+        if (flush_rc == -1) {
+            int err = jsec_socket_errno;
+            client->state = DTLS_STATE_ERROR;
+            dtls_raise_sync_io_error("Write", err, client->transport);
+        }
+        if (flush_rc == -2) {
+            dtls_client_start_async_write_flush(
+                client, argv[1], JANET_ASYNC_LISTEN_WRITE, timeout, 0);
+            return janet_wrap_nil();
+        }
+    }
+
+    /* Try initial write */
+    int32_t nwritten = 0;
+    int sock_err = 0;
+    DTLSResult result = dtls_do_write_ex(client->ssl, data.bytes, data.len,
+                                         &nwritten, &sock_err);
+
+    if (result == DTLS_RESULT_OK) {
+        ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+        if (flush_rc == -1) {
+            int err = jsec_socket_errno;
+            client->state = DTLS_STATE_ERROR;
+            dtls_raise_sync_io_error("Write", err, client->transport);
+        }
+        if (flush_rc == -2) {
+            dtls_client_start_async_write_flush(
+                client, argv[1], JANET_ASYNC_LISTEN_WRITE, timeout, 1);
+            return janet_wrap_nil();
+        }
+        return janet_wrap_nil();
+    }
+
+    ssize_t flush_rc = dtls_client_flush_wbio_to_peer(client);
+    if (flush_rc == -1) {
+        int err = jsec_socket_errno;
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Write", err, client->transport);
+    }
+
+    if (result == DTLS_RESULT_EOF || result == DTLS_RESULT_UNEXPECTED_EOF) {
+        /* Peer closed with unwritten bytes - close_notify or a bare
+         * EOF alike: fail the write like tls/write and Janet's
+         * ev/write / net/write instead of completing nil. The
+         * truncation raise belongs to read surfaces */
+        client->state = DTLS_STATE_CLOSED;
+        dtls_panic_io(
+            "Write error: connection closed with %d of %d bytes unwritten",
+            (int)(data.len - nwritten), (int)data.len);
+    }
+
+    if (result == DTLS_RESULT_ERROR) {
+        client->state = DTLS_STATE_ERROR;
+        dtls_raise_sync_io_error("Write", sock_err, client->transport);
+    }
+
+    /* Need to wait */
+    int mode = (flush_rc == -2 || result == DTLS_RESULT_WANT_WRITE)
+                   ? JANET_ASYNC_LISTEN_WRITE
+                   : JANET_ASYNC_LISTEN_READ;
+    dtls_client_start_async_write_flush(client, argv[1], mode, timeout, 0);
     return janet_wrap_nil(); /* Will be replaced by async result */
 }
 
@@ -103,6 +275,12 @@ Janet cfun_dtls_write(int32_t argc, Janet *argv) {
  * Read exactly n bytes from DTLS client.
  * Unlike read, will not return early if less than n bytes are available.
  * Returns buffer with exactly n bytes, or what's available on EOF.
+ *
+ * The optional timeout is the deadline in seconds (a number, or a
+ * table/struct with a :timeout key). It is an absolute deadline from the
+ * call - one deadline for the whole read, not one per wait - and expiry
+ * cancels the fiber with a "timeout" error. A negative timeout raises a
+ * parameter error.
  *
  * Note: For DTLS datagrams, this delegates to read since each SSL_read
  * returns a complete datagram. The "chunk" semantics make less sense

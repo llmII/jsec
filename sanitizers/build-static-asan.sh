@@ -10,7 +10,7 @@ set -e
 # ==============================================================================
 
 # --- Configuration ---
-JANET_VERSION="1.40.1"
+JANET_VERSION="1.41.1"
 JANET_URL="https://github.com/janet-lang/janet/archive/refs/tags/v${JANET_VERSION}.tar.gz"
 
 # Use OpenSSL 3.x as per project requirements

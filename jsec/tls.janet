@@ -40,7 +40,7 @@
     :ca - CA certificate path
     :trusted-cert - Trust specific certificate (for self-signed)
     :ciphers - Cipher suite string
-    :security - Security options table
+    :security - Security options table or struct
     :datagram - If true, creates DTLS context instead of TLS
   
   If :cert and :key are provided, creates a server-capable context.

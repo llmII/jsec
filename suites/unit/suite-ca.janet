@@ -66,11 +66,12 @@
     (assert (not= (:get-cert root) (:get-cert intermediate))
             "Certs should be different"))
 
-  (def-test "ca/generate-intermediate increments parent serial"
+  (def-test "ca/generate-intermediate does not advance the parent serial counter"
     (def root (ca/generate {:serial 1}))
-    (assert (= (int/s64 1) (:get-serial root)) "Root starts at serial 1")
+    (assert (= (int/s64 1) (:get-serial root)) "Root stored serial is its configured value")
     (ca/generate-intermediate root {})
-    (assert (= (int/s64 2) (:get-serial root)) "Root serial incremented after issuing"))
+    (assert (= (int/s64 1) (:get-serial root))
+            "Issuance draws fresh random serials and leaves the stored serial unchanged"))
 
   (def-test "ca/generate-intermediate with path-length"
     (def root (ca/generate))
@@ -115,12 +116,14 @@
     (def issued (:get-issued ca))
     (assert (= 2 (length issued)) "Should have 2 tracked certs"))
 
-  (def-test ":issue increments serial"
+  (def-test ":issue does not advance the serial counter"
     (def ca (ca/generate {:serial 1}))
     (:issue ca {:common-name "cert1"})
-    (assert (= (int/s64 2) (:get-serial ca)) "Serial should be 2")
+    (assert (= (int/s64 1) (:get-serial ca))
+            "Issuance draws a fresh random serial and leaves the stored serial unchanged")
     (:issue ca {:common-name "cert2"})
-    (assert (= (int/s64 3) (:get-serial ca)) "Serial should be 3"))
+    (assert (= (int/s64 1) (:get-serial ca))
+            "The stored serial is a persistence value, not the issuance sequence"))
 
   # ===========================================================================
   # CA Creation from Existing
@@ -135,11 +138,13 @@
     (assert cert "Should have cert"))
 
   (def-test "ca/create with serial restoration"
-    # This tests the pattern for serial persistence
+    # This tests the pattern for serial persistence: the stored serial is
+    # saved and restored verbatim and issuance never moves it
     (def ca (ca/generate {:serial 50}))
     (:issue ca {:common-name "test"})
     (def saved-serial (:get-serial ca))
-    (assert (= (int/s64 51) saved-serial) "Serial should be 51 after one issuance"))
+    (assert (= (int/s64 50) saved-serial)
+            "Serial should still be 50 after one issuance"))
 
   # ===========================================================================
   # Serial Number Management

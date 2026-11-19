@@ -114,10 +114,21 @@
   (def signed (crypto/cms-sign cert (cert-data :key) message))
   (printf "Signed data: %d bytes" (length signed))
 
-  # Verify signature
-  (def result (crypto/cms-verify signed))
+  # Verify signature - signer certificate verification against the
+  # supplied trusted certs is required for :valid true
+  (def result (crypto/cms-verify signed cert))
   (printf "Signature valid: %v" (result :valid))
   (printf "Content recovered: %s" (result :content))
+  (printf "Signers: %d, message certs: %d"
+          (length (result :signers)) (length (result :certs)))
+  (unless (result :valid)
+    (printf "Verification failure: %s (code %v)"
+            (result :error) (result :error-code)))
+
+  # Options form; :verify-certs false checks the signature only, for
+  # self-signed envelopes inspected out-of-band
+  (def verdict (crypto/cms-verify signed {:ca cert :verify-certs true}))
+  (printf "Options form valid: %v" (verdict :valid))
 
   # Encrypt data
   (def secret "Confidential data")

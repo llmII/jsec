@@ -66,6 +66,7 @@
 /* Error macros now in jutils.h */
 #ifndef JANET_WINDOWS
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -109,23 +110,6 @@ typedef enum {
 
 /*
  * =============================================================================
- * DTLS Operations (for async callback)
- * =============================================================================
- */
-
-typedef enum {
-    DTLS_OP_NONE = 0,
-    DTLS_OP_HANDSHAKE,
-    DTLS_OP_READ,
-    DTLS_OP_WRITE,
-    DTLS_OP_SHUTDOWN,
-    DTLS_OP_ACCEPT,    /* Server waiting for new connection */
-    DTLS_OP_RECV_FROM, /* Server recv-from operation */
-    DTLS_OP_SEND_TO    /* Server send-to operation */
-} DTLSOperation;
-
-/*
- * =============================================================================
  * DTLSAddress - Our address type (Janet's janet_address_type is internal)
  * =============================================================================
  * Wraps sockaddr_storage for IPv4/IPv6 support.
@@ -155,26 +139,66 @@ void dtls_address_set_port(DTLSAddress *addr, uint16_t port);
 
 /*
  * =============================================================================
+ * DTLS Flight Timer (handshake retransmission)
+ * =============================================================================
+ * While a DTLS handshake is pending, the flight timer drives
+ * DTLSv1_handle_timeout() when the peer goes silent before the flight is
+ * acknowledged, and flushes the retransmitted flight to the UDP socket.
+ * A timer arm is owned by exactly one DTLSClient or DTLSSession slot and
+ * is disarmed before that owner's memory is freed.
+ */
+
+typedef struct DTLSFlightTimer DTLSFlightTimer;
+
+/* Flush the retransmitted flight for owner to transport */
+typedef void (*DTLSFlightFlushFn)(void *owner, JanetStream *transport);
+
+/* Compile the helper-fiber boot body once at module load and root it in
+ * module-level state. Must run before the first dtls_flight_timer_arm. */
+void jdtls_flight_timer_init(JanetTable *env);
+
+/* Query DTLSv1_get_timeout and schedule the flight timer for a pending
+ * handshake. Re-arms (or retires) any timer already in *slot. No-op with
+ * the slot retired when OpenSSL has no retransmission scheduled. */
+void dtls_flight_timer_arm(DTLSFlightTimer **slot, SSL *ssl, void *owner,
+                           JanetStream *transport, DTLSFlightFlushFn flush);
+
+/* Retire the timer in *slot, if any, without waiting out its interval.
+ * in_gc must be set when called from a GC finalizer, where the arm is
+ * only marked canceled and cleared so the wake step retires it (the
+ * helper fiber is never dereferenced there); otherwise the helper
+ * fiber is woken to retire the arm at once. */
+void dtls_flight_timer_disarm(DTLSFlightTimer **slot, int in_gc);
+
+/*
+ * =============================================================================
  * DTLSSession - Per-peer session (used by DTLSServer)
  * =============================================================================
  * Represents a single DTLS session with a specific peer.
  * Stored in server's connection table keyed by peer address.
  */
 
+/* DTLSSession boolean flags (packed into uint8_t flags) */
+#define JDTLS_SESS_COOKIE_VERIFIED (1u << 0)
+#define JDTLS_SESS_TRACK_HANDSHAKE (1u << 1)
+
 typedef struct DTLSSession {
-    SSL *ssl;                 /* OpenSSL SSL object */
-    BIO *rbio;                /* Read BIO (memory BIO for incoming data) */
-    BIO *wbio;                /* Write BIO (memory BIO for outgoing data) */
-    DTLSAddress peer_addr;    /* Peer's address */
-    DTLSState state;          /* Session state */
-    double last_activity;     /* Time of last activity (for timeout) */
-    int cookie_verified;      /* Has client passed cookie exchange? */
-    struct DTLSSession *next; /* For linked list in hash bucket */
+    SSL *ssl;  /* OpenSSL SSL object */
+    BIO *rbio; /* Read BIO (memory BIO for incoming data) */
+    BIO *wbio; /* Write BIO (memory BIO for outgoing data) */
+    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
+    struct DTLSSession *next;      /* For linked list in hash bucket */
+    double last_activity;          /* Time of last activity (for timeout) */
+    uint64_t rec_seq_off;          /* Record sequence alignment: constant
+                                    * offset added to outbound epoch-0 record
+                                    * headers (RFC 6347 section 4.2.1) */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when session was created */
     struct timespec ts_handshake; /* Time when handshake completed */
+    DTLSAddress peer_addr;        /* Peer's address */
+    DTLSState state;              /* Session state */
+    uint8_t flags;                /* Bitmask of JDTLS_SESS_* */
 } DTLSSession;
 
 /*
@@ -188,24 +212,101 @@ typedef struct DTLSSession {
  * Methods like :read, :write, :close work through method dispatch.
  */
 
+/* DTLSClient boolean flags (packed into uint8_t flags) */
+#define JDTLS_CLIENT_CLOSED (1u << 0)
+#define JDTLS_CLIENT_OWNS_CTX (1u << 1)
+#define JDTLS_CLIENT_IS_SERVER (1u << 2)
+#define JDTLS_CLIENT_TRACK_HANDSHAKE (1u << 3)
+
+/* Forward declarations */
+typedef struct DTLSClient DTLSClient;
+typedef struct DTLSServer DTLSServer;
+
+/* DTLSClientAsyncState flags (bits 0-2) and DTLSClientOp (bits 3-4) packed
+ * into uint8_t flags. */
+#define JDTLS_CAS_WANT_WRITE (1u << 0)
+#define JDTLS_CAS_IO_IN_FLIGHT (1u << 1)
+#define JDTLS_CAS_FLUSH_ONLY (1u << 2)
+#define JDTLS_CAS_OP_SHIFT 3u
+#define JDTLS_CAS_OP_MASK (0x03u << JDTLS_CAS_OP_SHIFT)
+
+#define JDTLS_CAS_OP(s)                                                      \
+    ((DTLSClientOp)(((s)->flags & JDTLS_CAS_OP_MASK) >> JDTLS_CAS_OP_SHIFT))
+#define JDTLS_CAS_SET_OP(s, v)                                               \
+    ((s)->flags =                                                            \
+         (uint8_t)(((s)->flags & (0xFFu ^ JDTLS_CAS_OP_MASK)) |              \
+                   (((unsigned)(v) & 0x03u) << JDTLS_CAS_OP_SHIFT)))
+
+typedef enum {
+    CLIENT_OP_HANDSHAKE,
+    CLIENT_OP_READ,
+    CLIENT_OP_WRITE,
+    CLIENT_OP_CLOSE
+} DTLSClientOp;
+
+/* Embedded async state for DTLSClient operations */
 typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    DWORD bytes_received;
+    void *win_write_wait; /* Active WSAPoll wait handle for WANT_WRITE */
+#endif
+    DTLSClient *client;
+    JanetBuffer *buffer; /* For read */
+    Janet write_src;     /* For write */
+    int32_t write_len;   /* For write length at entry */
+    int32_t nbytes;      /* For read */
+    int32_t buf_start;   /* buffer->count when read op began */
+    uint8_t flags;       /* Packed JDTLS_CAS_* flags and DTLSClientOp */
+#ifdef JANET_WINDOWS
+    uint8_t recv_buf[65536]; /* Buffer for WSARecvFrom - max UDP datagram */
+#endif
+} DTLSClientAsyncState;
+
+/* Embedded async state for DTLSServer recv-from operations */
+typedef struct {
+#ifdef JANET_WINDOWS
+    /* Windows IOCP: WSAOVERLAPPED MUST be first field for pointer matching */
+    WSAOVERLAPPED overlapped;
+    uint32_t iocp_bytes; /* Reserved for JanetOverlapped byte count slot */
+    WSABUF wsa_buf;
+    DWORD wsa_flags;
+    int peer_addrlen;
+    DWORD bytes_received;
+#endif
+    DTLSServer *server;
+    JanetBuffer *buffer;
+    double timeout;
+    int32_t nbytes;
+#ifdef JANET_WINDOWS
+    uint8_t io_in_flight; /* 1 while WSARecvFrom overlapped op is queued */
+    struct sockaddr_storage peer_addr; /* Peer address from recvfrom */
+    uint8_t recv_buf[65536];           /* Buffer for received datagram */
+#endif
+} DTLSRecvFromState;
+
+struct DTLSClient {
     JanetStream stream;     /* Embedded stream for method dispatch */
     JanetStream *transport; /* Underlying UDP socket (connected) */
     SSL *ssl;               /* OpenSSL SSL object */
     SSL_CTX *ctx;           /* Client SSL context */
-    BIO *rbio;             /* Memory BIO: we write received data, SSL reads */
-    BIO *wbio;             /* Memory BIO: SSL writes, we sendto() */
-    DTLSState state;       /* Connection state */
-    DTLSAddress peer_addr; /* Server address (for reference) */
-    int closed;            /* Client has been closed */
-    int owns_ctx;          /* Whether we own ctx (should free on GC) */
-    int is_server;         /* Whether acting as server (for upgrade) */
+    BIO *rbio; /* Memory BIO: we write received data, SSL reads */
+    BIO *wbio; /* Memory BIO: SSL writes, we sendto() */
+    DTLSFlightTimer *flight_timer; /* Armed while handshake is pending */
     /* Handshake timing (CLOCK_MONOTONIC timestamps) - only recorded if
      * enabled */
-    int track_handshake_time;     /* Whether to record handshake timing */
     struct timespec ts_connect;   /* Time when client was created */
     struct timespec ts_handshake; /* Time when handshake completed */
-} DTLSClient;
+    DTLSAddress peer_addr;        /* Server address (for reference) */
+    DTLSClientAsyncState
+        async_state; /* Embedded async state (eliminates malloc) */
+    DTLSState state; /* Connection state */
+    uint8_t flags;   /* Bitmask of JDTLS_CLIENT_* */
+};
 
 /*
  * Helper: Flush any pending data from client's wbio to the socket via sendto.
@@ -216,35 +317,90 @@ typedef struct {
  * Note: When using dgram BIO (Unix), wbio is NULL - dgram handles I/O
  * directly. This function handles that case by returning 0.
  */
+#define JDTLS_PACKET_BUF_SIZE 17408
+
+#ifdef JANET_WINDOWS
+void jdtls_init_packet_bio_method(void);
+BIO *jdtls_new_packet_wbio(void);
+int jdtls_win_flush_wbio(BIO *wbio, jsec_socket_t sock, ssize_t *out_sent);
+#endif
+
+/*
+ * Helper: Flush any pending data from client's wbio to the socket.
+ * Returns bytes sent (>= 0) when drained, -2 if send would block (unsent
+ * packets preserved in wbio on Windows), or -1 on hard socket error.
+ */
 static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
     /* Skip if wbio is NULL (dgram BIO handles I/O directly) or transport
      * closed */
-    if (!client->wbio || !client->transport) {
+    if (!client->wbio || !client->transport ||
+        client->transport->handle == JANET_HANDLE_NONE) {
         return 0;
     }
 
-    size_t pending = BIO_ctrl_pending(client->wbio);
-    if (pending == 0) {
-        return 0;
-    }
-
-    uint8_t *buf = (uint8_t *)janet_malloc(pending);
-    if (!buf) {
+#ifdef JANET_WINDOWS
+    ssize_t total_sent = 0;
+    int rc = jdtls_win_flush_wbio(
+        client->wbio, (jsec_socket_t)client->transport->handle, &total_sent);
+    if (rc < 0) {
         return -1;
     }
+    if (rc > 0) {
+        return -2;
+    }
+    return total_sent;
+#else
+    uint8_t stack_buf[JDTLS_PACKET_BUF_SIZE];
+    ssize_t total_sent = 0;
 
-    int n = BIO_read(client->wbio, buf, (int)pending);
-    ssize_t sent = 0;
+    while (BIO_ctrl_pending(client->wbio) > 0) {
+        size_t pending = BIO_ctrl_pending(client->wbio);
+        if (pending > (size_t)INT_MAX) {
+            return total_sent > 0 ? total_sent : -1;
+        }
+        uint8_t *buf = stack_buf;
+        uint8_t *heap_buf = NULL;
 
-    if (n > 0) {
-        sent = sendto((jsec_socket_t)client->transport->handle,
-                      (const char *)buf, (size_t)n, 0,
-                      (struct sockaddr *)&client->peer_addr.addr,
-                      client->peer_addr.addrlen);
+        if (pending > sizeof(stack_buf)) {
+            heap_buf = (uint8_t *)janet_malloc(pending);
+            if (!heap_buf) {
+                return total_sent > 0 ? total_sent : -1;
+            }
+            buf = heap_buf;
+        }
+
+        int n = BIO_read(client->wbio, buf, (int)pending);
+        ssize_t sent = 0;
+        int sock_err = 0;
+        if (n > 0) {
+            sent = send((jsec_socket_t)client->transport->handle,
+                        (const char *)buf, (size_t)n, MSG_NOSIGNAL);
+            if (sent < 0) {
+                sock_err = jsec_socket_errno;
+            } else {
+                total_sent += sent;
+            }
+        }
+
+        if (heap_buf) {
+            janet_free(heap_buf);
+        }
+
+        if (sent < 0) {
+            if (sock_err == JSEC_EAGAIN || sock_err == JSEC_EWOULDBLOCK) {
+                return -2;
+            }
+            errno = sock_err;
+            return -1;
+        }
+
+        if (n <= 0) {
+            break;
+        }
     }
 
-    janet_free(buf);
-    return sent;
+    return total_sent;
+#endif
 }
 
 /*
@@ -258,60 +414,50 @@ static inline ssize_t dtls_client_flush_wbio_to_peer(DTLSClient *client) {
  * Methods like :recv-from, :send-to, :close work through method dispatch.
  */
 
-#define DTLS_SESSION_TABLE_SIZE 256 /* Hash table buckets */
-#define DTLS_SESSION_TIMEOUT 300.0  /* 5 minutes default timeout */
+#define DTLS_SESSION_TABLE_SIZE 256    /* Hash table buckets */
+#define DTLS_SESSION_TIMEOUT 300.0     /* 5 minutes default timeout */
+#define DTLS_MAX_SESSIONS_DEFAULT 1024 /* Default session table bound */
 
-typedef struct {
+struct DTLSServer {
     JanetStream stream;     /* Embedded stream for method dispatch */
     JanetStream *transport; /* Underlying UDP socket */
     SSL_CTX *ctx;           /* Server SSL context */
     DTLSSession *sessions[DTLS_SESSION_TABLE_SIZE]; /* Hash table */
-    int session_count;      /* Number of active sessions */
     double session_timeout; /* Session timeout in seconds */
-    int closed;             /* Server has been closed */
-} DTLSServer;
+    double last_cleanup; /* Timestamp of last expired session cleanup sweep */
+    long link_mtu;       /* Configured or resolved interface link MTU */
+    DTLSRecvFromState recvfrom_state; /* Embedded recvfrom async state
+                                         (eliminates malloc) */
+    int session_count;                /* Number of active sessions */
+    int max_sessions;                 /* Upper bound on session_count */
+    uint8_t closed;                   /* Server has been closed */
+};
+
+/* MTU resolution and option configuration (mtu.c) */
+long jdtls_parse_mtu_opt(Janet opts);
+long jdtls_resolve_server_link_mtu(jsec_socket_t fd, int family,
+                                   long explicit_mtu);
+void jdtls_configure_session_mtu(SSL *ssl, long link_mtu);
+void jdtls_configure_connected_mtu(SSL *ssl, BIO *bio, jsec_socket_t fd,
+                                   int family, long explicit_mtu);
 
 /* Session lifecycle */
 DTLSSession *dtls_session_new(SSL_CTX *ctx, const DTLSAddress *peer);
-void dtls_session_free(DTLSSession *session);
+void dtls_session_free(DTLSSession *session, int in_gc);
 
 /* Server operations */
 DTLSSession *dtls_server_get_session(DTLSServer *server,
                                      const DTLSAddress *addr);
+DTLSSession *dtls_server_get_session_bucket(DTLSServer *server,
+                                            const DTLSAddress *addr,
+                                            int *out_bucket);
 DTLSSession *dtls_server_create_session(DTLSServer *server,
                                         const DTLSAddress *addr);
+DTLSSession *dtls_server_create_session_in_bucket(DTLSServer *server,
+                                                  const DTLSAddress *addr,
+                                                  int bucket);
 void dtls_server_remove_session(DTLSServer *server, const DTLSAddress *addr);
 void dtls_server_cleanup_expired(DTLSServer *server, double now);
-
-/*
- * =============================================================================
- * Async State (for janet_async_start callbacks)
- * =============================================================================
- */
-
-typedef struct {
-    DTLSOperation op;         /* Current operation */
-    JanetBuffer *buffer;      /* Buffer for read operations */
-    JanetByteView write_data; /* Data for write operations */
-    int32_t nbytes;           /* Requested bytes for read */
-    double timeout;           /* Operation timeout */
-    int flags;                /* Operation flags */
-    DTLSAddress *out_addr;    /* Output address for recv-from */
-} DTLSAsyncState;
-
-/*
- * =============================================================================
- * Cookie Generation (DoS protection)
- * =============================================================================
- */
-
-/* Generate cookie for client address */
-int dtls_generate_cookie(SSL *ssl, unsigned char *cookie,
-                         unsigned int *cookie_len);
-
-/* Verify cookie from client */
-int dtls_verify_cookie(SSL *ssl, const unsigned char *cookie,
-                       unsigned int cookie_len);
 
 /*
  * =============================================================================
@@ -322,39 +468,46 @@ int dtls_verify_cookie(SSL *ssl, const unsigned char *cookie,
 
 /* Drive SSL operation, return want-read/want-write/done/error */
 typedef enum {
-    DTLS_RESULT_OK = 0,     /* Operation complete */
-    DTLS_RESULT_WANT_READ,  /* Need to wait for readable */
-    DTLS_RESULT_WANT_WRITE, /* Need to wait for writable */
-    DTLS_RESULT_EOF,        /* Peer closed */
-    DTLS_RESULT_ERROR       /* Error occurred */
+    DTLS_RESULT_OK = 0,         /* Operation complete */
+    DTLS_RESULT_WANT_READ,      /* Need to wait for readable */
+    DTLS_RESULT_WANT_WRITE,     /* Need to wait for writable */
+    DTLS_RESULT_EOF,            /* Peer closed cleanly (close_notify) */
+    DTLS_RESULT_UNEXPECTED_EOF, /* Peer closed without close_notify:
+                                 * a truncation; read surfaces raise
+                                 * JSEC_UNEXPECTED_EOF_ERROR */
+    DTLS_RESULT_ERROR           /* Error occurred */
 } DTLSResult;
+
+/* Convert SSL_get_error to DTLSResult, optionally capturing jsec_socket_errno
+ * before SSL_get_error() runs. */
+DTLSResult dtls_ssl_result_errno(SSL *ssl, int ret, int *out_sock_err);
 
 /* Convert SSL_get_error to DTLSResult */
 DTLSResult dtls_ssl_result(SSL *ssl, int ret);
 
 /* Process handshake step */
 DTLSResult dtls_do_handshake(SSL *ssl);
+DTLSResult dtls_do_handshake_ex(SSL *ssl, int *out_sock_err);
 
-/* Process read step */
-DTLSResult dtls_do_read(SSL *ssl, uint8_t *buf, int32_t len,
-                        int32_t *out_len);
+/* Process read step: datagram-driven sizing into buf (see api/io.c) */
+DTLSResult dtls_do_read(SSL *ssl, JanetBuffer *buf, int32_t n);
+DTLSResult dtls_do_read_ex(SSL *ssl, JanetBuffer *buf, int32_t n,
+                           int *out_sock_err);
 
 /* Process write step */
 DTLSResult dtls_do_write(SSL *ssl, const uint8_t *buf, int32_t len,
                          int32_t *out_len);
+DTLSResult dtls_do_write_ex(SSL *ssl, const uint8_t *buf, int32_t len,
+                            int32_t *out_len, int *out_sock_err);
 
 /* Process shutdown step */
 DTLSResult dtls_do_shutdown(SSL *ssl);
+DTLSResult dtls_do_shutdown_ex(SSL *ssl, int *out_sock_err);
 
-/* Async operation starters */
-void dtls_async_handshake(JanetStream *transport, SSL *ssl,
-                          DTLSState *state_ptr, void *owner);
-void dtls_async_read(JanetStream *transport, SSL *ssl, int32_t nbytes,
-                     double timeout, void *owner);
-void dtls_async_write(JanetStream *transport, SSL *ssl,
-                      JanetByteView data_view, double timeout, void *owner);
-void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
-                         DTLSState *state_ptr, void *owner);
+/* Format a DTLS I/O operation failure under [DTLS:IO], preferring queued
+ * OpenSSL errors and falling back to captured sock_err or SO_ERROR. */
+void dtls_format_io_error(char *buf, size_t buflen, const char *op_name,
+                          int sock_err, JanetStream *stream);
 
 /*
  * =============================================================================
@@ -366,9 +519,6 @@ void dtls_async_shutdown(JanetStream *transport, SSL *ssl,
 
 typedef SSLContext DTLSContext;
 
-/* Use the unified ssl_context_type for DTLS contexts */
-#define dtls_context_type ssl_context_type
-
 /*
  * =============================================================================
  * Abstract Type Declarations
@@ -378,13 +528,10 @@ typedef SSLContext DTLSContext;
 extern const JanetAbstractType dtls_address_type;
 extern const JanetAbstractType dtls_server_type;
 extern const JanetAbstractType dtls_client_type;
-/* dtls_context_type is now a macro aliasing ssl_context_type from jshared.h
- */
 
 /* Method tables for stream-like behavior */
 extern const JanetMethod dtls_client_methods[];
 extern const JanetMethod dtls_server_methods[];
-/* dtls_context_methods is now ssl_context_methods from jshared.h */
 
 /*
  * =============================================================================
@@ -411,13 +558,16 @@ void jdtls_register_context(JanetTable *env);
  */
 
 /* async.c - Async callbacks and helpers */
-void jdtls_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 void dtls_client_async_callback(JanetFiber *fiber, JanetAsyncEvent event);
 int dtls_client_start_handshake(DTLSClient *client);
 void dtls_client_start_async_read(DTLSClient *client, JanetBuffer *buf,
-                                  int32_t nbytes, int mode);
-void dtls_client_start_async_write(DTLSClient *client, JanetByteView data,
-                                   int mode);
+                                  int32_t nbytes, int32_t buf_start, int mode,
+                                  double timeout);
+void dtls_client_start_async_write(DTLSClient *client, Janet src, int mode,
+                                   double timeout);
+void dtls_client_start_async_write_flush(DTLSClient *client, Janet src,
+                                         int mode, double timeout,
+                                         int flush_only);
 void dtls_client_start_async_close(DTLSClient *client, int mode);
 
 /* close.c */
@@ -439,10 +589,12 @@ Janet cfun_dtls_peername(int32_t argc, Janet *argv);
 Janet cfun_dtls_set_session(int32_t argc, Janet *argv);
 Janet cfun_dtls_trust_cert(int32_t argc, Janet *argv);
 Janet cfun_dtls_get_handshake_time(int32_t argc, Janet *argv);
+Janet cfun_dtls_get_peer_cert(int32_t argc, Janet *argv);
 
 /* io.c */
 Janet cfun_dtls_read(int32_t argc, Janet *argv);
 Janet cfun_dtls_write(int32_t argc, Janet *argv);
+Janet cfun_dtls_flush(int32_t argc, Janet *argv);
 Janet cfun_dtls_chunk(int32_t argc, Janet *argv);
 
 /* upgrade.c */

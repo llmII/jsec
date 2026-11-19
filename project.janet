@@ -9,7 +9,53 @@
                   :tag "master"}
                  {:url "https://github.com/llmII/janet-assay.git"
                   :tag "main"}]
-  :version "0.1.0")
+  :version "0.2.0-interim1")
+
+# ============================================================================
+# Janet Version Floor
+# ============================================================================
+# jsec needs Janet 1.41.1 or newer (janet PR 1683, merge d3f5b541): that
+# release fixes a unix-socket connect hang on edge-triggered kqueue where
+# connect() completing synchronously still scheduled an async writability
+# wait that never fires, so older Janets hang rather than fail. Hard floor -
+# no override.
+
+(def jsec-min-janet-version "1.41.1")
+
+# janet/version is a string on 1.41.1+, and may be a callable on older
+# Janets; handle both shapes. Call it through a parameter - a direct
+# (janet/version) is a compile error when the value is the 1.41.1+ string,
+# even in the untaken branch.
+(def- jsec-janet-version
+  (string (if (string? janet/version)
+            janet/version
+            ((fn [f] (f)) janet/version))))
+
+# [major minor patch] of a dotted version, -/+ suffixes dropped and missing
+# components read as 0; nil when the string does not conform.
+(defn- jsec-version-tuple [v]
+  (def parts
+    (string/split "." (first (string/split "+" (first (string/split "-" v))))))
+  (when (and (<= 1 (length parts) 3)
+             (all |(and (not (empty? $)) (string/check-set "0123456789" $))
+                  parts))
+    (take 3 [;(map scan-number parts) 0 0])))
+
+(defn- jsec-version-at-least? [v floor]
+  (def a (jsec-version-tuple v))
+  (def b (jsec-version-tuple floor))
+  (and a b (>= (compare a b) 0)))
+
+(unless (jsec-version-at-least? jsec-janet-version jsec-min-janet-version)
+  (errorf (string "jsec requires Janet %s or newer, refusing to run against "
+                  "Janet %s. Janet 1.41.1 fixes a unix-socket connect hang on "
+                  "edge-triggered kqueue (janet PR 1683, merge d3f5b541): "
+                  "connect() completing synchronously still scheduled an "
+                  "async writability wait that never fires, so older Janets "
+                  "hang rather than fail. Upgrade Janet, or build through the "
+                  "hermetic in-tree toolchain (docs/DEVELOPERS.org); there is "
+                  "no override.")
+          jsec-min-janet-version jsec-janet-version))
 
 # ============================================================================
 # Platform Detection
@@ -21,12 +67,31 @@
 (def- illumos? (= (os/which) :illumos))
 
 # ============================================================================
-# Build Configuration (from environment)
+# Build Configuration (from environment or active toolchain stamp)
 # ============================================================================
 
+(defn- detect-toolchain-sanitizer []
+  (when-let [syspath (dyn :syspath)
+             stamp-path (string syspath "/../../TOOLCHAIN")
+             _ (os/stat stamp-path)
+             content (slurp stamp-path)]
+    (var found nil)
+    (each line (string/split "\n" content)
+      (when (string/has-prefix? "sanitizer:" line)
+        (def v (string/trim (string/slice line (length "sanitizer:"))))
+        (when (and (not (empty? v)) (not= v "none"))
+          (set found v))))
+    found))
+
+(def- toolchain-san (detect-toolchain-sanitizer))
+(def- san-env (or (os/getenv "JSEC_SANITIZER")
+                  (when (os/getenv "JSEC_SAN") "san")
+                  toolchain-san))
+
 (def- debug? (os/getenv "JSEC_DEBUG"))
-(def- asan? (os/getenv "JSEC_ASAN"))
-(def- ubsan? (os/getenv "JSEC_UBSAN"))
+(def- asan? (or (os/getenv "JSEC_ASAN") (= san-env "asan") (= san-env "san")))
+(def- lsan? (or (os/getenv "JSEC_LSAN") (= san-env "lsan")))
+(def- ubsan? (or (os/getenv "JSEC_UBSAN") (= san-env "ubsan") (= san-env "san")))
 (def- verbose? (os/getenv "JSEC_DEBUG_VERBOSE"))
 
 # ============================================================================
@@ -35,6 +100,7 @@
 
 (defn- find-files-by-suffixes [dir suffixes]
   "Recursively find files matching any suffix in suffixes list.
+   Skips hidden dot-directories (e.g. .work, .git), build, and jpm_tree.
    Returns array of paths relative to current directory."
   (def results @[])
   (defn scan [path]
@@ -44,11 +110,39 @@
         (def stat (os/stat full))
         (when stat
           (case (stat :mode)
-            :directory (scan full)
+            :directory
+            (unless (or (string/has-prefix? "." entry)
+                        (= entry "jpm_tree")
+                        (= entry "build"))
+              (scan full))
             :file (when (some |(string/has-suffix? $ entry) suffixes)
                     (array/push results full)))))))
   (scan dir)
   (sort results))
+
+(defn- vcs-tracked-files []
+  "Return set table of VCS-tracked paths in a Fossil or Git checkout,
+   or nil if no VCS manifest can be inspected."
+  (def [cmd args]
+    (cond
+      (or (os/stat ".fslckout") (os/stat "_FOSSIL_")) ["fossil" ["ls"]]
+      (os/stat ".git") ["git" ["ls-files"]]
+      [nil nil]))
+  (when cmd
+    (try
+      (let [proc (os/spawn [cmd ;args] :p {:out :pipe :err :pipe})
+            out (ev/read (proc :out) :all)
+            _ (ev/read (proc :err) :all)
+            rc (os/proc-wait proc)]
+        (try (:close (proc :out)) ([_] nil))
+        (try (:close (proc :err)) ([_] nil))
+        (when (zero? rc)
+          (let [tracked @{}]
+            (each line (string/split "\n" (string/trim (or out "")))
+              (unless (empty? line)
+                (put tracked line true)))
+            tracked)))
+      ([_] nil))))
 
 (defn- rmdir-recursive [path]
   "Recursively remove a directory and its contents"
@@ -90,8 +184,8 @@
 
 # Standard flags - comprehensive warnings for defensive builds
 # These catch issues that may only manifest on stricter platforms
-# (e.g., ARM Mac). Note: Some flags omitted because janet.h macros
-# trigger unavoidable warnings.
+# (e.g., ARM Mac). Note: Some flags (including -Wcast-align under Clang)
+# are omitted because janet.h macros trigger unavoidable warnings.
 (def- standard-cflags
   (if windows?
     ["/O2" "/W4" "/MD" "/wd4152" "/wd4702"]
@@ -103,30 +197,55 @@
      # Integer/pointer conversion warnings (critical for cross-platform)
      "-Wint-conversion" "-Wpointer-to-int-cast" "-Wint-to-pointer-cast"
      # Null pointer and type safety
-     "-Wnull-dereference" "-Wcast-align"
+     "-Wnull-dereference"
      # Sign conversion (can catch subtle bugs)
      "-Wsign-compare"]))
 
-# Sanitizer flags (Unix only)
-(defn- build-sanitizer-flags []
+# Sanitizer flags (Unix only) - decoupled from JSEC_DEBUG so sanitizer
+# toolchains (.work/{asan,lsan,ubsan,san}) and JSEC_{ASAN,LSAN,UBSAN,SAN}=1
+# apply sanitizer compile/link flags directly.
+(defn- build-sanitizer-list []
   (if windows?
     @[]
     (let [sanitizers @[]]
       (when asan? (array/push sanitizers "address"))
+      (when (and lsan? (not asan?)) (array/push sanitizers "leak"))
       (when ubsan? (array/push sanitizers "undefined"))
-      (if (empty? sanitizers)
-        @[]
-        @[(string "-fsanitize=" (string/join sanitizers ","))]))))
+      sanitizers)))
+
+(defn- build-sanitizer-recover-list []
+  (if windows?
+    @[]
+    (let [recover @[]]
+      (when asan? (array/push recover "address"))
+      (when ubsan? (array/push recover "undefined"))
+      recover)))
+
+(def- sanitizer-cflags
+  (let [sanitizers (build-sanitizer-list)
+        recover (build-sanitizer-recover-list)]
+    (if (empty? sanitizers)
+      @[]
+      (let [flags @["-O1" "-g3" "-fno-omit-frame-pointer"
+                    "-fno-optimize-sibling-calls"
+                    (string "-fsanitize=" (string/join sanitizers ","))]]
+        (unless (empty? recover)
+          (array/push flags
+                      (string "-fsanitize-recover="
+                              (string/join recover ","))))
+        flags))))
+
+(def- sanitizer-lflags
+  (let [sanitizers (build-sanitizer-list)]
+    (if (empty? sanitizers)
+      @[]
+      @[(string "-fsanitize=" (string/join sanitizers ","))])))
 
 (def- debug-cflags
   (if windows?
     @["/Zi" "/Od" "/DJSEC_DEBUG"]
     (let [base @["-g3" "-Og" "-fno-omit-frame-pointer"
-                 "-fstack-protector-strong" "-DJSEC_DEBUG"]
-          san-flags (build-sanitizer-flags)]
-      (when (not (empty? san-flags))
-        (array/push base ;san-flags)
-        (array/push base "-fsanitize-recover=all"))
+                 "-fstack-protector-strong" "-DJSEC_DEBUG"]]
       (when verbose?
         (array/push base "-DJSEC_DEBUG_VERBOSE"))
       base)))
@@ -134,7 +253,7 @@
 (def- debug-lflags
   (if windows?
     @["/DEBUG"]
-    (build-sanitizer-flags)))
+    @[]))
 
 (def- platform-cflags
   (cond
@@ -164,14 +283,15 @@
     ["-lssl" "-lcrypto"]))
 
 (def- build-cflags
-  (if debug?
-    [;standard-cflags ;debug-cflags ;platform-cflags]
-    [;standard-cflags ;platform-cflags]))
+  [;standard-cflags
+   ;(if debug? debug-cflags [])
+   ;sanitizer-cflags
+   ;platform-cflags])
 
 (def- build-lflags
-  (if debug?
-    [;platform-lflags ;debug-lflags]
-    platform-lflags))
+  [;platform-lflags
+   ;(if debug? debug-lflags [])
+   ;sanitizer-lflags])
 
 # Windows DLL handling
 (when windows?
@@ -250,18 +370,40 @@
   :main "bin/perf9-analyze.janet"
   :name "perf9-analyze")
 
+# Test-only socket reset helper (built with jsec, never installed by jpm
+# install) so stream parity tests can trigger an abortive RST cleanly across
+# BSDs, macOS, Linux, and Windows.
+(let [rst-src "suites/helpers/rst_linger.c"
+      rst-obj (out-path rst-src ".c" ".o")
+      rst-ext (dyn :modext (if windows? ".dll" ".so"))
+      rst-so (string (find-build-dir) "test-helpers/jsec_test_rst" rst-ext)
+      rst-cflags (if windows?
+                   ["/O2" "/W4" "/MD"]
+                   ["-std=c99" "-O2" "-Wall" "-Wextra" "-Wshadow"
+                    "-Wstrict-prototypes" "-Wsign-compare"
+                    ;sanitizer-cflags])
+      rst-lflags (if windows? ["ws2_32.lib"] sanitizer-lflags)
+      rst-opts @{:cflags rst-cflags :lflags rst-lflags}]
+  (compile-c :cc rst-opts rst-src rst-obj)
+  (link-c false rst-opts rst-so rst-obj)
+  (add-dep "build" rst-so))
+
 # ============================================================================
 # Phony Targets
 # ============================================================================
 
 (phony "clean" []
        (print "Cleaning build artifacts...")
-       (rmdir-recursive "build")
+       (rmdir-recursive (dyn :buildpath "build"))
        (rmdir-recursive "jpm_tree")
-       # Remove generated markdown files
-       (each f (find-files-by-suffixes "." [".md"])
-         (when (not (string/find "jpm_tree" f))
-           (rm-if-exists f)))
+       # Only remove untracked .md files that have a matching .org source;
+       # tracked .md mirrors (README.md, docs/*.md, etc.) must stay intact.
+       (when-let [tracked (vcs-tracked-files)]
+         (each f (find-files-by-suffixes "." [".md"])
+           (def rel (if (string/has-prefix? "./" f) (string/slice f 2) f))
+           (def org-src (string (string/slice f 0 -4) ".org"))
+           (when (and (not (get tracked rel)) (os/stat org-src))
+             (rm-if-exists f))))
        (rm-if-exists "valgrind-output.txt")
        (rm-if-exists "debug.log")
        (print "Clean complete."))
@@ -352,26 +494,18 @@
            (os/exit 1))
          (print "\nclang-tidy: All checks passed!")))
 
-# Release task - generate markdown from org files
-(phony "release" ["clean" "format/all"]
-       (print "Generating markdown documentation from org files...")
-       (def files (find-files-by-suffixes "." [".org"]))
-       (def filtered (filter |(not (or (string/find "jpm_tree" $)
-                                       (string/find "/." $))) files))
-       (each f filtered
-         (os/execute ["emacs" "--batch"
-                      "--eval" "(require 'ox-md)"
-                      f "-f" "org-md-export-to-markdown"] :p))
-       (print "Release preparation complete."))
+# On-demand markdown regeneration from org sources (see RELEASE.org).
+(phony "regen-docs" []
+       (print "Regenerating markdown documentation from org files...")
+       (def janet-bin (dyn :janet (dyn :executable)))
+       (def rc (os/execute [janet-bin "scripts/regen-docs.janet"] :p))
+       (unless (zero? rc)
+         (print "command failed (exit " rc "): regen-docs")
+         (os/exit rc)))
 
-# Test with sanitizers - placeholder (requires debug build)
-(phony "test/sanitized" []
-       (print
-         (string "Note: Sanitizer testing requires "
-                 "JSEC_DEBUG=1 JSEC_ASAN=1 jpm build first."))
-       (print "Then run: janet test/runner.janet")
-       (print "This target is a no-op for now."))
-(phony "test-sanitized" ["test/sanitized"])
+# Release task - format sources and regenerate markdown from org files
+(phony "release" ["clean" "format/all" "regen-docs"]
+       (print "Release preparation complete."))
 
 # Leak check with valgrind - placeholder
 (phony "test/valgrind" []
@@ -381,3 +515,225 @@
                  "janet test/runner.janet"))
        (print "This target is a no-op for now."))
 (phony "leak-check" ["test/valgrind"])
+
+# ============================================================================
+# Hermetic In-Tree Toolchain (see docs/DEVELOPERS.org)
+# ============================================================================
+# These run bootstrap and tests through .work/bin/{janet,jpm}, never the host
+# janet/jpm. First invocation may use `jpm run` as a dispatcher; the actual
+# build/test steps invoke the in-tree tools by path.
+
+(defn- run-or-fail [args &opt extra-env]
+  (def code
+    (if extra-env
+      (os/execute args :pe (merge (os/environ) extra-env))
+      (os/execute args :p)))
+  (unless (zero? code)
+    (print "command failed (exit " code "): " (string/join args " "))
+    (os/exit code)))
+
+(def- toolchain-janet (if windows? ".work/bin/janet.exe" ".work/bin/janet"))
+(def- toolchain-jpm (if windows? ".work/bin/jpm.bat" ".work/bin/jpm"))
+
+# Poll-backend toolchain: Janet built with JANET_EV_NO_EPOLL + JANET_EV_NO_KQUEUE
+# so the poll(2) fallback is active. Lives beside the default .work/ toolchain
+# so both can coexist at the same Janet rev (see docs/DEVELOPERS.org).
+(def- poll-toolchain-janet ".work/poll/bin/janet")
+(def- poll-toolchain-jpm ".work/poll/bin/jpm")
+
+# A toolchain's installed module tree (the janet binary's baked syspath).
+(def- toolchain-modpath ".work/lib/janet")
+(def- poll-toolchain-modpath ".work/poll/lib/janet")
+
+(defn- san-build-env [sanitizer]
+  (when sanitizer
+    {"JSEC_SANITIZER" sanitizer
+     "ASAN_OPTIONS" "detect_leaks=0:halt_on_error=0"
+     "LSAN_OPTIONS" "detect_leaks=0"
+     "UBSAN_OPTIONS" "halt_on_error=0"}))
+
+(defn- san-test-env [sanitizer log-prefix]
+  (def cwd (os/cwd))
+  (def halt (if (= (os/getenv "JSEC_SAN_HALT") "1") "1" "0"))
+  (def detect-leaks
+    (if (or (= sanitizer "asan") (= sanitizer "ubsan")) "0" "1"))
+  (def fast-unwind (if (= detect-leaks "1") ":fast_unwind_on_malloc=0" ""))
+  (def lsan-exitcode (if (= halt "1") "23" "0"))
+  (def asan-supp (string cwd "/sanitizers/asan.supp"))
+  (def lsan-supp (string cwd "/sanitizers/lsan.supp"))
+  (def ubsan-supp (string cwd "/sanitizers/ubsan.supp"))
+  {"JSEC_SANITIZER" sanitizer
+   "ASAN_OPTIONS" (string "detect_leaks=" detect-leaks
+                          ":halt_on_error=" halt
+                          ":print_stacktrace=1" fast-unwind
+                          ":exitcode=23"
+                          ":suppressions=" asan-supp
+                          ":log_path=" log-prefix)
+   "LSAN_OPTIONS" (string "exitcode=" lsan-exitcode
+                          ":print_suppressions=0"
+                          ":print_stacktrace=1:fast_unwind_on_malloc=0"
+                          ":suppressions=" lsan-supp
+                          ":log_path=" log-prefix)
+   "UBSAN_OPTIONS" (string "halt_on_error=" halt
+                           ":print_stacktrace=1:exitcode=23"
+                           ":suppressions=" ubsan-supp
+                           ":log_path=" log-prefix)})
+
+(defn- collect-san-logs [log-dir]
+  (def logs @[])
+  (when (os/stat log-dir)
+    (each entry (sort (os/dir log-dir))
+      (when (string/has-prefix? "san.log." entry)
+        (def full (string log-dir "/" entry))
+        (def st (os/stat full))
+        (when (and st (> (st :size) 0))
+          (array/push logs full)))))
+  logs)
+
+(defn- jpm-run-args [jpm-bin & args]
+  (if windows?
+    ["cmd" "/c" (string/replace-all "/" "\\" jpm-bin) ;args]
+    [jpm-bin ;args]))
+
+# Ensure a toolchain's module tree holds the test dependencies (assay, spork).
+# jpm build/install do NOT install dependencies, and without them
+# test/runner.janet cannot import assay and its workers cannot run - so the run
+# would be meaningless. Install only when missing so a populated tree is left
+# alone (idempotent, no network/clone on re-runs).
+(defn- ensure-test-deps [jpm-bin modpath &opt build-env]
+  (def missing (filter |(not (os/stat (string modpath "/" $)))
+                       ["assay" "spork"]))
+  (unless (empty? missing)
+    (print "Installing test dependencies ("
+           (string/join missing ", ") ")...")
+    (flush)
+    (run-or-fail (jpm-run-args jpm-bin "deps") build-env)))
+
+# Build jsec and run the unit/regression/coverage suite (perf excluded) under a
+# toolchain's janet/jpm with the project's default concurrency and suite
+# selection (builds and tests itself). Shared by self-test (epoll),
+# self-test-poll (poll), and self-test-{asan,lsan,ubsan,san} so all profiles
+# stay directly comparable: same flags, same output shape, same exit semantics.
+(defn- windows-runtime-env []
+  (when (and windows? openssl-prefix)
+    (def bin-dir (string/replace-all "/" "\\" (string openssl-prefix "/bin")))
+    (def cur-env (os/environ))
+    (def path-key (if (has-key? cur-env "Path") "Path" "PATH"))
+    (def cur-path (or (get cur-env path-key) ""))
+    (if (string/find bin-dir cur-path)
+      nil
+      {path-key (string bin-dir ";" cur-path)})))
+
+(defn- merge-run-envs [& envs]
+  (var merged nil)
+  (each e envs
+    (when e
+      (set merged (merge (or merged @{}) e))))
+  merged)
+
+(defn- run-self-test-suite [janet-bin jpm-bin modpath &opt sanitizer prefix]
+  (def build-env (merge-run-envs (san-build-env sanitizer)
+                                 (windows-runtime-env)))
+  (ensure-test-deps jpm-bin modpath build-env)
+  (print "Building jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail (jpm-run-args jpm-bin "build") build-env)
+  (print "Installing jsec under the in-tree toolchain...")
+  (flush)
+  (run-or-fail (jpm-run-args jpm-bin "install") build-env)
+  (print "Running unit/regression/coverage under the in-tree toolchain...")
+  (flush)
+  (def runner-args [janet-bin "test/runner.janet"
+                    "-f" "{unit,regression,coverage}"
+                    "-j" "fiber:16,thread:6,subprocess:6"])
+  (if (nil? sanitizer)
+    (run-or-fail runner-args (windows-runtime-env))
+    (let [tc-prefix (or prefix (string ".work/" sanitizer))
+          log-dir (string (os/cwd) "/" tc-prefix "/scratch/san-logs")
+          log-prefix (string log-dir "/san.log")]
+      (rmdir-recursive log-dir)
+      (os/mkdir (string (os/cwd) "/" tc-prefix "/scratch"))
+      (os/mkdir log-dir)
+      (def code (os/execute runner-args :pe
+                            (merge (os/environ)
+                                   (san-test-env sanitizer log-prefix))))
+      (ev/sleep 0.2)
+      (def logs (collect-san-logs log-dir))
+      (unless (empty? logs)
+        (print "\n=== Sanitizer findings (" (length logs)
+               " process log(s) in " log-dir ") ===")
+        (each f logs
+          (print "\n--- " f " ---")
+          (prin (slurp f)))
+        (flush)
+        (os/exit (if (zero? code) 23 code)))
+      (unless (zero? code)
+        (print "command failed (exit " code "): "
+               (string/join runner-args " "))
+        (os/exit code)))))
+
+(defn- run-sanitized-profile [sanitizer]
+  (def prefix (string ".work/" sanitizer))
+  (run-self-test-suite (string prefix "/bin/janet")
+                       (string prefix "/bin/jpm")
+                       (string prefix "/lib/janet")
+                       sanitizer
+                       prefix))
+
+# Build the hermetic toolchain into .work/ (idempotent).
+(phony "toolchain" []
+       (if windows?
+         (run-or-fail ["cmd" "/c" "scripts\\bootstrap-toolchain.bat"])
+         (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"])))
+
+# Build the poll-backend hermetic toolchain into .work/poll/ (idempotent).
+(phony "toolchain-poll" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--ev-backend" "poll" "--toolchain" ".work/poll"]))
+
+# Build sanitizer-instrumented hermetic toolchains into .work/<profile>/.
+(phony "toolchain-asan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "asan" "--toolchain" ".work/asan"]))
+
+(phony "toolchain-lsan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "lsan" "--toolchain" ".work/lsan"]))
+
+(phony "toolchain-ubsan" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "ubsan" "--toolchain" ".work/ubsan"]))
+
+(phony "toolchain-san" []
+       (run-or-fail ["sh" "scripts/bootstrap-toolchain.sh"
+                     "--sanitizer" "san" "--toolchain" ".work/san"]))
+
+# Build jsec and run the suite under the default (epoll) in-tree toolchain.
+(phony "self-test" ["toolchain"]
+       (run-self-test-suite toolchain-janet toolchain-jpm toolchain-modpath))
+
+# Explicit epoll alias for symmetry with self-test-poll (self-test already
+# builds the default epoll toolchain).
+(phony "self-test-epoll" ["self-test"])
+
+# Build jsec and run the suite under the poll-backend in-tree toolchain.
+(phony "self-test-poll" ["toolchain-poll"]
+       (run-self-test-suite poll-toolchain-janet poll-toolchain-jpm
+                            poll-toolchain-modpath))
+
+# Build jsec and run the suite under sanitizer-instrumented toolchains.
+(phony "self-test-asan" ["toolchain-asan"]
+       (run-sanitized-profile "asan"))
+
+(phony "self-test-lsan" ["toolchain-lsan"]
+       (run-sanitized-profile "lsan"))
+
+(phony "self-test-ubsan" ["toolchain-ubsan"]
+       (run-sanitized-profile "ubsan"))
+
+(phony "self-test-san" ["toolchain-san"]
+       (run-sanitized-profile "san"))
+
+# Wire test/sanitized and test-sanitized to the combined hermetic *SAN profile.
+(phony "test/sanitized" ["self-test-san"])
+(phony "test-sanitized" ["test/sanitized"])

@@ -7,6 +7,7 @@
  * - get-cipher-bits - Get cipher strength in bits
  * - get-connection-info - Get detailed connection information
  * - get-handshake-time - Get handshake duration
+ * - get-peer-cert - Get peer certificate as X.509 DER
  * - localname - Get local address/port
  * - peername - Get remote peer's address/port
  *
@@ -17,8 +18,6 @@
 #include "../internal.h"
 #ifndef JANET_WINDOWS
 #include <arpa/inet.h>
-#endif
-#ifndef JANET_WINDOWS
 #include <sys/un.h>
 #endif
 
@@ -29,8 +28,8 @@ static void check_handshake(TLSStream *tls) {
     if (tls->conn_state != TLS_CONN_READY && tls->ssl &&
         SSL_is_init_finished(tls->ssl)) {
         tls->conn_state = TLS_CONN_READY;
-        if (tls->track_handshake_time && tls->ts_handshake.tv_sec == 0 &&
-            tls->ts_handshake.tv_nsec == 0) {
+        if ((tls->flags & JTLS_FLAG_TRACK_HANDSHAKE) &&
+            tls->ts_handshake.tv_sec == 0 && tls->ts_handshake.tv_nsec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &tls->ts_handshake);
         }
     }
@@ -176,7 +175,7 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
     TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
     /* Return nil if timing is disabled */
-    if (!tls->track_handshake_time) {
+    if (!(tls->flags & JTLS_FLAG_TRACK_HANDSHAKE)) {
         return janet_wrap_nil();
     }
 
@@ -192,6 +191,69 @@ Janet cfun_get_handshake_time(int32_t argc, Janet *argv) {
         (double)(tls->ts_handshake.tv_nsec - tls->ts_connect.tv_nsec) / 1e9;
 
     return janet_wrap_number(duration);
+}
+
+/*============================================================================
+ * GET-PEER-CERT - Get peer certificate as X.509 DER
+ *============================================================================
+ * (get-peer-cert stream)
+ *
+ * Export the peer certificate as an immutable Janet string holding the
+ * X.509 DER encoding.
+ *
+ * Parameters:
+ *   stream - TLS stream (live, after handshake)
+ *
+ * Returns:
+ *   Immutable byte string of the peer certificate's X.509 DER encoding,
+ *   or nil when there is no peer certificate (before the handshake
+ *   completes or when the peer presented none).
+ *
+ * The two-pass i2d_X509 shape writes the DER encoding directly into
+ * janet_string_begin's staging region - no intermediate buffer copy.
+ * Serialization failure is a real failure and raises. The OpenSSL error
+ * queue is drained on every exit so a silent nil cannot re-dirty it.
+ */
+Janet cfun_get_peer_cert(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+
+    if (tls->stream.flags & JANET_STREAM_CLOSED) {
+        tls_panic_io("stream closed");
+    }
+
+    check_handshake(tls);
+
+    /* nil is a documented absence of a peer certificate, never a failure
+     * signal: before the handshake completes there is not one yet. */
+    if (!tls->ssl || !SSL_is_init_finished(tls->ssl)) {
+        return janet_wrap_nil();
+    }
+
+    ERR_clear_error();
+    X509 *cert = SSL_get_peer_certificate(tls->ssl);
+    if (!cert) {
+        ERR_clear_error();
+        return janet_wrap_nil();
+    }
+
+    /* Two-pass i2d: probe the length, then write in place */
+    int der_len = i2d_X509(cert, NULL);
+    if (der_len <= 0) {
+        X509_free(cert);
+        tls_panic_ssl("failed to encode peer certificate");
+    }
+
+    uint8_t *der = janet_string_begin((int32_t)der_len);
+    unsigned char *p = der;
+    if (i2d_X509(cert, &p) != der_len) {
+        X509_free(cert);
+        tls_panic_ssl("failed to encode peer certificate");
+    }
+    X509_free(cert);
+
+    ERR_clear_error();
+    return janet_wrap_string(janet_string_end(der));
 }
 
 /*============================================================================
@@ -253,21 +315,50 @@ static Janet sockaddr_to_tuple(const struct sockaddr_storage *ss) {
  *
  * Get the local address and port as a tuple (host port).
  * For Unix sockets, returns (path).
+ * Accepts a jsec/tls-stream TLSStream or a core/stream JanetStream that
+ * is a socket, so the raw listener returned by tls/listen also works.
  */
 Janet cfun_localname(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
 
-    if (!tls->transport || (tls->transport->flags & JANET_STREAM_CLOSED)) {
-        tls_panic_io("stream closed");
+    jsec_socket_t fd = JSEC_INVALID_SOCKET;
+
+    if (janet_checkabstract(argv[0], &tls_stream_type)) {
+        TLSStream *tls = (TLSStream *)janet_unwrap_abstract(argv[0]);
+
+        if (!tls->transport ||
+            (tls->transport->flags & JANET_STREAM_CLOSED)) {
+            tls_panic_io("stream closed");
+        }
+
+        if (!(tls->transport->flags & JANET_STREAM_SOCKET)) {
+            tls_panic_socket("underlying transport is not a socket");
+        }
+
+        fd = (jsec_socket_t)tls->transport->handle;
+    } else if (janet_checkabstract(argv[0], &janet_stream_type)) {
+        JanetStream *js = (JanetStream *)janet_unwrap_abstract(argv[0]);
+
+        if (js->flags & JANET_STREAM_CLOSED) {
+            tls_panic_io("stream closed");
+        }
+
+        if (!(js->flags & JANET_STREAM_SOCKET)) {
+            tls_panic_socket("stream is not a socket");
+        }
+
+        fd = (jsec_socket_t)js->handle;
+    } else {
+        tls_panic_param(
+            "bad slot #0, expected jsec/tls-stream or core/stream, got %v",
+            argv[0]);
     }
 
     struct sockaddr_storage ss;
     socklen_t slen = sizeof(ss);
     memset(&ss, 0, slen);
 
-    if (getsockname((jsec_socket_t)tls->transport->handle,
-                    (struct sockaddr *)&ss, &slen)) {
+    if (getsockname(fd, (struct sockaddr *)&ss, &slen) < 0) {
         tls_panic_socket("failed to get localname");
     }
 
@@ -300,4 +391,28 @@ Janet cfun_peername(int32_t argc, Janet *argv) {
     }
 
     return sockaddr_to_tuple(&ss);
+}
+
+/*============================================================================
+ * BUFFER CONFIG - Get stream buffer configuration
+ *============================================================================
+ * (:buffer stream)
+ *
+ * Get the current read and write buffer configuration for this TLS stream:
+ * returns a struct {:read <int|false> :write <int|false>}
+ */
+Janet cfun_get_buffer_config(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    TLSStream *tls = janet_getabstract(argv, 0, &tls_stream_type);
+
+    JanetKV *st = janet_struct_begin(2);
+    janet_struct_put(st, janet_ckeywordv("read"),
+                     tls->read_buffer_size > 0
+                         ? janet_wrap_integer(tls->read_buffer_size)
+                         : janet_wrap_boolean(0));
+    janet_struct_put(st, janet_ckeywordv("write"),
+                     tls->write_buffer_size > 0
+                         ? janet_wrap_integer(tls->write_buffer_size)
+                         : janet_wrap_boolean(0));
+    return janet_wrap_struct(janet_struct_end(st));
 }

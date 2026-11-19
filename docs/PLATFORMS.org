@@ -22,12 +22,14 @@ NetBSD, OpenBSD, OpenIndiana (Illumos), and Windows.
 
 ** Janet Version Requirements
 
-jsec supports *Janet 1.40.1* and later as its baseline. Compatibility with
-Janet 1.40.1 is maintained across all supported operating systems.
+jsec supports *Janet 1.41.1* and later as its baseline. Compatibility with
+Janet 1.41.1 is maintained across all supported operating systems.
 
-Note for macOS: Janet 1.40.1 header macros trigger unavoidable =-Wcast-align=
+Note for macOS: Janet 1.41.1 header macros trigger unavoidable =-Wcast-align=
 warnings under Apple Clang. These are benign upstream macro artifacts left
-unpatched to maintain clean baseline compatibility with supported Janet 1.40.1.
+unpatched to maintain clean baseline compatibility with supported Janet 1.41.1.
+The responsible header macros are unchanged from Janet 1.40.1, so the warning
+persists at the 1.41.1 baseline.
 
 For building Janet from source, see the official instructions:
 https://janet-lang.org/docs/index.html
@@ -416,9 +418,11 @@ janet test/runner.janet --filter "unit/*"
 
 *** macOS Apple Clang Warning
 
-Janet 1.40.1 header macros emit =-Wcast-align= warnings under Apple Clang.
+Janet 1.41.1 header macros emit =-Wcast-align= warnings under Apple Clang.
 These are benign upstream macro artifacts left unpatched to retain clean
-baseline compatibility with supported Janet 1.40.1.
+baseline compatibility with supported Janet 1.41.1. The responsible header
+macros are unchanged from Janet 1.40.1, so the warning persists at the 1.41.1
+baseline.
 
 ** LibreSSL Compatibility
 
